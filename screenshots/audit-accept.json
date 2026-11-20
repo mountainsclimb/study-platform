@@ -1,0 +1,150 @@
+{
+  "bank_dir": "E:\\responsibility\\高考题库_按学科\\releases\\bank-20261120-r3",
+  "blank_gate": {
+    "1x1_white": "rejected:422",
+    "40x40_white": "rejected:422",
+    "240x240_blank": "rejected:422",
+    "240x240_drawn": "accepted",
+    "ok": true
+  },
+  "asset_gate": {
+    "unrelated_qid": "denied:403",
+    "public_owner_qid": "allowed",
+    "answer_owner_qid": "denied:403",
+    "ok": true
+  },
+  "groups": {
+    "groups": 2246,
+    "blocked": 0,
+    "sample": [],
+    "ok": true
+  },
+  "solution_blocks": {
+    "qid": "c0cfeab4f0e96c5b:5#3",
+    "has_solution": true,
+    "has_solution_blocks": true,
+    "ok": true
+  },
+  "sympy_budget": {
+    "9**9**9": {
+      "comparable": false,
+      "ms": 400.6
+    },
+    "10**100000": {
+      "comparable": false,
+      "ms": 0.1
+    },
+    "factorial(100000)": {
+      "comparable": false,
+      "ms": 0.1
+    },
+    "ok": true
+  },
+  "static": {
+    "notes_pass_system_prompt": true,
+    "verify_structured_not_override": true,
+    "markdown_fail_closed": true,
+    "dom_katex_error_fallback": true,
+    "ok": true
+  },
+  "provider_policy": {
+    "local_open": {
+      "ollama": "accepted",
+      "lan": "accepted",
+      "custom_port": "accepted",
+      "azure_query": "accepted",
+      "metadata": "rejected:422:禁止访问云元数据地址，请检查 API 地址",
+      "normalized": "https://relay.example.test/v1"
+    },
+    "public_https": {
+      "loopback": "rejected:422:公网模式仅允许 HTTPS 地址；本地/局域网模型请在本地模式下使用",
+      "https_relay": "accepted",
+      "metadata": "rejected:422:禁止访问云元数据地址，请检查 API 地址",
+      "query_key": "rejected:422:请不要把 API Key 放在地址查询参数中，请填写到 API Key 一栏"
+    },
+    "allowlist": {
+      "unlisted": "rejected:422:{'code': 'url_not_allowed', 'message': '",
+      "preset": "accepted"
+    },
+    "ok": true
+  },
+  "ready_privacy": {
+    "anonymous_keys": [
+      "affected_features",
+      "ai_ready",
+      "build_id",
+      "checks",
+      "degraded",
+      "status",
+      "study_ready",
+      "version"
+    ],
+    "has_path_anonymous": false,
+    "checks_anonymous_ok_only": true,
+    "admin_has_bank_detail": true,
+    "admin_has_embedding": true,
+    "ok": true
+  },
+  "cache_headers": {
+    "asset": true,
+    "api_cache_control": "no-store",
+    "image_status": 200,
+    "image_cache_control": "private, max-age=3600",
+    "image_etag": "\"18e9b1726942e0c0-288\"",
+    "image_304": 304,
+    "ok": true
+  },
+  "static_v2": {
+    "reference_conflict_uses_matches_reference": true,
+    "structured_verify_json_output": true,
+    "block_evidence_shared": true,
+    "identity_risk_degrades": true,
+    "url_policy_env": true,
+    "build_id_covers_pages_css": true,
+    "build_id_covers_prompts": true,
+    "thinking_stream_wired": true,
+    "ok": true
+  },
+  "static_v3": {
+    "redis_pubsub_channel": true,
+    "publish_event_public": true,
+    "stream_subscribes": true,
+    "quota_env": true,
+    "submit_job_helper": true,
+    "ocr_task_dispatch": true,
+    "ocr_async_executor": true,
+    "ocr_page_persist": true,
+    "ocr_scale_2": true,
+    "ocr_page_timeout": true,
+    "stream_fixed_shell": true,
+    "stream_progress_parser": true,
+    "admin_lazy_tabs": true,
+    "sympy_pool": true,
+    "eval_judge_wired": true,
+    "eval_resume": true,
+    "eval_substring_removed": true,
+    "ok": true
+  },
+  "search_perf": {
+    "timings_ms": {
+      "default": [
+        42.8,
+        43.4,
+        49.9
+      ],
+      "keyword": [
+        39.4,
+        41.4,
+        41.8
+      ],
+      "deep_page": []
+    },
+    "best_ms": {
+      "default": 42.8,
+      "keyword": 39.4
+    },
+    "target_ms": 50,
+    "ok": true
+  },
+  "ok": true
+}

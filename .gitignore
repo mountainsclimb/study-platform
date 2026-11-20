@@ -1,0 +1,14 @@
+# 干净仓库：源码与文档入库，运行数据、备份、临时验收产物不入库。
+data/
+backups/
+.omx/
+.playwright-cli/
+__pycache__/
+.pytest_cache/
+.ruff_cache/
+node_modules/
+*.pyc
+*.log
+.env
+*.zip
+screenshots/ui-audit/

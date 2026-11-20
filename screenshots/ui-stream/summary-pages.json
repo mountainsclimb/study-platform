@@ -1,0 +1,316 @@
+{
+  "base_url": "http://127.0.0.1:8821",
+  "screenshots": [
+    "screenshots\\ui-stream\\desktop-home.png",
+    "screenshots\\ui-stream\\desktop-notes.png",
+    "screenshots\\ui-stream\\desktop-admin.png",
+    "screenshots\\ui-stream\\desktop-wrongbook.png",
+    "screenshots\\ui-stream\\desktop-upload.png",
+    "screenshots\\ui-stream\\desktop-settings.png",
+    "screenshots\\ui-stream\\mobile-home.png",
+    "screenshots\\ui-stream\\mobile-notes.png",
+    "screenshots\\ui-stream\\mobile-admin.png",
+    "screenshots\\ui-stream\\mobile-wrongbook.png",
+    "screenshots\\ui-stream\\mobile-upload.png",
+    "screenshots\\ui-stream\\mobile-settings.png"
+  ],
+  "metrics": {
+    "desktop": {
+      "home": {
+        "overflow": 0,
+        "primary": {
+          "x": 299,
+          "y": 420.8,
+          "width": 115,
+          "height": 44
+        },
+        "expect": {
+          ".pg-focus": true,
+          ".pg-inline-stats": true,
+          ".pg-focus-grid": true
+        },
+        "url_hash": "#/"
+      },
+      "notes": {
+        "overflow": 0,
+        "primary": {
+          "x": 1142.6,
+          "y": 114,
+          "width": 117,
+          "height": 44
+        },
+        "expect": {
+          ".pg-tabs": true,
+          ".pg-panel": true
+        },
+        "url_hash": "#/notes",
+        "interaction": {
+          "tabs": 3,
+          "docs": true,
+          "ai_steps": 3,
+          "ai_advanced": 1,
+          "estimate": "生成前确认 · 来源、资料块估算与使用模型\n\n整理来源：我的上传资料\n资料块：已选 0 份资料 · 预计 0 个结构块\n使用模型：尚未就绪：请先在模型设置中添加 API 和可使用的模型。\n生成方式：直接按资料结构生成\n\n生成前不会自动发起额",
+          "notes": true
+        }
+      },
+      "admin": {
+        "overflow": 0,
+        "primary": {
+          "x": 281,
+          "y": 247.8,
+          "width": 85,
+          "height": 44
+        },
+        "expect": {
+          ".pg-tabs": true,
+          ".pg-panel": true,
+          "#admin-panel-issues": true
+        },
+        "url_hash": "#/admin",
+        "interaction": {
+          "tabs": 3,
+          "issues": true,
+          "content": true,
+          "ops": true,
+          "readiness": true,
+          "backup": true,
+          "missing_buttons": [],
+          "review_items": 0,
+          "kp_section": true,
+          "lazy_initial_content": 0,
+          "panels_ready": {
+            "issues": true,
+            "content": true,
+            "ops": true
+          }
+        }
+      },
+      "wrongbook": {
+        "overflow": 0,
+        "primary": {
+          "x": 1259,
+          "y": 114,
+          "width": 143,
+          "height": 44
+        },
+        "expect": {
+          ".pg-filter-bar": true,
+          ".pg-card-grid, .empty, .error-panel": true
+        },
+        "url_hash": "#/wrongbook",
+        "interaction": {
+          "start": true,
+          "cards": 1,
+          "filters": 2,
+          "card_ok": true
+        }
+      },
+      "upload": {
+        "overflow": 0,
+        "primary": {
+          "x": 1176,
+          "y": 566.9,
+          "width": 115,
+          "height": 44
+        },
+        "expect": {
+          ".pg-step-rail": true,
+          ".pg-step-card": true,
+          "#upload-step-3": true
+        },
+        "url_hash": "#/upload",
+        "interaction": {
+          "step_links": 3,
+          "step_cards": 3,
+          "steps": [
+            1,
+            1,
+            1
+          ]
+        }
+      },
+      "settings": {
+        "overflow": 0,
+        "primary": {
+          "x": 301,
+          "y": 357.5,
+          "width": 145,
+          "height": 44
+        },
+        "expect": {
+          ".pg-api-status": true,
+          ".pg-default-models": true,
+          ".provider-form": true
+        },
+        "url_hash": "#/settings",
+        "interaction": {
+          "api_status": true,
+          "defaults": 7,
+          "task_editors": 7,
+          "add_form": true,
+          "fold": 2
+        }
+      }
+    },
+    "narrow-320": {
+      "home": {
+        "overflow": 0
+      },
+      "notes": {
+        "overflow": 0
+      },
+      "admin": {
+        "overflow": 0
+      },
+      "wrongbook": {
+        "overflow": 0
+      },
+      "upload": {
+        "overflow": 0
+      },
+      "settings": {
+        "overflow": 0
+      }
+    },
+    "mobile": {
+      "home": {
+        "overflow": 0,
+        "primary": {
+          "x": 33,
+          "y": 416.6,
+          "width": 115,
+          "height": 44
+        },
+        "expect": {
+          ".pg-focus": true,
+          ".pg-inline-stats": true,
+          ".pg-focus-grid": true
+        },
+        "url_hash": "#/"
+      },
+      "notes": {
+        "overflow": 0,
+        "primary": {
+          "x": 18,
+          "y": 218.8,
+          "width": 174,
+          "height": 44
+        },
+        "expect": {
+          ".pg-tabs": true,
+          ".pg-panel": true
+        },
+        "url_hash": "#/notes",
+        "interaction": {
+          "tabs": 3,
+          "docs": true,
+          "ai_steps": 3,
+          "ai_advanced": 1,
+          "estimate": "生成前确认 · 来源、资料块估算与使用模型\n\n整理来源：我的上传资料\n资料块：已选 0 份资料 · 预计 0 个结构块\n使用模型：尚未就绪：请先在模型设置中添加 API 和可使用的模型。\n生成方式：直接按资料结构生成\n\n生成前不会自动发起额",
+          "notes": true
+        }
+      },
+      "admin": {
+        "overflow": 0,
+        "primary": {
+          "x": 23,
+          "y": 232.8,
+          "width": 79,
+          "height": 44
+        },
+        "expect": {
+          ".pg-tabs": true,
+          ".pg-panel": true,
+          "#admin-panel-issues": true
+        },
+        "url_hash": "#/admin",
+        "interaction": {
+          "tabs": 3,
+          "issues": true,
+          "content": true,
+          "ops": true,
+          "readiness": true,
+          "backup": true,
+          "missing_buttons": [],
+          "review_items": 0,
+          "kp_section": true,
+          "lazy_initial_content": 0,
+          "panels_ready": {
+            "issues": true,
+            "content": true,
+            "ops": true
+          }
+        }
+      },
+      "wrongbook": {
+        "overflow": 0,
+        "primary": {
+          "x": 196,
+          "y": 218.8,
+          "width": 176,
+          "height": 44
+        },
+        "expect": {
+          ".pg-filter-bar": true,
+          ".pg-card-grid, .empty, .error-panel": true
+        },
+        "url_hash": "#/wrongbook",
+        "interaction": {
+          "start": true,
+          "cards": 1,
+          "filters": 2,
+          "card_ok": true
+        }
+      },
+      "upload": {
+        "overflow": 0,
+        "primary": {
+          "x": 242,
+          "y": 601.3,
+          "width": 115,
+          "height": 44
+        },
+        "expect": {
+          ".pg-step-rail": true,
+          ".pg-step-card": true,
+          "#upload-step-3": true
+        },
+        "url_hash": "#/upload",
+        "interaction": {
+          "step_links": 3,
+          "step_cards": 3,
+          "steps": [
+            1,
+            1,
+            1
+          ]
+        }
+      },
+      "settings": {
+        "overflow": 0,
+        "primary": {
+          "x": 39,
+          "y": 419.8,
+          "width": 145,
+          "height": 44
+        },
+        "expect": {
+          ".pg-api-status": true,
+          ".pg-default-models": true,
+          ".provider-form": true
+        },
+        "url_hash": "#/settings",
+        "interaction": {
+          "api_status": true,
+          "defaults": 7,
+          "task_editors": 7,
+          "add_form": true,
+          "fold": 2
+        }
+      }
+    }
+  },
+  "problems": [],
+  "page_errors": [],
+  "ok": true
+}

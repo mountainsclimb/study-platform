@@ -1,0 +1,475 @@
+{
+  "base_url": "http://127.0.0.1:8819",
+  "checks": [
+    {
+      "check": "markdown_sanitize",
+      "ok": true,
+      "detail": {
+        "stripped_style": true,
+        "kept_details": true,
+        "no_script": true,
+        "no_inline_handler": true,
+        "xss_flag": null,
+        "plain_text_present": true,
+        "failclosed_pre": true,
+        "failclosed_no_raw": true,
+        "failclosed_text": true,
+        "math_allows_math": true,
+        "math_allows_style": true,
+        "markdown_forbids_math": true,
+        "markdown_forbids_style": true,
+        "normal_heading": true,
+        "normal_details": true,
+        "normal_formula": true
+      }
+    },
+    {
+      "check": "job_stream_cleanup",
+      "ok": true,
+      "detail": {
+        "afterDirect": {
+          "closed": 1,
+          "size": 0
+        },
+        "closedRoute": 1,
+        "sizeAfterRoute": 0
+      }
+    },
+    {
+      "check": "busy_button_state",
+      "ok": true,
+      "detail": {
+        "connectedRestored": true,
+        "detachedKept": true
+      }
+    },
+    {
+      "check": "build_banner",
+      "ok": true,
+      "detail": {
+        "real_header": "16474ce773a6",
+        "banner_text": "应用已更新，请刷新页面以继续使用最新版本。\n立即刷新\n×",
+        "reset_state": {
+          "user": null,
+          "practiceView": null,
+          "resultsScrollTop": 0,
+          "filters": {},
+          "taskDefaults": {},
+          "providers": [],
+          "noteTab": "all",
+          "seen": 0,
+          "catalog": null
+        },
+        "banner_screenshot": "screenshots\\ui-integrated\\flows-build-banner.png"
+      }
+    },
+    {
+      "check": "formula_fallback",
+      "ok": true,
+      "detail": {
+        "asset_images": 1,
+        "katex_errors": 0,
+        "image_errors": 0,
+        "fallback_blocks": 1,
+        "screenshot": "screenshots\\ui-integrated\\flows-formula-fallback.png"
+      }
+    },
+    {
+      "check": "cross_page_qid",
+      "ok": true,
+      "detail": {
+        "qid": "8072bfe5908d3c9b:3#2",
+        "title": "原卷第3题",
+        "expected_title": "原卷第3题",
+        "error_panels": 0,
+        "selected_cards": 0,
+        "help_notice": "该题不在当前筛选结果的这一页中，已单独打开；可点「返回结果」继续浏览列表。",
+        "screenshot": "screenshots\\ui-integrated\\flows-cross-page-desktop.png",
+        "in_page": {
+          "hit_qid": "2fb4feccefc49e15:1",
+          "selected_count": 1,
+          "selected_qid": "2fb4feccefc49e15:1"
+        },
+        "mobile_title": "原卷第3题",
+        "mobile_screenshot": "screenshots\\ui-integrated\\flows-cross-page-mobile.png"
+      }
+    },
+    {
+      "check": "continuous_review",
+      "ok": true,
+      "detail": {
+        "archived_before": 1,
+        "seeded": {
+          "ids": [
+            "2fb4feccefc49e15:2",
+            "27571d311921718e:6",
+            "41fe7bd976440d17:5"
+          ],
+          "sessionTotal": 3,
+          "sessionQids": [
+            "2fb4feccefc49e15:2",
+            "27571d311921718e:6",
+            "41fe7bd976440d17:5"
+          ]
+        },
+        "rounds": [
+          {
+            "round": 1,
+            "title": "原卷第2题",
+            "next_text": "进入下一道复习题 →"
+          },
+          {
+            "round": 2,
+            "title": "原卷第6题",
+            "next_text": "进入下一道复习题 →"
+          },
+          {
+            "round": 3,
+            "title": "原卷第5题",
+            "next_text": "查看本轮复习小结"
+          }
+        ],
+        "summary": "🎉 本轮连续复习完成\n关闭小结\n本轮共复习 3 道到期错题，客观/核验答对 0 道。掌握度与下次复习间隔已自动更新。",
+        "summary_screenshot": "screenshots\\ui-integrated\\flows-review-summary.png"
+      }
+    },
+    {
+      "check": "submit_keep_selection",
+      "ok": true,
+      "detail": {
+        "qid": "14fe84b6df492bd5:13",
+        "title_before": "原卷第13题",
+        "title_after": "原卷第13题",
+        "buttons_before": [
+          "查看答案",
+          "提交作答，解锁答案"
+        ],
+        "buttons_after": [
+          "查看答案",
+          "提交这次作答"
+        ],
+        "hash": "#/practice?subject=%E5%8C%96%E5%AD%A6&type=single_choice&status=unattempted&qid=14fe84b6df492bd5%3A13",
+        "has_answer": true,
+        "has_solution": false,
+        "screenshot": "screenshots\\ui-integrated\\flows-submit-keep-selection.png"
+      }
+    },
+    {
+      "check": "hidden_reveal_buttons",
+      "ok": true,
+      "detail": {
+        "buttons": [
+          "提交作答，解锁答案"
+        ],
+        "answer_button": 0,
+        "solution_button": 0,
+        "empty_group": false,
+        "screenshot": "screenshots\\ui-integrated\\flows-hidden-reveal-buttons.png"
+      }
+    },
+    {
+      "check": "multi_filter_and_summary",
+      "ok": true,
+      "detail": {
+        "type_param": "calculation,essay",
+        "province_param": "上海,云南",
+        "search_hash": "#/practice?sort=year_desc&type=calculation%2Cessay&province=%E4%B8%8A%E6%B5%B7%2C%E4%BA%91%E5%8D%97&q=%E5%87%BD%E6%95%B0",
+        "result_count": "找到 1 道题 · 第 1 页",
+        "summary_samples": [
+          "（5）写出以〔图〕和〔图〕为原料制备〔图〕的合成路线流程图_______(无机试剂和两碳以下的有机试剂任用，合成路线示例见本题题干)。"
+        ],
+        "screenshot": "screenshots\\ui-integrated\\flows-multi-filter.png"
+      }
+    },
+    {
+      "check": "notes_composer_and_notes_state",
+      "ok": true,
+      "detail": {
+        "steps": 3,
+        "format_grid_in_step2": 1,
+        "format_grid_visible": true,
+        "requirements_visible": true,
+        "advanced_in_step3": 1,
+        "advanced_model_picker": 1,
+        "advanced_collapsed": true,
+        "step2_screenshot": "screenshots\\ui-integrated\\flows-notes-ai-step2.png",
+        "opened_note_visible": true,
+        "ai_panel_hidden": true,
+        "reindex_button": 1,
+        "failed_hint": true,
+        "docs_screenshot": "screenshots\\ui-integrated\\flows-notes-docs.png",
+        "ocr_dialog": true,
+        "reindex_cleared": 0
+      }
+    },
+    {
+      "check": "sidebar_note_wrap",
+      "ok": true,
+      "detail": {
+        "geoms": {
+          "1440": {
+            "lines": 1,
+            "text": "把知识，慢慢变成自己的",
+            "noteWidth": 202
+          },
+          "1024": {
+            "lines": 1,
+            "text": "把知识，慢慢变成自己的",
+            "noteWidth": 181
+          },
+          "390": {
+            "lines": 1,
+            "text": "把知识，慢慢变成自己的",
+            "noteWidth": 214
+          }
+        },
+        "screenshot": "screenshots\\ui-integrated\\flows-sidebar-note.png"
+      }
+    },
+    {
+      "check": "upload_state_and_method_badge",
+      "ok": true,
+      "detail": {
+        "method_badge": {
+          "text": "题型 / 通法导数-含参讨论复制存为笔记解析\n先求导再分类讨论。\n",
+          "has_method": true,
+          "has_label": true
+        },
+        "uploaded_extracted": true,
+        "save_failure_toast": "题目已上传，下一步请先识别并确认题干内容。\n题干保存失败，未开始求解：模拟保存失败",
+        "job_posts_after_failure": 0,
+        "reset_state": {
+          "upload": null,
+          "jobId": null,
+          "uploaded_notice": false
+        },
+        "screenshot": "screenshots\\ui-integrated\\flows-upload-reset.png"
+      }
+    },
+    {
+      "check": "settings_recovery_codes",
+      "ok": true,
+      "detail": {
+        "requests": [
+          {
+            "current_password": "integ-pass-123"
+          }
+        ],
+        "dialog": [
+          "生成新恢复码会使此前未使用的恢复码失效，继续？"
+        ],
+        "screenshot": "screenshots\\ui-integrated\\flows-settings-recovery.png"
+      }
+    },
+    {
+      "check": "settings_custom_provider",
+      "ok": true,
+      "detail": {
+        "preview_endpoint": "POSThttps://relay.example.com/v1/chat/completions",
+        "preview_request": {
+          "kind": "openai",
+          "base_url": "https://relay.example.com/v1/chat/completions",
+          "auth_mode": "auto",
+          "api_key": "sk-ui-flow-test-123456",
+          "compat": {
+            "max_tokens_param": "auto",
+            "timeout_seconds": 120,
+            "use_proxy_env": false
+          }
+        },
+        "models_listed": 120,
+        "probe_request": {
+          "kind": "openai",
+          "base_url": "https://relay.example.com/v1/chat/completions",
+          "auth_mode": "bearer",
+          "api_key": "sk-ui-flow-test-123456",
+          "extra_headers": {
+            "HTTP-Referer": "https://zhixu.local"
+          },
+          "compat": {
+            "max_tokens_param": "max_tokens",
+            "timeout_seconds": 45,
+            "use_proxy_env": false
+          },
+          "model": "relay-model-000"
+        },
+        "save_request": {
+          "auth_mode": "bearer",
+          "compat": {
+            "max_tokens_param": "max_tokens",
+            "timeout_seconds": 45,
+            "use_proxy_env": false
+          },
+          "models": 120,
+          "extra_headers": {
+            "HTTP-Referer": "https://zhixu.local"
+          }
+        },
+        "embedding_save": {
+          "mode": "custom",
+          "model": "text-embedding-3-small",
+          "base_url": "https://embed.example.com/v1"
+        },
+        "embedding_test_text": "向量接口正常；模型：text-embedding-3-small；维度：1536；耗时：46 ms；来源：custom",
+        "privacy_leaks": [],
+        "screenshot": "screenshots\\ui-integrated\\flows-settings-custom-provider.png"
+      }
+    },
+    {
+      "check": "settings_task_defaults",
+      "ok": true,
+      "detail": {
+        "task_rows": 7,
+        "judge_set_request": {
+          "task": "judge",
+          "primary_provider_id": null,
+          "primary_model": null,
+          "verify_provider_id": null,
+          "verify_model": null,
+          "judge_provider_id": 11,
+          "judge_model": "model-a",
+          "mode": "accurate"
+        },
+        "judge_clear_request": {
+          "task": "judge",
+          "primary_provider_id": null,
+          "primary_model": null,
+          "verify_provider_id": null,
+          "verify_model": null,
+          "judge_provider_id": null,
+          "judge_model": null,
+          "mode": "fast"
+        },
+        "explain_request": {
+          "task": "explain",
+          "primary_provider_id": 11,
+          "primary_model": "model-a",
+          "verify_provider_id": 12,
+          "verify_model": "model-c",
+          "judge_provider_id": null,
+          "judge_model": null,
+          "mode": "accurate"
+        },
+        "put_count": 4,
+        "screenshot": "screenshots\\ui-integrated\\flows-settings-task-defaults.png"
+      }
+    },
+    {
+      "check": "model_picker_persistence",
+      "ok": true,
+      "detail": {
+        "primary_value": "[11,\"model-a\"]",
+        "modes_written": [
+          "fast",
+          "accurate",
+          "accurate",
+          "fast"
+        ],
+        "fast_state": {
+          "task": "explain",
+          "primary_provider_id": 11,
+          "primary_model": "model-a",
+          "verify_provider_id": null,
+          "verify_model": null,
+          "judge_provider_id": null,
+          "judge_model": null,
+          "mode": "fast"
+        },
+        "accurate_state": {
+          "task": "explain",
+          "primary_provider_id": 11,
+          "primary_model": "model-a",
+          "verify_provider_id": 11,
+          "verify_model": "model-b",
+          "judge_provider_id": null,
+          "judge_model": null,
+          "mode": "accurate"
+        },
+        "current_model_label": "当前模型：model-a [👁视觉 {}JSON] · 快速模式（单模型）",
+        "screenshot": "screenshots\\ui-integrated\\flows-model-picker-persistence.png"
+      }
+    },
+    {
+      "check": "mobile_filters",
+      "ok": true,
+      "detail": {
+        "metrics_390": {
+          "more_visible": true,
+          "clear_visible": true,
+          "head_title_hidden": true,
+          "list_max_height": "none",
+          "list_overflow": "visible",
+          "list_scroll_height": 1283,
+          "list_client_height": 1283,
+          "scroll_overflow": "visible",
+          "list_box_height": 1282.875
+        },
+        "panel_390": {
+          "left": 31,
+          "right": 241,
+          "width": 210,
+          "viewport": 390,
+          "overflow_right": false,
+          "overflow_left": false
+        },
+        "metrics_320": {
+          "more_visible": true,
+          "clear_visible": true,
+          "head_title_hidden": true,
+          "list_max_height": "none",
+          "list_overflow": "visible",
+          "list_scroll_height": 1304,
+          "list_client_height": 1304,
+          "scroll_overflow": "visible",
+          "list_box_height": 1303.875
+        },
+        "panel_320": {
+          "left": 31,
+          "right": 241,
+          "width": 210,
+          "viewport": 320,
+          "overflow_right": false,
+          "overflow_left": false
+        },
+        "overflow_320": 0,
+        "screenshot_390": "screenshots\\ui-integrated\\flows-mobile-filters-320.png"
+      }
+    }
+  ],
+  "screenshots": [
+    "screenshots\\ui-integrated\\flows-build-banner.png",
+    "screenshots\\ui-integrated\\flows-formula-fallback.png",
+    "screenshots\\ui-integrated\\flows-cross-page-desktop.png",
+    "screenshots\\ui-integrated\\flows-cross-page-mobile.png",
+    "screenshots\\ui-integrated\\flows-review-next-bar.png",
+    "screenshots\\ui-integrated\\flows-review-summary.png",
+    "screenshots\\ui-integrated\\flows-submit-keep-selection.png",
+    "screenshots\\ui-integrated\\flows-hidden-reveal-buttons.png",
+    "screenshots\\ui-integrated\\flows-multi-filter.png",
+    "screenshots\\ui-integrated\\flows-notes-ai-step2.png",
+    "screenshots\\ui-integrated\\flows-notes-docs.png",
+    "screenshots\\ui-integrated\\flows-sidebar-note.png",
+    "screenshots\\ui-integrated\\flows-upload-reset.png",
+    "screenshots\\ui-integrated\\flows-settings-recovery.png",
+    "screenshots\\ui-integrated\\flows-settings-custom-provider.png",
+    "screenshots\\ui-integrated\\flows-settings-task-defaults.png",
+    "screenshots\\ui-integrated\\flows-model-picker-persistence.png",
+    "screenshots\\ui-integrated\\flows-mobile-filters-320.png"
+  ],
+  "page_errors": [],
+  "console_errors": [],
+  "http_errors": [],
+  "allowed_http": [
+    "/x",
+    "/api/ai/jobs/stale-job-after-completion",
+    "/api/uploads/99001/confirm"
+  ],
+  "allowed_console": [
+    "Content Security Policy|inline event handler",
+    "status of 404",
+    "status of 422",
+    "status of 500"
+  ],
+  "problems": [],
+  "ok": true
+}

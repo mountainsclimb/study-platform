@@ -1,0 +1,57 @@
+{
+  "base_url": "http://127.0.0.1:8823",
+  "screenshots": [
+    "screenshots\\ui-s3\\desktop-practice.png",
+    "screenshots\\ui-s3\\desktop-question.png",
+    "screenshots\\ui-s3\\mobile-results.png",
+    "screenshots\\ui-s3\\mobile-question.png",
+    "screenshots\\ui-s3\\print-question.png"
+  ],
+  "metrics": {
+    "desktop": {
+      "filter_card_height": 158,
+      "first_result_y": 542.5,
+      "reading_width": 792,
+      "action_bar_visible": true,
+      "result_cards": 12
+    },
+    "question": {
+      "tabs": 3,
+      "choices": 4,
+      "action_primary": 2,
+      "shared_material": 1,
+      "title": "原卷第1题",
+      "path": "2026上海高考学业水平等级性考试-化学.pdf\n原卷第1题\n阅读材料与共用题干"
+    },
+    "mobile": {
+      "initial_view": "results",
+      "first_result_y": 405,
+      "question_view": "question",
+      "back_visible": true,
+      "action_bar_visible": true,
+      "back_view": "results",
+      "horizontal_overflow": 0
+    },
+    "answer_flow": {
+      "submitted": true,
+      "has_answer_button": true,
+      "has_solution_button": false,
+      "answer_panel": true,
+      "solution_panel": false,
+      "collapsed": true,
+      "errors": [],
+      "buttons_after_submit": [
+        "查看答案",
+        "提交这次作答"
+      ]
+    },
+    "print": {
+      "filter_visible": false,
+      "results_visible": false,
+      "ai_panel_visible": false,
+      "reading_visible": true
+    }
+  },
+  "problems": [],
+  "ok": true
+}
