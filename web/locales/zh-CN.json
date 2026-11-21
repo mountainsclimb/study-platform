@@ -5285,5 +5285,11 @@
   "study.m6.open": "查看",
   "study.m6.unexpectedResponse": "服务返回格式异常，请稍后重试。",
   "study.m6.networkFailed": "网络连接失败，请稍后重试。",
-  "study.m6.unknownError": "未知原因"
+  "study.m6.unknownError": "未知原因",
+  "study.m7.saveAsNote": "保存为笔记",
+  "study.m7.savingAsNote": "正在保存为笔记…",
+  "study.m7.saveNoteDone": "已保存为笔记（出处已保留）",
+  "study.m7.saveNoteExists": "该报告已保存为笔记",
+  "study.m7.savedAsNote": "已保存",
+  "study.m7.saveNoteFailed": "保存为笔记失败：{reason}"
 }

@@ -166,6 +166,30 @@ def _run_flows(client_a, client_b, data_dir: Path, report: dict) -> None:
         record("专题报告 Markdown 可下载", markdown.status_code == 200
                and "text/markdown" in markdown.headers.get("content-type", ""),
                f"HTTP {markdown.status_code} bytes={len(markdown.content)}")
+        saved_note = client_a.post(f"/api/topic-reports/{report_id}/save-note")
+        saved_body = saved_note.json() if saved_note.status_code in (200, 201) else {}
+        note_id = (saved_body.get("note") or {}).get("id")
+        note_content = ""
+        if note_id:
+            note_detail = client_a.get(f"/api/notes/{note_id}")
+            note_obj = note_detail.json() if note_detail.status_code == 200 else {}
+            if isinstance(note_obj, dict) and isinstance(note_obj.get("note"), dict):
+                note_obj = note_obj["note"]
+            note_content = str((note_obj or {}).get("content") or "")
+        record(
+            "专题报告保存为带出处的笔记（M7）",
+            saved_note.status_code in (200, 201) and bool(note_id)
+            and "出处" in note_content and "第 1 页" in note_content,
+            f"HTTP {saved_note.status_code} note_id={note_id} bytes={len(note_content)}",
+        )
+        duplicate = client_a.post(f"/api/topic-reports/{report_id}/save-note")
+        duplicate_body = duplicate.json() if duplicate.status_code in (200, 201) else {}
+        record(
+            "重复保存为笔记不重复创建（M7）",
+            duplicate.status_code in (200, 201) and duplicate_body.get("saved") is False
+            and duplicate_body.get("duplicate_of_note_id") == note_id,
+            f"HTTP {duplicate.status_code} saved={duplicate_body.get('saved')}",
+        )
         record("他人专题报告不可读（404）", client_b.get(f"/api/topic-reports/{report_id}").status_code == 404,
                "HTTP 404")
 

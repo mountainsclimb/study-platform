@@ -10,6 +10,9 @@
 - **离线 HTML**：单文件播放器，课程 JSON 与 CSS/JS 全部内联，无任何 http(s) 外链；支持场景切换、
   字幕/浏览器语音、测验查看；交互场景用 ``<iframe sandbox="allow-scripts" srcdoc>`` 嵌入已校验 HTML；
   体积超过 ``MAX_STANDALONE_HTML_BYTES``（400MB）时自动改回 ZIP 并带 ``X-Zhixu-Export-Fallback: zip``。
+  M7（§5.4）：含原理演示场景时额外内联 flow/iso 渲染器 bundle 与离线演示播放器
+  （``web/vendor/offline/offline-demo.js`` + ``web/js/offline/offlineDemo.js``），HTML / ZIP 保留
+  可交互内容（流程/等距/工厂回放），PPTX / PDF / 打印讲义仍只放海报与文字。
 - **ZIP**：``manifest.json`` + ``course.json`` + ``scenes/scene_NNN.json`` + ``assets/**``，
   可被 ``app/classroom/importer.py`` 原样导入（不调用模型）。
 - **教学资源包（package）**：``course.pptx`` + 每个 interactive 场景一份独立自包含 HTML
@@ -31,6 +34,7 @@ import io
 import json
 import math
 import re
+from pathlib import Path
 from urllib.parse import quote
 import zipfile
 
@@ -180,12 +184,17 @@ def _demo_content_lists(content) -> tuple[list[str], int]:
     return assumptions, step_count
 
 
-def _demo_section_html(title, content, *, heading_tag: str = "h2") -> str:
+def _demo_section_html(title, content, *, heading_tag: str = "h2",
+                       offline_player: bool = False) -> str:
     """单个原理演示场景 → 静态 HTML 片段（离线 HTML 附录 / 打印讲义共用）。
 
     输出 ``<section class="cls-demo-scene" data-scene-type="demo" data-artifact-id data-fixed-revision>``：
     固定版本徽标、标题、可选 PNG 海报（data URI）、说明、假设列表、步骤数，以及内嵌
     ``application/json`` 附件快照（快照里的 ``</script>`` 已转义，脚本不会被执行）。
+
+    M7：``offline_player=True``（仅离线 HTML 附录）时额外标注 ``data-offline-demo="<kind>"``，
+    供导出播放器脚本（``web/js/offline/offlineDemo.js``）识别并挂载可交互视图；打印讲义 /
+    PDF 走默认值，不出现任何播放器标记（仍为静态海报 + 文字）。
     """
     artifact = _demo_artifact_of(content)
     artifact_id = html_lib.escape(str(artifact.get("artifact_id") or ""), quote=True)
@@ -193,10 +202,15 @@ def _demo_section_html(title, content, *, heading_tag: str = "h2") -> str:
     kind_label = html_lib.escape(_demo_kind_label(artifact.get("kind")))
     scene_title = str(title or artifact.get("title") or "原理演示")
     heading_tag = heading_tag if heading_tag in ("h2", "h3") else "h2"
+    offline_attr = ""
+    if offline_player:
+        offline_attr = ' data-offline-demo="%s"' % html_lib.escape(
+            str(artifact.get("kind") or ""), quote=True
+        )
     parts: list[str] = [
         '<section class="cls-demo-scene" data-scene-type="demo" '
-        'data-artifact-id="%s" data-fixed-revision="%d" data-demo-frame-ready="1">'
-        % (artifact_id, revision),
+        'data-artifact-id="%s" data-fixed-revision="%d" data-demo-frame-ready="1"%s>'
+        % (artifact_id, revision, offline_attr),
         '<div class="cls-demo-head"><span class="cls-demo-badge">原理演示 · 固定版本 v%d</span>'
         '<span class="cls-demo-kind">%s</span></div>' % (revision, kind_label),
         "<%s>%s</%s>" % (heading_tag, html_lib.escape(scene_title), heading_tag),
@@ -238,15 +252,21 @@ def _demo_section_html(title, content, *, heading_tag: str = "h2") -> str:
     return "".join(parts)
 
 
-def _demo_sections_html(snapshot: dict) -> str:
-    """离线 HTML 末尾的「演示附件静态备份」：不执行 JS 也能看到固定版本内容。"""
+def _demo_sections_html(snapshot: dict, *, offline_player: bool = False) -> str:
+    """离线 HTML 末尾的「演示附件静态备份」：不执行 JS 也能看到固定版本内容。
+
+    M7：含内联播放器时（``offline_player=True``）给每个 demo section 加 ``data-offline-demo``
+    标记，播放器脚本挂载成功后再补 ``data-offline-demo-mounted="1"``；无播放器时与既有输出一致。
+    """
     scenes = snapshot.get("scenes") if isinstance(snapshot, dict) else None
     blocks: list[str] = []
     for scene in scenes or []:
         if not isinstance(scene, dict) or str(scene.get("type") or "") != "demo":
             continue
         content = scene.get("content") if isinstance(scene.get("content"), dict) else {}
-        blocks.append(_demo_section_html(scene.get("title") or "", content))
+        blocks.append(_demo_section_html(
+            scene.get("title") or "", content, offline_player=offline_player,
+        ))
     if not blocks:
         return ""
     return (
@@ -256,6 +276,68 @@ def _demo_sections_html(snapshot: dict) -> str:
         "播放器内可逐页查看，导出文件只保留插入时的固定版本快照，源附件后续更新不会改变课件。</p>"
         + "".join(blocks)
         + "</section>"
+    )
+
+
+# ---------------------------------------------------------------------------
+# M7：离线可交互演示播放器（HTML / ZIP 内联；PPTX / PDF / 打印讲义仍为海报 + 文字）
+#
+# 离线单文件 HTML 不允许外链、也不允许联网加载 ES module，因此播放器由两块**提交在仓库内**
+# 的静态文本组成，导出时原样内联：
+# - ``web/vendor/offline/offline-demo.js``：flow / iso 两个纯 ESM 渲染器的确定性文本转换
+#   产物（无 import / 无 export default，见 scripts/build_offline_demo_bundle.py）；
+# - ``web/js/offline/offlineDemo.js``：挂在 ``section.cls-demo-scene`` 上的挂载/分步/工厂回放
+#   逻辑（纯 DOM API，只执行我们自己的代码；附件 JSON 只作数据）。
+# 找不到产物或源文件时退回既有静态海报输出（不抛异常、不 500）。
+# ---------------------------------------------------------------------------
+
+_WEB_ROOT = Path(__file__).resolve().parents[2] / "web"
+_OFFLINE_DEMO_BUNDLE_PATH = _WEB_ROOT / "vendor" / "offline" / "offline-demo.js"
+_OFFLINE_DEMO_PLAYER_PATH = _WEB_ROOT / "js" / "offline" / "offlineDemo.js"
+#: flow / iso 渲染器（``web/vendor/principles/*.js``）的样式定义；离线单文件不加载全局样式表，
+#: 因此只在含播放器时内联（无 http(s)/url()/@import 等外链，内联前再校验一次）。
+_OFFLINE_PRINCIPLES_CSS_PATH = _WEB_ROOT / "styles-principles.css"
+_OFFLINE_DEMO_SCRIPT_CLOSE_RE = re.compile(r"</script", re.IGNORECASE)
+_OFFLINE_CSS_UNSAFE_RE = re.compile(r"https?://|url\(|@import|@font-face|<", re.IGNORECASE)
+
+
+def _read_static_text(path: Path) -> str:
+    try:
+        return path.read_text(encoding="utf-8")
+    except (OSError, UnicodeDecodeError):
+        return ""
+
+
+def _offline_demo_bundle_js() -> str:
+    """内联用 flow/iso 播放器 bundle 文本；产物缺失时返回空串（导出退回静态海报）。"""
+    return _read_static_text(_OFFLINE_DEMO_BUNDLE_PATH).replace("\r\n", "\n")
+
+
+def _offline_demo_player_js() -> str:
+    """离线 HTML 内联的演示挂载脚本（``web/js/offline/offlineDemo.js`` 原文）。"""
+    return _read_static_text(_OFFLINE_DEMO_PLAYER_PATH).replace("\r\n", "\n")
+
+
+def _offline_demo_principles_css() -> str:
+    """flow/iso SVG 的 ``.pd-*`` 样式（自带零外链；含外链标记时整体放弃，退回无样式安全输出）。"""
+    text = _read_static_text(_OFFLINE_PRINCIPLES_CSS_PATH).replace("\r\n", "\n")
+    if not text.strip() or _OFFLINE_CSS_UNSAFE_RE.search(text):
+        return ""
+    return text if text.endswith("\n") else text + "\n"
+
+
+def _inline_script_text(script: str) -> str:
+    """内联 ``<script>`` 的防御性转义：源码已校验不含 ``</script``，这里仍按 HTML 规则转义。"""
+    return _OFFLINE_DEMO_SCRIPT_CLOSE_RE.sub("<\\/script", str(script or "")).rstrip("\n")
+
+
+def _offline_demo_scripts_html(bundle_js: str, player_js: str) -> str:
+    """``player bundle + 挂载逻辑`` 两段内联脚本（仅含演示场景的导出才会非空）。"""
+    if not bundle_js.strip() or not player_js.strip():
+        return ""
+    return (
+        "<script>\n%s\n</script>\n<script>\n%s\n</script>\n"
+        % (_inline_script_text(bundle_js), _inline_script_text(player_js))
     )
 
 
@@ -1354,6 +1436,84 @@ body.capture .capture-subtitle .who { color: #60a5fa; margin-right: 12px; font-w
 }
 """
 
+#: M7：离线可交互演示播放器样式（只在含演示场景、且内联了播放器的导出里追加；
+#: 无演示场景的课程沿用上面的既有 CSS，输出结构不变）。
+_OFFLINE_DEMO_CSS = """
+/* 离线可交互演示播放器（M7 · 与 web/js/offline/offlineDemo.js 配套）。
+   先补一组浅色设计令牌：flow/iso 渲染器的 .pd-* 样式（web/styles-principles.css）
+   复用全局令牌，离线单文件不加载全局样式表，这里给出与在线浅色主题一致的取值。 */
+:root {
+  --paper: #f7f6f1; --surface: #fffefa; --rail: #f0f2eb;
+  --ink: #182927; --soft: #556761; --muted: #556761;
+  --accent: #286552; --accent-deep: #194e3e; --tint: #e8f1e9;
+  --line: #dedfd6; --focus: #127963;
+}
+.cls-demo-offline { margin: 12px 0 4px; }
+/* 与在线播放器 .pd-stage 一致的固定舞台：SVG 按 viewBox 等比缩放（preserveAspectRatio=meet），
+   避免窄 viewBox 的等距图被拉满 1000px 后文字过大。 */
+.cls-demo-offline-view { width: 100%; height: clamp(280px, 46vh, 460px);
+  display: flex; align-items: center; justify-content: center; overflow: hidden;
+  background: #ffffff; border: 1px solid #e2e8f0; border-radius: 10px; }
+.cls-demo-offline-view svg { display: block; width: 100%; height: 100%; max-width: 100%; }
+.cls-demo-offline-controls { display: flex; flex-wrap: wrap; align-items: center; gap: 8px;
+  margin: 10px 0 6px; }
+.cls-demo-offline button, .offline-demo-btn { font: inherit; font-size: 13px; padding: 6px 11px;
+  min-height: 32px; border-radius: 8px; border: 1px solid #cbd5e1; background: #f8fafc;
+  color: #1f2937; cursor: pointer; }
+.cls-demo-offline button:hover:not(:disabled) { background: #e2e8f0; }
+.cls-demo-offline button:disabled { opacity: .45; cursor: default; }
+.offline-demo-btn-primary { background: #1d4ed8 !important; color: #eff6ff !important;
+  border-color: #1d4ed8 !important; }
+.offline-demo-step { font-size: 13px; color: #334155; }
+.offline-demo-hint { margin: 4px 0; font-size: 12px; color: #64748b; }
+.cls-demo-offline-error { margin: 10px 0 0; padding: 8px 12px; background: #fff7ed; border: 1px dashed
+  #fdba74; border-radius: 8px; color: #9a3412; font-size: 12px; line-height: 1.6; }
+/* 工厂仿真回放（仅用真实 metrics / events，不引入 three.js）。 */
+.offline-demo-factory { display: flex; flex-direction: column; gap: 10px; }
+.offline-demo-metrics { display: grid; grid-template-columns: repeat(auto-fit, minmax(150px, 1fr));
+  gap: 8px; }
+.offline-demo-metric { border: 1px solid #e2e8f0; border-radius: 8px; padding: 8px 10px;
+  background: #f8fafc; display: flex; flex-direction: column; gap: 2px; }
+.offline-demo-metric-label { font-size: 12px; color: #64748b; }
+.offline-demo-metric-value { font-size: 16px; font-weight: 600; color: #0f172a; }
+.offline-demo-metric-note { font-size: 11px; color: #9a3412; line-height: 1.5; }
+.offline-demo-flow-svg { display: block; width: 100%; height: auto; max-width: 100%;
+  margin: 2px 0; }
+.offline-demo-svg-box { fill: #ffffff; stroke: #cbd5e1; stroke-width: 1.5; }
+.offline-demo-svg-station[data-state="busy"] .offline-demo-svg-box { fill: #eff6ff; stroke: #3b82f6; }
+.offline-demo-svg-station[data-state="blocked"] .offline-demo-svg-box { fill: #fff7ed;
+  stroke: #f97316; }
+.offline-demo-svg-label { font-size: 12px; fill: #0f172a; }
+.offline-demo-svg-queue { font-size: 11px; fill: #64748b; }
+.offline-demo-svg-arrow { stroke: #94a3b8; stroke-width: 1.5; }
+.offline-demo-svg-arrowhead { fill: #94a3b8; }
+.offline-demo-line { display: flex; align-items: stretch; gap: 6px; overflow-x: auto; padding: 6px 0; }
+.offline-demo-station { min-width: 150px; flex: 1 1 0; border: 1px solid #e2e8f0; border-radius: 8px;
+  padding: 8px 10px; background: #ffffff; display: flex; flex-direction: column; gap: 4px; }
+.offline-demo-station[data-state="busy"] { border-color: #93c5fd; background: #eff6ff; }
+.offline-demo-station[data-state="blocked"] { border-color: #fdba74; background: #fff7ed; }
+.offline-demo-station[data-active="1"] { box-shadow: 0 0 0 2px #1d4ed8 inset; }
+.offline-demo-station-label { font-size: 14px; color: #111827; }
+.offline-demo-station-state { font-size: 12px; color: #1d4ed8; }
+.offline-demo-station-queue { font-size: 12px; color: #334155; }
+.offline-demo-station-util, .offline-demo-station-wait { font-size: 11px; color: #64748b; }
+.offline-demo-queue-bar { height: 6px; border-radius: 999px; background: #e2e8f0; overflow: hidden; }
+.offline-demo-queue-fill { display: block; width: 0; height: 100%; background: #2563eb;
+  transition: width .18s ease-out; }
+.offline-demo-arrow { align-self: center; color: #94a3b8; font-size: 16px; }
+.offline-demo-timeline { border-top: 1px dashed #e2e8f0; padding-top: 8px; }
+.offline-demo-range { flex: 1 1 180px; min-width: 140px; accent-color: #1d4ed8; }
+.offline-demo-time { font-size: 12px; color: #334155; white-space: nowrap; }
+.offline-demo-event { margin: 2px 0; font-size: 13px; color: #1f2937; }
+.offline-demo-eventlist { margin: 4px 0 0; padding: 0 0 0 18px; max-height: 220px; overflow: auto;
+  font-size: 12px; color: #64748b; }
+.offline-demo-eventitem.is-past { color: #1f2937; font-weight: 600; }
+/* 视频导出捕获模式（window.__zhixuCapture.gotoScene 触发）：隐藏演示播放控件，
+   截图只保留演示画面（与既有 body.capture 规则同一套类，不额外引入脚本开关）。 */
+body.capture [data-offline-demo-controls] { display: none !important; }
+body.capture .cls-demo-offline-error, body.capture .offline-demo-hint { display: none !important; }
+"""
+
 _HTML_JS = r"""
 (function () {
   var DATA = JSON.parse(document.getElementById('course-data').textContent);
@@ -2252,7 +2412,7 @@ __DEMO_META__
 </div>
 <script id="course-data" type="application/json">__DATA__</script>
 <script>__JS__</script>
-</body>
+__OFFLINE_DEMO_SCRIPTS__</body>
 </html>
 """
 
@@ -2263,6 +2423,11 @@ def build_offline_html(snapshot: dict, tts_assets: dict[int, dict] | None = None
     M4：原理演示场景除在播放器内按固定版本快照渲染外，还在正文末尾附加一份**静态 HTML 备份**
     （``section.cls-demo-scene[data-fixed-revision]`` + 内嵌 ``application/json`` 快照），
     保证不执行脚本的阅读器 / 打印 / 第三方解析也能读到固定版本内容。
+
+    M7：含演示场景时，在模板末尾追加两段内联脚本——``web/vendor/offline/offline-demo.js``
+    （flow/iso 渲染器 bundle）与 ``web/js/offline/offlineDemo.js``（挂载/分步/工厂回放），
+    让 HTML / ZIP 保留可交互内容；PPTX / PDF / 打印讲义不经过这里，仍为海报 + 文字。
+    **无演示场景时不追加任何内容**：``__OFFLINE_DEMO_SCRIPTS__`` 替换为空串，输出与既有完全一致。
     """
     data = json.loads(json.dumps(snapshot, ensure_ascii=False))
     audio_map = tts_assets or {}
@@ -2279,22 +2444,34 @@ def build_offline_html(snapshot: dict, tts_assets: dict[int, dict] | None = None
     data_json = json.dumps(data, ensure_ascii=False, separators=(",", ":")).replace("</", "<\\/")
     # P3：文末「参考来源」列表（静态 HTML，纯文本链接；无来源时为空，不引入任何外链资源）。
     sources_html = _sources_html(data.get("sources") if isinstance(data.get("sources"), list) else [])
-    # M4：文末「演示附件（固定版本）」静态备份（无演示场景时为空，既有导出结构不变）。
-    demos_html = _demo_sections_html(data)
     # M5：含演示场景时输出静态「帧就绪」标记（视频/截图管线等待；运行时另有 DOM
     # data-demo-frame-ready / zhixu:demo-ready，静态标记便于外部工具与验收核对）。
     has_demo = any(
         str((scene.get("content") or {}).get("type") or scene.get("scene_type") or "") == "demo"
         for scene in data.get("scenes") or []
     )
+    # M7：离线可交互播放器（bundle + 挂载脚本都来自仓库内提交的静态文件）。产物缺失时
+    # 退回既有「静态海报 + 数据 JSON」输出，不抛异常。
+    demo_bundle_js = _offline_demo_bundle_js() if has_demo else ""
+    demo_player_js = _offline_demo_player_js() if has_demo else ""
+    demo_scripts = _offline_demo_scripts_html(demo_bundle_js, demo_player_js)
+    has_offline_player = bool(demo_scripts)
+    # M4：文末「演示附件（固定版本）」静态备份（无演示场景时为空，既有导出结构不变）。
+    demos_html = _demo_sections_html(data, offline_player=has_offline_player)
     demo_meta = '<meta name="zhixu-demo-frame-ready" content="1">' if has_demo else ""
+    if has_offline_player:
+        # 顺序：既有样式 → flow/iso 的 .pd-* 样式 → 离线播放器覆盖样式（后者优先）。
+        css_text = _HTML_CSS + _offline_demo_principles_css() + _OFFLINE_DEMO_CSS
+    else:
+        css_text = _HTML_CSS
     return (
         _HTML_TEMPLATE
         .replace("__JS__", _HTML_JS)
-        .replace("__CSS__", _HTML_CSS)
+        .replace("__CSS__", css_text)
         .replace("__SOURCES__", sources_html)
         .replace("__DEMOS__", demos_html)
         .replace("__DEMO_META__", demo_meta)
+        .replace("__OFFLINE_DEMO_SCRIPTS__", demo_scripts)
         .replace("__TITLE__", title)
         .replace("__DATA__", data_json)
     )
@@ -2749,6 +2926,30 @@ async def render_course_pdf(course: dict, scenes: list[dict]) -> tuple[bytes, in
 # 课程 ZIP
 # ---------------------------------------------------------------------------
 
+def _offline_html_for_zip(course: dict, scenes: list[dict],
+                          tts_assets: dict[int, dict] | None = None) -> bytes | None:
+    """ZIP 内的单文件可交互播放器（M7）：仅演示场景需要；任何异常返回 None，不改既有 ZIP 结构。
+
+    复用 ``build_offline_html``（与 ``GET /export?format=html`` 完全同源），并把 slide 引用的
+    图片素材内联成 data URI，保证 ZIP 解开后离线打开也能看到完整内容。
+    """
+    try:
+        user_id = int(course.get("user_id") or 0)
+    except (TypeError, ValueError):
+        user_id = 0
+    html_scenes = scenes
+    if user_id > 0:
+        try:
+            html_scenes = _inline_scene_images(scenes, user_id)
+        except Exception:  # 素材内联失败时仍导出（演示数据本身不依赖图片素材）
+            html_scenes = scenes
+    try:
+        snapshot = build_snapshot(course, html_scenes, for_html=True)
+        return build_offline_html(snapshot, tts_assets).encode("utf-8")
+    except Exception:  # 播放器增强不能导致 ZIP 导出失败
+        return None
+
+
 def build_course_zip(course: dict, scenes: list[dict], *, tts_assets: dict[int, dict] | None = None,
                      resources: list[dict] | None = None, note: str = "") -> bytes:
     """课程 ZIP：manifest.json + course.json + scenes/*.json + assets/**，可被导入接口还原。
@@ -2756,6 +2957,8 @@ def build_course_zip(course: dict, scenes: list[dict], *, tts_assets: dict[int, 
     M4：额外的固定版本原理演示场景会写 ``demos/scene-<NN>-<artifact_id>.json``（附件快照 +
     固定版本说明），并在 manifest 里追加 ``demoScenes`` 与 ``capabilities`` 的 ``demo-scenes``；
     没有演示场景时 ZIP 结构与既有导出完全一致。
+    M7：含演示场景时额外写 ``offline.html``（与 ``format=html`` 相同的单文件可交互播放器，
+    内联 flow/iso/工厂回放脚本，零外链）；无演示场景不新增该文件。
     """
     course_public = _course_snapshot(course)
     tts_map = tts_assets or {}
@@ -2893,6 +3096,10 @@ def build_course_zip(course: dict, scenes: list[dict], *, tts_assets: dict[int, 
     if demo_entries:
         # M4：手工插入的固定版本演示场景清单（无演示场景时不写字段，既有 ZIP 结构不变）。
         manifest["demoScenes"] = demo_entries
+    # M7：含演示场景的 ZIP 额外携带单文件可交互播放器（无演示场景不新增文件/字段）。
+    offline_html_payload = _offline_html_for_zip(course, scenes, tts_map) if demo_entries else None
+    if offline_html_payload:
+        manifest["offlineHtml"] = "offline.html"
     buffer = io.BytesIO()
     with zipfile.ZipFile(buffer, "w", zipfile.ZIP_DEFLATED) as archive:
         archive.writestr("manifest.json", json.dumps(manifest, ensure_ascii=False, indent=2).encode("utf-8"))
@@ -2901,6 +3108,8 @@ def build_course_zip(course: dict, scenes: list[dict], *, tts_assets: dict[int, 
             archive.writestr(path, data)
         for path, data in demo_files.items():
             archive.writestr(path, data)
+        if offline_html_payload:
+            archive.writestr("offline.html", offline_html_payload)
         if sources:
             # P3：来源清单（标题/链接/站点/日期/摘要），与导出快照里的 sources 一致。
             archive.writestr("sources.json", _sources_json_bytes(sources))

@@ -246,6 +246,13 @@ def _run_flows(client_a, client_b, report: dict) -> None:
         and artifact["artifact_id"] in html_text and "cls-demo-scene" in html_text,
         f"HTTP {html.status_code} bytes={len(html_text)}",
     )
+    record(
+        "离线 HTML 内联交互演示播放器（M7）",
+        html.status_code == 200 and "ZhixuOfflineDemo" in html_text
+        and "data-offline-demo" in html_text
+        and "http://" not in html_text and "https://" not in html_text,
+        f"player={'ZhixuOfflineDemo' in html_text} bytes={len(html_text)}",
+    )
     zip_resp = client_a.get(f"/api/classroom/courses/{course_id}/export", params={"format": "zip"})
     zip_names: list[str] = []
     if zip_resp.status_code == 200:

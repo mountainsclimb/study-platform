@@ -87,6 +87,12 @@ M4_PRESET_IDS = (
 MECH_DEMO_JS = JS / "components" / "mechDemo.js"
 MECH_PRESETS_JS = WEB / "vendor" / "principles" / "mechPresets.js"
 MECH_CSS = WEB / "styles-mech.css"
+# M6（§5.3）：专题报告与互动讲义。
+M6_COMPONENTS = (JS / "components" / "learningDocs.js",)
+M6_CSS = WEB / "styles-m6.css"
+# M7（§5.3/§5.4）：课堂离线交互演示播放器与报告转笔记。
+OFFLINE_DEMO_BUNDLE = WEB / "vendor" / "offline" / "offline-demo.js"
+OFFLINE_DEMO_BUILD = ROOT / "scripts" / "build_offline_demo_bundle.py"
 INDEX_HTML = WEB / "index.html"
 ANKI_PY = ROOT / "app" / "anki_export.py"
 APP_PRACTICE_PY = ROOT / "app" / "practice.py"
@@ -119,6 +125,8 @@ LOCALE_NAMESPACES = (
     ("study.m5.", 20),
     # M6 命名空间：专题报告与互动讲义（键量下限按本轮交付）。
     ("study.m6.", 100),
+    # M7 命名空间：离线交互演示与报告转笔记（键量下限按本轮交付）。
+    ("study.m7.", 2),
 )
 
 #: 直接 t('literal') 键扫描的前端文件（WS30 相关页面/组件；其余页面键由既有 pytest 覆盖）。
@@ -722,6 +730,28 @@ class UiStaticAccept:
         checks.append(("主站加载学习文档样式",
                        "styles-m6.css" in index_source_m5,
                        "index.html 需引入 /static/styles-m6.css"))
+
+        # M7：课堂离线交互演示播放器与专题报告转笔记。
+        m7_files = (OFFLINE_DEMO_BUNDLE, OFFLINE_DEMO_BUILD, JS / "offline" / "offlineDemo.js")
+        checks.append(("M7 离线演示播放器与构建脚本齐全",
+                       all(path.is_file() for path in m7_files),
+                       f"缺少: {[str(path.name) for path in m7_files if not path.is_file()]}"))
+        offline_bundle = self._read(OFFLINE_DEMO_BUNDLE) if OFFLINE_DEMO_BUNDLE.is_file() else ""
+        checks.append(("离线演示播放器自包含（无外链/无 eval）",
+                       "ZhixuOfflineDemo" in offline_bundle
+                       and "http://" not in offline_bundle and "https://" not in offline_bundle
+                       and "eval(" not in offline_bundle,
+                       "offline-demo.js 需暴露 ZhixuOfflineDemo 且不引外链/不 eval"))
+        checks.append(("专题报告详情提供保存为笔记入口",
+                       "save-note" in learning_docs and "study.m7" in learning_docs,
+                       "learningDocs.js 需调用 /save-note 并提供中文文案"))
+        bundle_check = subprocess.run(
+            [sys.executable, "-X", "utf8", str(OFFLINE_DEMO_BUILD), "--check"],
+            cwd=str(ROOT), capture_output=True, text=True, encoding="utf-8", errors="replace",
+        )
+        checks.append(("离线播放器产物与源一致（可重复构建）",
+                       bundle_check.returncode == 0,
+                       (bundle_check.stdout or bundle_check.stderr or "").strip()[-160:]))
 
         question = self._read(QUESTION_JS)
         checks.append(("题目详情接入「查看原理」并懒加载播放器",

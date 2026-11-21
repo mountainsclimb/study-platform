@@ -1934,3 +1934,53 @@ bottleneck_station/bottleneck_reason/dropped/blocked`。
 - 专项测试：`tests/test_topic_report.py`（19）、`tests/test_handout.py`（17）、
   `tests/test_assistant_step_hint.py`（7）、`tests/test_pykt_export.py`（18）、
   `tests/test_m6_integration.py`（5）、`tests/test_m6_ocr_blocks.py`（6），新增合计 72 passed。
+
+## 30. M7 离线可交互演示导出 / 专题报告转笔记（2026-11-21，方案收尾）
+
+> 详细记录见 `docs/知序优化实施记录-20261121-第十二轮.md`。补齐《总方案》§5.3「专题报告保存为带出处的笔记」
+> 与 §5.4「PPTX/PDF 放海报、HTML/ZIP 保留可交互内容」。离线播放器完全自包含（零外链、零 eval、零动态 import）；
+> 无演示课程的导出与旧版逐字节一致；PPTX/PDF/print 仍为海报+文字。
+
+### 30.1 离线可交互演示（`app/classroom/exports.py` + `scripts/build_offline_demo_bundle.py`）
+
+- 构建：`python -X utf8 scripts/build_offline_demo_bundle.py` 读取 `web/vendor/principles/{flow,iso}.js`
+  （均无 import 的纯 ESM），文本转换后各自 IIFE 隔离同名符号，挂 `window.ZhixuOfflineDemo`
+  （`createFlowView/renderFlowPoster/createIsoView/renderIsoPoster`）。
+  产物 `web/vendor/offline/offline-demo.js`：76,722 字节、UTF-8+LF、确定性；`--check` 校验产物与源一致
+  （已纳入 ui_static 断言）；源 `web/js/offline/offlineDemo.js` 负责遍历 `section.cls-demo-scene`、
+  解析内嵌 `script.cls-demo-data` 并按 kind 挂载。
+- HTML（含 demo）：保留既有静态海报/`data-fixed-revision`/内嵌 JSON/`data-demo-frame-ready`；末尾内联
+  bundle + 挂载脚本 + flow/iso 样式（读取本地 `web/styles-principles.css`，无外链）；
+  每个 demo section `data-offline-demo="<kind>"`，挂载成功 `data-offline-demo-mounted="1"`，
+  控件 `data-offline-demo-controls="1"`，`body.capture` 下隐藏控件（视频截帧无控件；iso 用 staticMode 首帧）。
+- 支持矩阵：`flow_animation`（createFlowView 逐步交互）、`isometric`（createIsoView）、
+  `science_demo/demo_3d`（flow 形状时渲染，否则海报）、`factory_sim`（SVG 指标卡/工位流程/队列/事件时间轴回放，
+  真实 metrics/events，缺失显示「—」不伪造）；`function_graph/whiteboard/mech_3d` 离线 HTML 仅海报
+  （`data-offline-demo-error` 中文提示，不标 mounted）。
+- ZIP（含 demo）：新增 `offline.html`（与 HTML 同源）与 `manifest.offlineHtml`；原 `demos/*.json`/
+  `demoScenes`/capabilities 不变，导入器兼容（固定版本一致）。
+- 无 demo 课程：HTML/ZIP 输出与旧版一致（逐字节对照两样本）；PPTX/PDF/print 不出现播放器标记。
+- 安全：零 `http(s)://`/`<script src`/`<link`/`@import`/`url(`，无 `eval`/`new Function`/动态 import；
+  附件数据仅 `JSON.parse`，`</script>` 转义；文本一律 textContent/createTextNode。
+
+### 30.2 专题报告保存为带出处的笔记（`app/topic_report.py`）
+
+| 方法/路径 | 请求 | 响应要点 |
+| --- | --- | --- |
+| `POST /api/topic-reports/{report_id}/save-note` | — | 201 `{note:{id,title,created_at,source_count,content_bytes},report_id,saved}`；报告非本人/不存在 404；重复保存（同用户最近 50 条笔记中标题+正文 SHA-256 相同）返回 `saved:false` + `duplicate_of_note_id` + 中文 `message`，不重复插入。 |
+
+- 笔记内容 = 报告 `content_md` + `## 出处清单`（kind 中文/标题/页码/chunk/版本/出处/引用摘要前 120 字；
+  已有清单幂等；无来源如实说明）。`ai_notes` 字段：title ≤180、content ≤120,000（超长截断并注明）、
+  sources_json 精简来源 ≤50 条、source_versions_json 记录文档版本；文档失效不阻断并记录
+  `invalid_document_id/invalid_reason`；归属校验不绕过。
+- 前端 `learningDocs.js`：专题报告详情新增「保存为笔记」按钮（成功/已存在/失败中文提示，不跳转），
+  新增 6 个 `study.m7.*` locale 键（zh/en 各 **5,293** 键对齐）。
+
+### 30.3 验收入口
+
+- `scripts/integration/m4_accept.py`：**21/21**（新增「离线 HTML 内联交互演示播放器」检查）；ZIP 导回固定版本一致。
+- `scripts/integration/m6_accept.py`：**17/17**（新增「保存为带出处的笔记」「重复保存不重复创建」检查）。
+- `ui_static_accept.py`：**7/7**（新增离线播放器/构建一致性与保存笔记入口断言）。
+- 专项测试：`tests/test_classroom_offline_demo_player.py`（13）、`tests/test_topic_report_note.py`（9）、
+  `tests/test_m7_integration.py`（5）；直连回归 68 passed。
+- 来源变更后需重跑 `python scripts/build_offline_demo_bundle.py`（ui_static 已校验产物一致性）。

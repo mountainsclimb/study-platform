@@ -12,6 +12,9 @@
  *   PATCH  /api/topic-reports/{id}         {title?,content_md?,expected_version?} → 同创建结构；版本冲突 409
  *   DELETE /api/topic-reports/{id}
  *   GET    /api/topic-reports/{id}/markdown → text/markdown 附件（fetch blob 下载）
+ *   POST   /api/topic-reports/{id}/save-note → 201 {note:{id,title,created_at,source_count,content_bytes},
+ *          report_id, saved}；同一报告重复保存返回 saved:false + duplicate_of_note_id + 中文 message，
+ *          不重复插入；他人报告 404。笔记正文 = 报告正文 +「## 出处清单」，不返回全文。
  *
  *   POST   /api/handouts                   {title?,course_id?,note_ids?,artifact_ids?,kp_ids?}
  *          → 201 {handout:{handout_id,title,course_id,version,generator:"rules",created_at,updated_at},
@@ -30,7 +33,8 @@
  *   中文提示（全部失败时退化为仅主题/标题输入，交由服务端校验并展示中文原因）；
  * - 下载统一 fetch → Blob → a[download]（downloadBlob），文件名只由本地标题拼装。
  *
- * i18n：新文案统一 `study.m6.<key>`；语言包尚未补键时由 m6t() 回退内置中文，
+ * i18n：新文案统一 `study.m6.<key>`；M7「保存为笔记」沿用同一动态 key 机制，使用
+ * `study.m7.<key>`（m6t() 支持完整 `study.*` key）。语言包尚未补键时回退内置中文，
  * 补齐 locales/*.json 后英文自动生效（详见交付汇报的 zh/en 键清单）。
  */
 
@@ -165,6 +169,16 @@ const M6_TEXT = Object.freeze({
   unknownError: '未知原因',
 });
 
+/* M7「专题报告保存为带出处的笔记」：语言包 key 为 `study.m7.*`，缺键时回退内置中文。 */
+const M7_TEXT = Object.freeze({
+  'study.m7.saveAsNote': '保存为笔记',
+  'study.m7.savingAsNote': '正在保存为笔记…',
+  'study.m7.saveNoteDone': '已保存为笔记（出处已保留）',
+  'study.m7.saveNoteExists': '该报告已保存为笔记',
+  'study.m7.savedAsNote': '已保存',
+  'study.m7.saveNoteFailed': '保存为笔记失败：{reason}',
+});
+
 function m6Interpolate(text, vars) {
   if (!vars || typeof text !== 'string') return text;
   return text.replace(/\{(\w+)\}/g, (match, name) => (
@@ -174,17 +188,23 @@ function m6Interpolate(text, vars) {
 
 /**
  * 取 `study.m6.*` 文案：语言包缺键时回退内置中文（支持 `{name}` 插值）。
+ * 也接受完整的 `study.*` key（M7 使用 `study.m7.*`，回退表为 M7_TEXT）。
  * 除组件内部使用外也导出给 notes.js 拼接区块标题，避免在 notes.js 里写字面量新键。
  *
- * @param {string} key 不含 `study.m6.` 前缀的键名（可用点号分命名空间，如 sourceKind.document）
+ * @param {string} key 不含 `study.m6.` 前缀的键名（可用点号分命名空间，如 sourceKind.document），
+ *   或完整的 `study.*` 键（如 `study.m7.saveAsNote`）。
  * @param {Record<string, unknown>} [vars]
  * @returns {string}
  */
 export function m6t(key, vars = null) {
-  const full = `study.m6.${key}`;
+  const raw = m6Text(key);
+  const full = raw.startsWith('study.') ? raw : `study.m6.${raw}`;
   const translated = t(full, vars);
   if (translated !== full) return translated;
-  const fallback = Object.prototype.hasOwnProperty.call(M6_TEXT, key) ? M6_TEXT[key] : key;
+  if (Object.prototype.hasOwnProperty.call(M7_TEXT, raw)) {
+    return m6Interpolate(M7_TEXT[raw], vars);
+  }
+  const fallback = Object.prototype.hasOwnProperty.call(M6_TEXT, raw) ? M6_TEXT[raw] : raw;
   return m6Interpolate(fallback, vars);
 }
 
@@ -854,14 +874,53 @@ export function renderTopicReportsPanel(options = {}) {
     const downloadButton = button(m6t('downloadMarkdown'), event => {
       if (detail) void downloadReportMarkdown(detail.report, event.currentTarget);
     }, 'ghost small', 'download');
+    // M7：保存为带出处的笔记（只置「已保存」状态 + toast，不跳转页面）。
+    const saveNoteButton = button(
+      m6t('study.m7.saveAsNote'),
+      () => { void saveAsNote(); },
+      'secondary small',
+      'notes',
+      { 'data-save-report-note': 'true' }
+    );
+    let noteSaved = false;
 
     shell.head.append(
       el('div', { class: 'm6-dialog-title-wrap' }, titleNode, metaNode),
       button(t('common.close'), () => shell.close(), 'ghost small', 'close')
     );
     shell.body.append(errorBox, bodyHost);
-    shell.footer.append(editButton, downloadButton);
+    shell.footer.append(editButton, downloadButton, saveNoteButton);
     shell.mount();
+
+    /** 保存为笔记：成功 toast「已保存为笔记（出处已保留）」；重复保存按后端 saved:false 处理。 */
+    async function saveAsNote() {
+      if (!detail || saveNoteButton.disabled) return;
+      errorBox.classList.add('hide');
+      errorBox.textContent = '';
+      saveNoteButton.textContent = m6t('study.m7.savingAsNote');
+      m6SetBusy(saveNoteButton, true);
+      try {
+        const reportId = encodeURIComponent(m6Text(detail.report && detail.report.report_id));
+        const data = await m6RequestJson(`/topic-reports/${reportId}/save-note`, { method: 'POST' });
+        const noteId = Number(data && data.note && data.note.id);
+        if (!data || !data.note || !Number.isFinite(noteId) || noteId <= 0) {
+          throw new Error(m6t('unexpectedResponse'));
+        }
+        noteSaved = true;
+        saveNoteButton.textContent = m6t('study.m7.savedAsNote');
+        saveNoteButton.disabled = true;
+        saveNoteButton.removeAttribute('aria-busy');
+        saveNoteButton.setAttribute('data-note-id', String(noteId));
+        toast(data.saved ? m6t('study.m7.saveNoteDone') : m6t('study.m7.saveNoteExists'));
+      } catch (error) {
+        saveNoteButton.textContent = m6t('study.m7.saveAsNote');
+        if (saveNoteButton.isConnected) m6SetBusy(saveNoteButton, false);
+        const reason = m6ErrorText(error);
+        errorBox.textContent = m6t('study.m7.saveNoteFailed', { reason });
+        errorBox.classList.remove('hide');
+        toast(m6t('study.m7.saveNoteFailed', { reason }), true);
+      }
+    }
 
     function refreshHead() {
       if (!detail) return;
@@ -886,6 +945,10 @@ export function renderTopicReportsPanel(options = {}) {
       bodyHost.replaceChildren(viewNode);
       editButton.disabled = false;
       downloadButton.disabled = false;
+      saveNoteButton.textContent = noteSaved
+        ? m6t('study.m7.savedAsNote')
+        : m6t('study.m7.saveAsNote');
+      saveNoteButton.disabled = noteSaved;
       errorBox.classList.add('hide');
     }
 
@@ -940,6 +1003,7 @@ export function renderTopicReportsPanel(options = {}) {
         el('div', { class: 'row end m6-edit-actions' }, cancelButton, saveButton)));
       editButton.disabled = true;
       downloadButton.disabled = true;
+      saveNoteButton.disabled = true;
       titleField.focus();
 
       async function save() {
@@ -991,6 +1055,7 @@ export function renderTopicReportsPanel(options = {}) {
       bodyHost.replaceChildren(m6Progress(t('common.loading')));
       editButton.disabled = true;
       downloadButton.disabled = true;
+      saveNoteButton.disabled = true;
       try {
         const data = await api(`/topic-reports/${encodeURIComponent(reportId)}`);
         if (!shell.dialog.isConnected) return;

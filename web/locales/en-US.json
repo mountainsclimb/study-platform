@@ -5285,5 +5285,11 @@
   "study.m6.open": "View",
   "study.m6.unexpectedResponse": "Unexpected response from the server. Please retry later.",
   "study.m6.networkFailed": "Network connection failed. Please retry later.",
-  "study.m6.unknownError": "Unknown reason"
+  "study.m6.unknownError": "Unknown reason",
+  "study.m7.saveAsNote": "Save as note",
+  "study.m7.savingAsNote": "Saving as note…",
+  "study.m7.saveNoteDone": "Saved as note (sources kept)",
+  "study.m7.saveNoteExists": "This report has already been saved as a note",
+  "study.m7.savedAsNote": "Saved",
+  "study.m7.saveNoteFailed": "Failed to save as note: {reason}"
 }

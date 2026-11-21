@@ -573,3 +573,34 @@ for every public read path, and distribution changes must keep the fingerprint/.
       reset; `web/styles-m6.css` is loaded by `web/index.html`; 110 new locale keys (`study.m6.*`) keep zh/en aligned
       (5,287 keys each). `accept_runner.py` gains an `m6` stage running `scripts/integration/m6_accept.py`, and
       `ui_static_accept.py` asserts the M6 component/page/style wiring and the `study.m6.` namespace minimum.
+
+18. **M7 offline interactive demos and report-to-note (2026-11-21, plan wrap-up).** Closes the last implementable
+    plan items from §5.3 (「专题报告保存为带出处的笔记」) and §5.4 (「PPTX/PDF 放海报、关键帧与文字，HTML/ZIP 保留
+    可交互内容」).
+    - **Offline interactive demo playback.** `scripts/build_offline_demo_bundle.py` deterministically converts the
+      import-free ESM modules `web/vendor/principles/flow.js` and `iso.js` into `web/vendor/offline/offline-demo.js`
+      (76,722 bytes; IIFE isolation of same-named privates; sets `window.ZhixuOfflineDemo` with
+      `createFlowView/renderFlowPoster/createIsoView/renderIsoPoster`; `--check` verifies the artifact matches the
+      sources and is asserted by `ui_static_accept.py`). `web/js/offline/offlineDemo.js` mounts the player inside
+      `app/classroom/exports.py`: offline HTML with demo scenes keeps the existing static poster/fixed-revision/
+      embedded-JSON/`data-demo-frame-ready` markup and additionally inlines the bundle, mount script and local
+      flow/iso styles (no external references). Every demo section carries `data-offline-demo="<kind>"` and gains
+      `data-offline-demo-mounted="1"` on success; controls live in `data-offline-demo-controls="1"` and are hidden
+      in video capture mode; iso uses a deterministic static first frame. `flow_animation` and `isometric` mount the
+      respective interactive views, `science_demo`/`demo_3d` fall back to flow rendering when their data matches,
+      `factory_sim` gets a self-contained SVG replay (real metrics cards with "—" for missing values, station flow,
+      queue bars, event timeline with play/pause/scrub/step) and `function_graph`/`whiteboard`/`mech_3d` keep the
+      poster with a Chinese `data-offline-demo-error` note. Subjects with demo scenes additionally get
+      `offline.html` plus `manifest.offlineHtml` inside the ZIP (existing `demos/*.json`, `demoScenes` and
+      capabilities unchanged; importer remains compatible). Courses without demo scenes, PPTX, PDF and print HTML
+      are byte-compatible with the previous release, and the player bundle has no external links, `eval`,
+      `new Function` or dynamic imports.
+    - **Report-to-note.** `POST /api/topic-reports/{report_id}/save-note` (201) writes an `ai_notes` row from an
+      owned rule-based report: title (≤180), content (report Markdown + an idempotent `## 出处清单` listing every real
+      source with kind/title/page/chunk/version/ref/quote excerpt, ≤120,000 chars with an explicit truncation note),
+      a compact `sources_json` (≤50 entries) and `source_versions_json` holding the referenced document's version
+      (invalid/deleted documents do not block saving but are recorded as `invalid_document_id`/`invalid_reason`).
+      Re-saving an unchanged report returns `saved:false` with `duplicate_of_note_id` and a Chinese message instead of
+      creating another note; foreign/missing reports are 404. `web/js/components/learningDocs.js` adds a 「保存为笔记」
+      action in the topic-report detail with success/exists/failure Chinese feedback and no navigation; 6 new
+      `study.m7.*` locale keys keep zh/en aligned (5,293 keys each).

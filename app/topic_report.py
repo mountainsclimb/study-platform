@@ -36,6 +36,18 @@ sha256 前 16 位），与资料定位/摘录模块一致，便于前端与用�
 具体摘录，``kind='artifact'`` 的 ``version`` 是生成时固定的附件版本号，``kind='question'`` 的 ``ref``
 是统一题目引用（``bank:<qid>`` 等）。来源列表与 ``content_md`` 一一对应，不包含未真实读取到的对象。
 
+## 保存为笔记（M7, §5.3）
+
+:func:`save_report_as_note` 把本人报告转存为 ``ai_notes`` 的一行「带出处的笔记」，**不调用 AI 模型**：
+正文 = 报告 ``content_md`` + 末尾追加的「## 出处清单」（来源 kind 中文、标题、页码 / chunk /
+版本 / ref 与 quote 前 120 字；已有该小节则不重复追加）；``sources_json`` 存精简来源（≤50 条，
+quote 前 300 字）；``source_versions_json`` 记录报告引用的第一个文档及其 ``doc_version``，该资料
+已删除 / 属于他人时降级为 ``document_id=None`` + 失效说明（不阻断保存）；标题 ≤180 字、正文
+≤120_000 字符（超出截断并注明）。重复保存同一版本（标题 + 正文 SHA-256 相同）不重复插入，返回
+``saved=false`` 与 ``duplicate_of_note_id`` / 中文 ``message``；报告改动后再次保存会新建笔记。
+路由 ``POST /api/topic-reports/{report_id}/save-note`` 返回 201 与
+``{note: {id,title,created_at,source_count,content_bytes}, report_id, saved}``（不返回全文）。
+
 ## 错误口径（detail 全部中文）
 
 * ``404``：专题报告不存在或不属于当前用户（同一文案，不泄露存在性）；资料 / 笔记 / 学习附件不存在、
@@ -66,6 +78,7 @@ sha256 前 16 位），与资料定位/摘录模块一致，便于前端与用�
 from __future__ import annotations
 
 from contextlib import contextmanager
+import hashlib
 import json
 import re
 
@@ -132,6 +145,61 @@ CALIBER = {
     "questions": "候选题为题库检索结果，非正式知识点标签，也不是正式推荐。",
     "evidence": "学习证据只统计 study_evidence 的真实字段；样本不足时不推断掌握程度。",
 }
+
+# ---------------------------------------------------------------------------
+# 保存为笔记（M7, §5.3）：常量与中文口径
+# ---------------------------------------------------------------------------
+
+#: 笔记标题上限（与 ``app.ai.notes_agent`` 的 ``ai_notes`` 口径一致）。
+NOTE_TITLE_MAX_LENGTH = 180
+#: 笔记正文上限（字符数，与 ``NoteEdit/NoteCreate`` 的 120_000 对齐）；超出截断并注明。
+NOTE_CONTENT_MAX_CHARS = 120_000
+#: 精简来源列表最多保留条数（``sources_json``）。
+NOTE_SOURCES_MAX = 50
+#: 精简来源中 ``quote`` 摘要长度（字符）。
+NOTE_SOURCE_QUOTE_CHARS = 300
+#: 出处清单中 ``quote`` 摘要长度（字符）。
+NOTE_APPENDIX_QUOTE_CHARS = 120
+#: 来源标题 / 机器引用（ref）在精简来源中的摘要长度。
+NOTE_SOURCE_TEXT_CHARS = 300
+#: 重复保存检测扫描的最近笔记条数（只比标题 + 内容哈希，不建额外索引 / 表）。
+NOTE_DUPLICATE_SCAN_LIMIT = 50
+#: 出处清单小节标题（幂等判断按整行匹配，正文里已有则不再追加）。
+NOTE_SOURCES_HEADING = "## 出处清单"
+NOTE_FALLBACK_TITLE = "专题报告"
+NOTE_SOURCES_EMPTY = "（报告没有可记录的真实来源。）"
+NOTE_SOURCES_CALIBER = (
+    "（出处清单为保存时的真实来源快照；资料更新、摘录删除或附件改版后引用可能失效。）"
+)
+NOTE_CONTENT_TRUNCATED_TEMPLATE = (
+    "\n\n（内容超过笔记上限 %s 字符，已截断；完整内容请查看原专题报告。）"
+)
+NOTE_INVALID_DOCUMENT_TEMPLATE = (
+    "报告引用的资料 #%s 已删除或无权访问，未能记录文档版本"
+)
+NOTE_DUPLICATE_MESSAGE = "该报告已保存为笔记"
+
+#: 来源 ``kind`` → 中文名（与报告正文 / 前端来源标签口径一致，未知枚举统一「来源」）。
+NOTE_SOURCE_KIND_LABELS = {
+    "document": "资料",
+    "doc": "资料",
+    "material": "资料",
+    "note": "笔记",
+    "annotation": "摘录",
+    "excerpt": "摘录",
+    "artifact": "学习附件",
+    "learning_artifact": "学习附件",
+    "knowledge_point": "知识点",
+    "knowledgepoint": "知识点",
+    "kp": "知识点",
+    "question": "题目",
+    "bank": "题目",
+    "course": "课程",
+    "other": "来源",
+}
+
+#: 出处清单幂等判断：``## 出处清单`` 必须独占一行（避免正文普通提及被误判）。
+_NOTE_APPENDIX_RE = re.compile(r"(?m)^##\s*出处清单\s*$")
 
 # ---------------------------------------------------------------------------
 # 表结构 / 初始化
@@ -1217,6 +1285,320 @@ def report_markdown(user_id, report_id, con=None) -> tuple[str, str]:
 
 
 # ---------------------------------------------------------------------------
+# 保存为笔记（M7, §5.3）：内容组装 / 来源精简 / 文档归属 / 去重 / 写入
+# ---------------------------------------------------------------------------
+
+
+def _source_kind_label(kind) -> str:
+    """来源 ``kind`` → 中文名；未知枚举统一「来源」，不把英文枚举拼进笔记正文。"""
+    key = _collapse_whitespace(kind).lower()
+    return NOTE_SOURCE_KIND_LABELS.get(key, NOTE_SOURCE_KIND_LABELS["other"])
+
+
+def _sha256_text(text) -> str:
+    """内容哈希（UTF-8 SHA-256 十六进制），只用于重复保存检测，不落库、不外泄。"""
+    return hashlib.sha256(str(text or "").encode("utf-8")).hexdigest()
+
+
+def _source_version_text(value) -> str:
+    """来源版本号的展示文本：整数补 ``v`` 前缀，文档内容摘要（字符串）原样截断。"""
+    if isinstance(value, bool) or value is None:
+        return ""
+    if isinstance(value, int):
+        return "v%s" % value if value > 0 else ""
+    return _collapse_whitespace(value)[:64]
+
+
+def _note_source_line(source: dict) -> str:
+    """出处清单中的一条来源：中文 kind + 标题 + 页码 / chunk / 版本 / ref（单行）。"""
+    title = _excerpt(source.get("title"), NOTE_SOURCE_TEXT_CHARS) or "（未命名来源）"
+    meta: list[str] = []
+    page = _page_number(source.get("page"))
+    if page:
+        meta.append("第 %s 页" % page)
+    chunk_id = _collapse_whitespace(source.get("chunk_id"))[:64]
+    if chunk_id:
+        meta.append("chunk %s" % chunk_id)
+    version = _source_version_text(source.get("version"))
+    if version:
+        meta.append("版本 %s" % version)
+    ref = _excerpt(source.get("ref"), NOTE_SOURCE_TEXT_CHARS)
+    if ref:
+        meta.append("出处 %s" % ref)
+    suffix = "（%s）" % " · ".join(meta) if meta else ""
+    return "- %s：《%s》%s" % (_source_kind_label(source.get("kind")), title, suffix)
+
+
+def _note_content_from_report(content_md: str, sources: list[dict]) -> str:
+    """在报告 Markdown 末尾追加「## 出处清单」小节；已存在则原样返回（幂等）。
+
+    * 逐条列出真实来源：kind 中文、标题、页码 / chunk / 版本 / ref，并附 ``quote`` 前 120 字摘要；
+    * 不做任何改写或补写：来源列表为空时如实写「没有可记录的真实来源」；
+    * 幂等：正文里已有独占一行的 ``## 出处清单`` 时不再重复追加（重复保存同一报告不会叠加）。
+    """
+    text = str(content_md or "").strip()
+    if _NOTE_APPENDIX_RE.search(text):
+        return text + "\n" if text else ""
+    items = [item for item in (sources or []) if isinstance(item, dict)]
+    lines: list[str] = []
+    if not items:
+        lines.append(NOTE_SOURCES_EMPTY)
+    else:
+        for source in items:
+            lines.append(_note_source_line(source))
+            quote = _excerpt(source.get("quote"), NOTE_APPENDIX_QUOTE_CHARS)
+            if quote:
+                lines.append("  > %s" % quote)
+    appendix = "\n".join([NOTE_SOURCES_HEADING, ""] + lines + ["", NOTE_SOURCES_CALIBER])
+    if not text:
+        return appendix + "\n"
+    return text + "\n\n" + appendix + "\n"
+
+
+def _truncate_note_content(content: str) -> str:
+    """正文超过 :data:`NOTE_CONTENT_MAX_CHARS` 时截断并追加中文截断说明（总长不超上限）。"""
+    text = str(content or "")
+    limit = max(1, int(NOTE_CONTENT_MAX_CHARS))
+    if len(text) <= limit:
+        return text
+    suffix = NOTE_CONTENT_TRUNCATED_TEMPLATE % limit
+    if len(suffix) >= limit:  # pragma: no cover - 上限被调到极小值时的兜底
+        return text[:limit]
+    return text[: limit - len(suffix)].rstrip() + suffix
+
+
+def _slim_note_source(source: dict) -> dict:
+    """单条精简来源：kind/id/title/ref/page/chunk_id/version/quote（quote 前 300 字）。"""
+    item: dict = {"kind": _collapse_whitespace(source.get("kind"))}
+    raw_id = source.get("id")
+    if not isinstance(raw_id, bool) and isinstance(raw_id, int):
+        item["id"] = raw_id
+    elif isinstance(raw_id, str) and raw_id.strip():
+        item["id"] = raw_id.strip()
+    for key in ("title", "ref"):
+        value = _excerpt(source.get(key), NOTE_SOURCE_TEXT_CHARS)
+        if value:
+            item[key] = value
+    page = _page_number(source.get("page"))
+    if page:
+        item["page"] = page
+    chunk_id = _collapse_whitespace(source.get("chunk_id"))[:64]
+    if chunk_id:
+        item["chunk_id"] = chunk_id
+    version = source.get("version")
+    if isinstance(version, bool):
+        version = None
+    if isinstance(version, str):
+        version = version.strip()
+    if version not in (None, "", 0):
+        item["version"] = version if isinstance(version, int) else str(version)
+    quote = _excerpt(source.get("quote"), NOTE_SOURCE_QUOTE_CHARS)
+    if quote:
+        item["quote"] = quote
+    return item
+
+
+def _slim_note_sources(sources) -> list[dict]:
+    """精简来源列表（≤ :data:`NOTE_SOURCES_MAX` 条），只保留笔记展示需要的字段。"""
+    items: list[dict] = []
+    limit = max(1, int(NOTE_SOURCES_MAX))
+    for source in sources or []:
+        if not isinstance(source, dict):
+            continue
+        items.append(_slim_note_source(source))
+        if len(items) >= limit:
+            break
+    return items
+
+
+def _note_title(value) -> str:
+    """笔记标题：折叠空白后截断到 180 字；报告标题异常为空时退回「专题报告」。"""
+    return _excerpt(value, NOTE_TITLE_MAX_LENGTH) or NOTE_FALLBACK_TITLE
+
+
+def _note_document_binding(user_id: int, sources, *, con=None) -> tuple[int | None, dict]:
+    """从报告来源取第一个 document id 并校验归属，返回 ``(document_id, source_versions)``。
+
+    * 只读 ``ai_documents`` 校验 ``user_id``：资料不存在 / 已删除 / 属于他人时
+      ``document_id=None``，并在 ``source_versions`` 里记录失效说明（**不阻断保存**）；
+    * 校验失败（资料表不可用等）同样降级为「未绑定文档」，不抛 500。
+    """
+    candidate = None
+    for source in sources or []:
+        if not isinstance(source, dict):
+            continue
+        if _collapse_whitespace(source.get("kind")).lower() not in ("document", "doc", "material"):
+            continue
+        raw = source.get("id")
+        if isinstance(raw, bool):
+            continue
+        try:
+            value = int(raw)
+        except (TypeError, ValueError):
+            continue
+        if value < 1:
+            continue
+        candidate = value
+        break
+    if candidate is None:
+        return None, {}
+    row = None
+    try:
+        with _read_connection(con) as read_con:
+            row = read_con.execute(
+                "SELECT id, doc_version FROM ai_documents WHERE id=? AND user_id=?",
+                (int(candidate), int(user_id)),
+            ).fetchone()
+    except Exception:  # noqa: BLE001 - 资料表异常降级为「未绑定文档」，保存仍然成功
+        row = None
+    if row is None:
+        return None, {
+            "invalid_document_id": int(candidate),
+            "invalid_reason": NOTE_INVALID_DOCUMENT_TEMPLATE % candidate,
+        }
+    try:
+        version = max(1, int(row["doc_version"] or 1))
+    except (TypeError, ValueError):
+        version = 1
+    return int(candidate), {str(int(candidate)): version}
+
+
+def _lock_note_write(con) -> None:
+    """保存为笔记的写锁（独立命名作用域）；外层事务已持锁时复用，不重复 BEGIN。"""
+    if getattr(con, "in_transaction", False):
+        return
+    db.write_lock(con, "topic-report-note")
+
+
+@contextmanager
+def _note_write_connection(con=None):
+    """取得保存为笔记的写连接：``con`` 为空时自建并提交，否则复用调用方事务（由调用方提交）。"""
+    if con is not None:
+        _lock_note_write(con)
+        yield con
+        return
+    with db.connection() as own:
+        _lock_note_write(own)
+        yield own
+
+
+def _find_duplicate_note(con, user_id: int, title: str, content: str):
+    """重复保存检测：同用户最近 50 条笔记里比「标题相同 + 正文 SHA-256 相同」。
+
+    只读不写、不建索引；标题先比可提前剪枝，命中则返回该笔记行（由调用方转成响应），
+    未命中返回 ``None``（继续新建笔记）。
+    """
+    rows = con.execute(
+        "SELECT id, title, content, sources_json, created_at FROM ai_notes "
+        "WHERE user_id=? ORDER BY id DESC LIMIT ?",
+        (int(user_id), max(1, int(NOTE_DUPLICATE_SCAN_LIMIT))),
+    ).fetchall()
+    digest = _sha256_text(content)
+    for row in rows:
+        if str(row["title"] or "") != title:
+            continue
+        if _sha256_text(row["content"]) != digest:
+            continue
+        return _row_dict(row)
+    return None
+
+
+def _note_summary(note_id, title, created_at, sources, content) -> dict:
+    """保存结果里的笔记摘要（不返回全文，避免大响应）：id/标题/创建时间/来源数/正文字节数。"""
+    return {
+        "id": int(note_id),
+        "title": str(title or ""),
+        "created_at": str(created_at or ""),
+        "source_count": len(sources or []),
+        "content_bytes": len(str(content or "").encode("utf-8")),
+    }
+
+
+def save_report_as_note(user_id, report_id, *, con=None) -> dict:
+    """把本人专题报告保存为一份带真实出处的笔记（M7, §5.3；不调用 AI 模型）。
+
+    行为：
+        * 只读本人报告（他人 / 不存在 → 404，同一中文文案）；
+        * 笔记正文 = 报告 ``content_md`` + 追加的「## 出处清单」（幂等）；超过 120_000
+          字符截断并注明；``sources_json`` 存精简来源（≤50 条，quote 前 300 字）；
+        * 绑定文档：取报告来源里第一个 ``document`` id，校验 ``ai_documents.user_id``；
+          资料已删除 / 属于他人时 ``document_id=None``，并在 ``source_versions_json``
+          记录失效说明（不阻断保存）；有效时 ``{"<document_id>": doc_version}``；
+        * ``title = 报告标题``（≤180 字）；``created_at = updated_at = db.utcnow()``；
+        * 写路径取 ``db.write_lock(con, "topic-report-note")`` 串行化；
+        * 重复保存：同一用户最近 50 条笔记中若已有「标题 + 正文 SHA-256」相同的笔记，
+          **不重复插入**，返回 ``saved=false``、``duplicate_of_note_id`` 与中文 ``message``；
+          报告标题 / 正文改动后再次保存则新建笔记（不返回 409）。
+
+    返回 ``{note: {id,title,created_at,source_count,content_bytes}, report_id, saved}``；
+    重复时为 ``saved=false`` 且额外含 ``duplicate_of_note_id`` / ``message``（均中文）。
+    """
+    _ensure_ready()
+    owner = _validate_user_id(user_id)
+    report_value = _validate_id(report_id, "报告")
+    with _read_connection(con) as read_con:
+        report = _row_dict(_load_report(read_con, owner, report_value))
+        sources = _parse_sources(report.get("sources_json"))
+        document_id, source_versions = _note_document_binding(owner, sources, con=read_con)
+    raw_title = str(report.get("title") or "").strip() or str(report.get("topic") or "").strip()
+    title = _note_title(raw_title)
+    content = _truncate_note_content(
+        _note_content_from_report(str(report.get("content_md") or ""), sources)
+    )
+    slim_sources = _slim_note_sources(sources)
+    now = db.utcnow()
+    with _note_write_connection(con) as write_con:
+        duplicate = _find_duplicate_note(write_con, owner, title, content)
+        if duplicate is not None:
+            duplicate_id = int(duplicate["id"])
+            return {
+                "note": _note_summary(
+                    duplicate_id,
+                    duplicate.get("title"),
+                    duplicate.get("created_at"),
+                    _parse_sources(duplicate.get("sources_json")),
+                    duplicate.get("content"),
+                ),
+                "report_id": report_value,
+                "saved": False,
+                "duplicate_of_note_id": duplicate_id,
+                "message": NOTE_DUPLICATE_MESSAGE,
+            }
+        cursor = write_con.execute(
+            "INSERT INTO ai_notes(user_id,document_id,title,content,sources_json,kp_id,subject,"
+            "source_versions_json,created_at,updated_at) VALUES (?,?,?,?,?,?,?,?,?,?)",
+            (
+                owner,
+                document_id,
+                title,
+                content,
+                _dump_sources(slim_sources),
+                None,
+                None,
+                json.dumps(source_versions, ensure_ascii=False, sort_keys=True),
+                now,
+                now,
+            ),
+        )
+        note_id = cursor.lastrowid
+        if note_id is None:  # pragma: no cover - 双引擎都应返回 id
+            raise RuntimeError("笔记写入失败：未取得新笔记编号")
+        fresh = write_con.execute(
+            "SELECT id, title, created_at FROM ai_notes WHERE id=? AND user_id=?",
+            (int(note_id), owner),
+        ).fetchone()
+    if fresh is None:  # pragma: no cover - 双引擎都应能读回刚写入的行
+        raise RuntimeError("笔记写入失败：未读取到新笔记")
+    return {
+        "note": _note_summary(
+            fresh["id"], fresh["title"], fresh["created_at"], slim_sources, content
+        ),
+        "report_id": report_value,
+        "saved": True,
+    }
+
+
+# ---------------------------------------------------------------------------
 # HTTP 请求模型
 # ---------------------------------------------------------------------------
 
@@ -1290,6 +1672,12 @@ def report_markdown_route(report_id: int, user=Depends(current_user)):
     )
 
 
+@router.post("/{report_id}/save-note", status_code=201)
+def save_report_note_route(report_id: int, user=Depends(current_user)):
+    """把本人专题报告保存为带真实出处的笔记（M7, §5.3）；他人报告 404，不返回全文。"""
+    return save_report_as_note(user["id"], report_id)
+
+
 @router.get("/{report_id}")
 def get_report_route(report_id: int, user=Depends(current_user)):
     """单份报告详情：``{report, content_md, sources}``；他人报告 404。"""
@@ -1334,6 +1722,9 @@ __all__ = [
     "MAX_REPORTS_PER_USER",
     "MAX_SOURCES_PER_KIND",
     "MAX_TITLE_LENGTH",
+    "NOTE_CONTENT_MAX_CHARS",
+    "NOTE_SOURCES_MAX",
+    "NOTE_TITLE_MAX_LENGTH",
     "NO_SOURCES_DETAIL",
     "QUESTION_CALIBER_NOTE",
     "QUESTION_LIMIT",
@@ -1347,5 +1738,6 @@ __all__ = [
     "list_reports",
     "report_markdown",
     "router",
+    "save_report_as_note",
     "update_report",
 ]
