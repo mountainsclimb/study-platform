@@ -44,6 +44,8 @@ def admission_db(isolated_db):
                 ("浙江", "zhejiang", 2024, "综合", "平行录取一段", 492, 601, "601", 900, 53000, "52960-53000"),
                 ("浙江", "zhejiang", 2024, "综合", "平行录取一段", 492, 600, "600", 1005, 53964, "52960-53964"),
                 ("浙江", "zhejiang", 2024, "综合", "平行录取一段", 492, 599, "599", 1100, 55000, "53965-55000"),
+                ("安徽", "anhui", 2017, "理科", "本科一批", None, 600, "600", 1000, 5000, "4999-5000"),
+                ("安徽", "anhui", 2017, "理科", "本科一批", None, 599, "599", 1100, 6100, "6001-6100"),
             ],
         )
         connection.executemany(
@@ -112,6 +114,7 @@ def admission_db(isolated_db):
                 ("zhejiang", 2024, "school-admission", 4),
                 ("zhejiang", 2024, "major-admission", 2),
                 ("zhejiang", 2024, "enrollment-plan", 2),
+                ("anhui", 2017, "score-range", 2),
             ],
         )
         connection.execute(
@@ -132,10 +135,10 @@ def admission_db(isolated_db):
             "source_url": "https://huggingface.co/datasets/choucsan/Gaokao-Compass-11M",
             "license": "MIT",
             "imported_at": "2026-11-20T00:00:00Z",
-            "years": json.dumps([2024]),
-            "provinces": json.dumps(["zhejiang"]),
-            "total_rows": "11",
-            "rows_score-range": "3",
+            "years": json.dumps([2017, 2024]),
+            "provinces": json.dumps(["anhui", "zhejiang"]),
+            "total_rows": "13",
+            "rows_score-range": "5",
             "rows_school-admission": "4",
             "rows_major-admission": "2",
             "rows_enrollment-plan": "2",
@@ -144,6 +147,44 @@ def admission_db(isolated_db):
         connection.executemany(
             "INSERT INTO admission_meta (key, value) VALUES (?,?)", list(meta.items())
         )
+        connection.commit()
+    finally:
+        connection.close()
+    return path
+
+
+@pytest.fixture
+def official_db(isolated_db, admission_db):
+    """官方补采批次线小库（与录取库分离），用于验证补齐逻辑与来源标注。"""
+    path = isolated_db / "admission-official.sqlite3"
+    connection = sqlite3.connect(path)
+    try:
+        connection.execute(
+            """CREATE TABLE control_line (
+                province_slug TEXT NOT NULL, province_name TEXT, year INTEGER NOT NULL,
+                category TEXT NOT NULL DEFAULT '', batch TEXT NOT NULL, score INTEGER NOT NULL,
+                source_url TEXT, retrieved_at TEXT, sha256 TEXT,
+                PRIMARY KEY (province_slug, year, category, batch))"""
+        )
+        connection.execute("CREATE INDEX idx_control_line_year ON control_line(province_slug, year)")
+        connection.execute("CREATE TABLE official_meta (key TEXT PRIMARY KEY, value TEXT)")
+        connection.executemany(
+            "INSERT INTO control_line (province_slug, province_name, year, category, batch, score,"
+            " source_url, retrieved_at, sha256) VALUES (?,?,?,?,?,?,?,?,?)",
+            [
+                ("anhui", "安徽", 2017, "理科", "本科一批", 487, "https://example.org/eol", "2026-11-20T00:00:00Z", "abc"),
+                ("anhui", "安徽", 2017, "文科", "本科一批", 515, "https://example.org/eol", "2026-11-20T00:00:00Z", "abc"),
+            ],
+        )
+        meta = {
+            "source": "教育在线批次线页面",
+            "source_url": "https://example.org/eol",
+            "imported_at": "2026-11-20T00:00:00Z",
+            "rows": "2",
+            "years": json.dumps([2017]),
+            "license_note": "公开页面数据，仅供参考",
+        }
+        connection.executemany("INSERT INTO official_meta (key, value) VALUES (?,?)", list(meta.items()))
         connection.commit()
     finally:
         connection.close()
@@ -166,10 +207,11 @@ def test_admission_meta_and_filters(client, admission_db):
     assert meta.status_code == 200, meta.text
     body = meta.json()
     assert body["ready"] is True
-    assert body["years"] == [2024]
-    assert body["provinces"] == [{"slug": "zhejiang", "name": "浙江"}]
-    assert body["rows"]["score-range"] == 3
-    assert body["total_rows"] == 11
+    assert body["years"] == [2017, 2024]
+    assert body["provinces"] == [{"slug": "anhui", "name": "安徽"}, {"slug": "zhejiang", "name": "浙江"}]
+    assert body["rows"]["score-range"] == 5
+    assert body["total_rows"] == 13
+    assert body["official"] == {"available": False}
 
     filters = client.get("/api/admission/filters", params={"province": "zhejiang", "year": 2024})
     assert filters.status_code == 200
@@ -305,6 +347,70 @@ def test_admission_suggest(client, admission_db):
     major_suggest = client.get("/api/admission/suggest", params={"q": "计算机"})
     assert major_suggest.status_code == 200
     assert major_suggest.json()["majors"][0]["name"] == "计算机科学与技术"
+
+
+def test_admission_official_control_lines_fill_gaps(client, admission_db, official_db):
+    """官方补采批次线：可查询、可补齐主库缺失的批次线，并标注来源。"""
+    meta = client.get("/api/admission/meta").json()
+    assert meta["official"]["available"] is True
+    assert meta["official"]["rows"] == 2
+    assert meta["official"]["years"] == [2017]
+
+    filters = client.get("/api/admission/filters", params={"province": "anhui", "year": 2017}).json()
+    assert filters["official_control_supported"] is True
+    assert filters["control_score_supported"] is True
+
+    lines = client.get("/api/admission/control-lines", params={
+        "province": "anhui", "year": 2017, "category": "理科",
+    }).json()
+    assert lines["items"] == [{
+        "category": "理科",
+        "batch": "本科一批",
+        "score": 487,
+        "source_url": "https://example.org/eol",
+    }]
+
+    rank = client.get("/api/admission/score-rank", params={
+        "province": "anhui", "year": 2017, "category": "理科", "score": 600,
+    }).json()
+    assert rank["control_score"] == 487
+    assert rank["control_source"] == "official"
+    assert {item["batch"] for item in rank["official_batches"]} == {"本科一批"}
+
+
+def test_data_gaps_report_and_api(client, admission_db, official_db):
+    """数据缺失声明：生成器逐省年状态 + 接口读取。"""
+    spec = importlib.util.spec_from_file_location(
+        "report_data_gaps_for_tests", ROOT / "scripts" / "report_data_gaps.py"
+    )
+    module = importlib.util.module_from_spec(spec)
+    assert spec.loader is not None
+    spec.loader.exec_module(module)
+
+    report = module.compute_gaps(admission_db.parent)
+    entries = {(item["province"], item["year"]): item for item in report["province_years"]}
+    assert set(entries) == {("anhui", 2017), ("zhejiang", 2024)}
+    assert entries[("zhejiang", 2024)]["control"] == "native"
+    assert entries[("anhui", 2017)]["control"] == "official"
+    assert entries[("zhejiang", 2024)]["rank"] == "ok"
+    assert entries[("zhejiang", 2024)]["plan"] == "ok"
+    assert entries[("zhejiang", 2024)]["category"] == "ok"
+    assert report["summary"]["province_years"] == 2
+    markdown = module.render_markdown(report)
+    assert "数据缺失声明" in markdown
+    assert "逐省年明细" in markdown
+
+    before = client.get("/api/admission/gaps").json()
+    assert before["available"] is False
+
+    (admission_db.parent / "admission-gaps.json").write_text(
+        json.dumps(report, ensure_ascii=False), encoding="utf-8")
+    response = client.get("/api/admission/gaps")
+    assert response.status_code == 200
+    body = response.json()
+    assert body["available"] is True
+    assert body["summary"]["province_years"] == 2
+    assert any(item["province"] == "anhui" for item in body["province_years"])
 
 
 def test_admission_missing_database_returns_503(client, admission_db, monkeypatch, tmp_path):

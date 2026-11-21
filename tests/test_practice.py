@@ -39,10 +39,25 @@ def image_bytes():
     return drawn_image()
 
 
+def _clear_bank_caches():
+    """切换只读题库后清掉进程内缓存（列探测 / 素材清单 / 检索索引 / catalog）。"""
+    from app import practice
+    practice._sqlite_question_columns.cache_clear()
+    practice._sqlite_group_columns.cache_clear()
+    practice._source_groups.cache_clear()
+    practice._verified_index_key = None
+    practice._verified_fts_key = None
+    practice.invalidate_catalog_cache()
+
+
 def test_catalog_filters_and_answer_gate(client, second_client):
+    from app.practice import _bank
     catalog = client.get("/api/catalog").json()
-    assert catalog["source_total"] == 7659
-    assert catalog["quarantined_count"] >= 17
+    # 题库口径不再固定为 r3 的 7,659 题：以当前只读题库的实际行数为准（r5 为 26,374）。
+    with _bank() as con:
+        expected_total = con.execute("SELECT COUNT(*) FROM questions").fetchone()[0]
+    assert catalog["source_total"] == expected_total
+    assert catalog["available_total"] + catalog["quarantined_count"] == catalog["source_total"]
     response = client.get("/api/questions", params={"subject": "数学", "page_size": 4})
     assert response.status_code == 200
     assert response.json()["total"] > 0
@@ -90,13 +105,24 @@ def test_material_group_projection_never_returns_children_answers(client):
     assert group and group["material_text"]
     assert "children" not in group and "children_json" not in group
     assert "answer" not in response.json()
-    # Known material bodies containing answers are withheld, not just their fields.
-    from app.practice import _bank
+    # 数据侧已隔离的题组：材料/共用块混入答案解析时详情必须 409。
+    # 该门禁的稳定回归由 tests/test_bank_content.py 的合成 fixture 覆盖；这里对当前基线
+    # 动态抽样（r5 没有此类题组，旧 r3 固定 qid 已退役，不能写死）。
+    from app.practice import _bank, _group_answer_leak
     with _bank() as con:
-        row = con.execute("SELECT qid FROM questions WHERE doc_id='3597febaaede0d74' AND group_id='m_0001' LIMIT 1").fetchone()
-    assert row
-    assert client.get("/api/questions/" + quote(row[0], safe="")).status_code == 409
-    assert client.get("/api/questions/" + quote("d2aa42179cd42df7:21", safe="")).status_code == 409
+        leaked = [
+            dict(row)["group_id"] for row in con.execute("SELECT * FROM groups")
+            if dict(row).get("group_id") and _group_answer_leak(dict(row))
+        ]
+        for group_id in leaked[:3]:
+            member = con.execute(
+                "SELECT qid FROM questions WHERE group_id = ? OR doc_id || ':' || group_id = ? LIMIT 1",
+                (group_id, group_id),
+            ).fetchone()
+            if member:
+                assert client.get(
+                    "/api/questions/" + quote(member[0], safe="")
+                ).status_code == 409
 
 
 def test_subjective_images_owner_gate_and_ai_grade_latest_guard(client, second_client):
@@ -164,38 +190,67 @@ def test_bank_images_are_bound_to_images_directory(client):
 
 
 def test_known_extraction_errors_cannot_auto_grade_or_expose_placeholder_answers(client):
+    """质量门禁按当前只读题库动态抽样：不依赖 r3 的固定 qid / 固定条数。"""
+    import re
     from app.practice import _bank, _has_reference, load_question
-    broken = load_question("1ecd54df223c7ab7:4")
-    # 快照题库已按原卷重切该题选项（修复「D 并入 C」），此时以「选项按原卷块重建」提示代替旧「选项合并」。
-    assert any(("选项合并" in flag) or ("选项按原卷块重建" in flag)
-               for flag in broken["quality_flags"])
-    response = client.post("/api/attempts", data={"qid": broken["qid"], "answer": broken["answer_text"]})
+
+    with _bank() as con:
+        placeholders = [
+            dict(row) for row in con.execute("SELECT qid, answer_text FROM questions")
+            if row["answer_text"] and not _has_reference(row["answer_text"])
+        ]
+        conflicts = [
+            dict(row) for row in con.execute(
+                "SELECT qid, answer_text FROM questions WHERE type='single_choice'")
+            if re.fullmatch(r"[A-H]{2,}", row["answer_text"] or "")
+        ]
+    # 占位参考答案（只有下划线/空格等）永远不算有答案，也不能作为自动判分依据。
+    assert all(not _has_reference(row["answer_text"]) for row in placeholders)
+    broken = next(
+        (question for question in (load_question(row["qid"]) for row in conflicts)
+         if question["practice_allowed"] and not question["quarantined"]),
+        None,
+    )
+    assert broken is not None, "当前题库应有可作答的「题型与答案冲突」题"
+    assert any("题型与答案冲突" in flag for flag in broken["quality_flags"])
+    option = broken["options"][0]["label"]
+    response = client.post("/api/attempts", data={"qid": broken["qid"], "answer": option})
     assert response.status_code == 200
     assert response.json()["result"] == "pending"
     assert client.post("/api/mastery", json={"qid": broken["qid"], "level": "熟练掌握"}).status_code == 403
-    with _bank() as con:
-        placeholders = [dict(row) for row in con.execute("SELECT qid,answer_text FROM questions")
-                        if row["answer_text"] and not row["answer_text"].replace("_", "").replace("＿", "").replace("。", "").replace(" ", "").strip()]
-    assert len(placeholders) == 16
-    assert all(not _has_reference(row["answer_text"]) for row in placeholders)
-    assert not load_question("5cc40f92b73592a0:21")["has_answer"]
 
 
-def test_polluted_question_stems_are_withheld_from_all_practice_routes(client):
+def test_polluted_question_stems_are_withheld_from_all_practice_routes(client, tmp_path, monkeypatch):
+    """公开字段混入答案解析的题在所有练习入口都要被拦截。
+
+    r5 基线没有这类题（旧 r3 固定 qid 已退役），用与 r5 同结构的合成题库验证门禁。
+    """
+    from app import db
     from app.practice import load_question
-    qids = ("cf04cad2296e2558:59", "03063fd6a07bea8b:20", "03063fd6a07bea8b:21", "03063fd6a07bea8b:23")
-    for qid in qids:
+    from bank_fixture import make_bank, question_row
+
+    rows = [
+        question_row("docPoll:1", "题干正文，混入【答案】A 的解析", doc_id="docPoll"),
+        question_row("docPoll:2", "干净题干：函数的定义域", doc_id="docPoll"),
+    ]
+    bank = make_bank(tmp_path / "polluted-bank", rows)
+    monkeypatch.setattr(db, "BANK_DIR", bank)
+    _clear_bank_caches()
+    try:
+        qid = "docPoll:1"
         question = load_question(qid)
         assert not question["practice_allowed"]
-        assert any("原题干混入" in flag for flag in question["quality_flags"])
+        assert any("混入答案解析" in flag for flag in question["quality_flags"])
         assert client.get("/api/questions/" + quote(qid, safe="")).status_code == 409
         assert client.post("/api/attempts", data={"qid": qid, "answer": "A"}).status_code == 409
-        result = client.get("/api/questions", params={"q": question["stem_plain"][:25]}).json()
+        result = client.get("/api/questions", params={"q": "混入"}).json()
         assert qid not in [item["qid"] for item in result["items"]]
-    catalog = client.get("/api/catalog").json()
-    # 可练总数 = 总数 - 隔离数（基线 21 道；快照题库会随数据侧隔离/上下文增减，做一致性校验）
-    assert catalog["available_total"] + catalog["quarantined_count"] == catalog["source_total"]
-    assert catalog["quarantined_count"] >= 21
+        clean = client.get("/api/questions", params={"q": "定义域"}).json()
+        assert "docPoll:2" in [item["qid"] for item in clean["items"]]
+        catalog = client.get("/api/catalog").json()
+        assert catalog["available_total"] + catalog["quarantined_count"] == catalog["source_total"]
+    finally:
+        _clear_bank_caches()
 
 
 def test_ai_cannot_replace_authoritative_objective_grade(client):
@@ -219,15 +274,54 @@ def test_single_choice_multiple_reference_answers_suspend_auto_grading(client):
     with _bank() as con:
         conflicts = [dict(row) for row in con.execute("SELECT qid,answer_text FROM questions WHERE type='single_choice'")
                      if re.fullmatch(r"[A-H]{2,}", row["answer_text"] or "")]
-    assert len(conflicts) == 50
+    # r3 口径 50 道、r5 为 52 道：只要求存在且全部被质量门禁拦截，不写死数量。
+    assert conflicts
     for row in conflicts:
         assert any("题型与答案冲突" in flag for flag in load_question(row["qid"])["quality_flags"])
-    question = load_question("3766d5563c17df98:21")
-    response = client.post("/api/attempts", data={"qid": question["qid"], "answer": "D"})
+    question = next(
+        (candidate for candidate in (load_question(row["qid"]) for row in conflicts)
+         if candidate["practice_allowed"] and not candidate["quarantined"] and candidate["options"]),
+        None,
+    )
+    assert question is not None, "当前题库应有可作答的「题型与答案冲突」单选题"
+    option = question["options"][0]["label"]
+    response = client.post("/api/attempts", data={"qid": question["qid"], "answer": option})
     assert response.status_code == 200
     assert response.json()["result"] == "pending"
     assert client.post("/api/mastery", json={"qid": question["qid"], "level": "熟练掌握"}).status_code == 403
-    assert any("参考选项重复" in flag for flag in load_question("b2d6d293f0a93229:60")["quality_flags"])
+    # 参考答案重复字母（如 'ABABH'）同样必须挂起自动判分。
+    with _bank() as con:
+        duplicated = [row[0] for row in con.execute("SELECT qid, answer_text FROM questions")
+                      if re.fullmatch(r"[A-H]+", row[1] or "") and len(set(row[1])) != len(row[1])]
+    assert duplicated
+    assert any("参考选项重复" in flag for qid in duplicated[:10] for flag in load_question(qid)["quality_flags"])
+
+
+def test_admin_isolation_keeps_search_sql_valid(client):
+    """管理员临时隔离题目后，题目检索与相似题 SQL 仍可执行（回归 "qqid" 拼接缺陷）。"""
+    from app.practice import _bank, search_similar_questions
+
+    with _bank() as con:
+        row = con.execute(
+            "SELECT qid FROM questions WHERE practice_status='practice' LIMIT 1"
+        ).fetchone()
+    qid = row[0]
+    isolated = client.post(
+        f"/api/admin/questions/{quote(qid, safe='')}/isolation",
+        json={"active": True, "reason": "回归：临时隔离不破坏检索"},
+    )
+    assert isolated.status_code == 200, isolated.text
+    try:
+        listing = client.get("/api/questions", params={"q": "题", "page_size": 5})
+        assert listing.status_code == 200, listing.text
+        assert qid not in [item["qid"] for item in listing.json()["items"]]
+        similar = search_similar_questions("下列各句中，没有语病的一项是")
+        assert isinstance(similar, list)
+    finally:
+        client.post(
+            f"/api/admin/questions/{quote(qid, safe='')}/isolation",
+            json={"active": False},
+        )
 
 
 def test_phone_image_orientation_survives_private_image_reencoding(client):

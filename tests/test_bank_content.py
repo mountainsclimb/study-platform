@@ -1,8 +1,11 @@
 """快照读模型（知序快照契约 v1 §5/§6）回归测试。
 
-测试不依赖 releases/ 下的真实快照：把只读基线题库备份到临时目录，按契约 §5
-ALTER 出新增列并写入 fixture，再通过 monkeypatch 把 ``db.BANK_DIR`` 指向临时目录。
-另一组用例仍指向基线题库，覆盖「题库没有新列时行为与现状一致」。
+测试不再依赖 ``releases/`` 下真实题库里的固定题目：fixture 只从当前基线库复制 schema
+（表/索引 DDL），再插入自己构造的题目、题组与素材，通过 monkeypatch 把 ``db.BANK_DIR``
+指向临时目录。这样 r3→r5 换基线时不会因为固定 qid 不存在而初始化失败，也不会改动只读
+发布包；被测语义（快照读模型、答案解锁、可练状态门禁、题组、泄漏拦截）保持不变。
+
+另一组用例仍指向基线题库，覆盖「题库没有新列时行为与现状一致」（基线已是快照库时跳过）。
 """
 import json
 import sqlite3
@@ -13,17 +16,25 @@ from urllib.parse import quote
 import pytest
 
 SNAPSHOT_VERSION = "bank-fixture-r1"
-# 基线题库中的真实 qid（复制后只改新列，不动旧列）。
-MAIN_QID = "0028f646b2b0dde3:1"  # 干净单选，答案 D，无题组
-QUARANTINED_QID = "0028f646b2b0dde3:10"  # 数据侧隔离
-CONTEXT_QID = "0028f646b2b0dde3:11"  # context 上下文成员
-REVIEW_QID = "0028f646b2b0dde3:12"  # review（答案 B）
-PENDING_QID = "0028f646b2b0dde3:13"  # grading_status=pending（答案 C）
-LEAK_QID = "0028f646b2b0dde3:2"  # 公开题干混入答案解析（核收记录阻断项 1）
-GROUP_ID = "52d8ed86ac5664af:m_0002"
-GROUP_QID = "52d8ed86ac5664af:14"  # 题组成员，答案 B
+
+# 自造题目的固定 qid（只存在于本 fixture 的临时题库里，不依赖任何基线题目）。
+MAIN_QID = "fixture0001:1"  # 干净单选，答案 D，无题组
+QUARANTINED_QID = "fixture0001:10"  # 数据侧隔离
+CONTEXT_QID = "fixture0001:11"  # context 上下文成员
+REVIEW_QID = "fixture0001:12"  # review（判 pending）
+PENDING_QID = "fixture0001:13"  # grading_status=pending
+LEAK_QID = "fixture0001:2"  # 公开题干混入答案解析
+GROUP_DOC_ID = "fixturegroup"
+GROUP_ID = GROUP_DOC_ID + ":m_0002"
+GROUP_QID = GROUP_DOC_ID + ":14"  # 题组成员，答案 B
+GROUP_REVIEW_QID = GROUP_DOC_ID + ":15"  # 题组成员（review）
 QUARANTINE_MARKER = "隔离门禁标记题"
 CONTEXT_MARKER = "上下文门禁标记题"
+LEAK_MARKER = "答案泄漏门禁标记题"
+SUBJECT = "英语"
+GROUP_SUBJECT = "语文"
+EXPECTED_QUESTIONS = 8
+EXPECTED_UNAVAILABLE = 2  # context + quarantined，不计入可练总数
 
 QUESTION_COLUMNS = {
     "bank_version": "TEXT",
@@ -66,6 +77,11 @@ def _block(block_id, text, order=0, kind="text"):
     return block
 
 
+def _options_json():
+    """旧列 options_json：纯文本选项，不含「A. 」前缀（避免被当作选项合并而暂停判分）。"""
+    return [{"label": label, "text": f"选项{label}"} for label in "ABCD"]
+
+
 def _options_blocks():
     return [
         {"label": label, "blocks": [_block(f"b90010{index}", f"{label}. 选项{label}", kind="text")]}
@@ -84,76 +100,56 @@ def _alter(con, table, columns):
             con.execute(f'ALTER TABLE "{table}" ADD COLUMN "{name}" {kind}')
 
 
-def _update_question(con, qid, **values):
-    assignments = ", ".join(f'"{key}"=?' for key in values)
-    con.execute(f"UPDATE questions SET {assignments} WHERE qid=?", [*values.values(), qid])
-    assert con.execute("SELECT 1 FROM questions WHERE qid=?", (qid,)).fetchone(), qid
+def _copy_schema(source: Path, destination: Path) -> None:
+    """只复制基线库的表/索引 DDL；fixture 数据完全自造（不复制任何真实题目）。"""
+    with closing(sqlite3.connect(source.as_uri() + "?mode=ro", uri=True, timeout=20)) as source_con:
+        tables = [row[0] for row in source_con.execute(
+            "SELECT sql FROM sqlite_master WHERE type='table' AND sql IS NOT NULL ORDER BY name")]
+        indexes = [row[0] for row in source_con.execute(
+            "SELECT sql FROM sqlite_master WHERE type='index' AND sql IS NOT NULL ORDER BY name")]
+    assert any("CREATE TABLE questions" in sql for sql in tables), "基线题库缺少 questions 表"
+    assert any("CREATE TABLE groups" in sql for sql in tables), "基线题库缺少 groups 表"
+    with closing(sqlite3.connect(destination)) as con:
+        for statement in [*tables, *indexes]:
+            con.execute(statement)
+        con.commit()
 
 
-def _seed_snapshot(con):
-    main_quality = [{"code": "FORMULA_FALLBACK_ONLY", "message": "公式仅有原卷图，按图显示"}]
-    _update_question(
-        con, MAIN_QID,
-        bank_version=SNAPSHOT_VERSION, source_question_id="q_fixture_0001",
-        parent_source_question_id=None, group_kind=None,
-        practice_status="practice", grading_status="auto",
-        content_revision="c0ffee123456", answer_revision="feedbeef7890", pua_remaining=0,
-        stem_blocks_json=_dump([
-            _block("b900001", "1.—I’m sorry I didn’t finish it on time."),
-            _block("b900002", "语法填空 x_{1} + y^{2}", order=1, kind="math"),
-        ]),
-        options_blocks_json=_dump(_options_blocks()),
-        answer_blocks_json=_dump([_block("b900020", "D")]),
-        solution_blocks_json=_dump([_block("b900021", "解析：选 D。")]),
-        shared_blocks_json="[]", member_index_json="[]",
-        quality_flags_json=_dump(main_quality),
-    )
-    _update_question(
-        con, QUARANTINED_QID,
-        bank_version=SNAPSHOT_VERSION, source_question_id="q_fixture_0010",
-        practice_status="quarantined", grading_status="disabled", pua_remaining=3,
-        stem_plain=QUARANTINE_MARKER + "，整段乱码无法还原",
-        stem_blocks_json="[]", options_blocks_json="[]", answer_blocks_json="[]",
-        solution_blocks_json="[]", shared_blocks_json="[]", member_index_json="[]",
-        quality_flags_json=_dump([{"code": "PUA_MOJIBAKE_QUARANTINED", "message": "整段乱码，无法还原，整题隔离"}]),
-    )
-    _update_question(
-        con, CONTEXT_QID,
-        bank_version=SNAPSHOT_VERSION, source_question_id="q_fixture_0011",
-        practice_status="context", grading_status="disabled",
-        stem_plain=CONTEXT_MARKER + "仅供阅读",
-        stem_blocks_json=_dump([_block("b900011", CONTEXT_MARKER)]),
-        options_blocks_json="[]", answer_blocks_json="[]", solution_blocks_json="[]",
-        shared_blocks_json="[]", member_index_json="[]", quality_flags_json="[]",
-    )
-    _update_question(
-        con, REVIEW_QID,
-        bank_version=SNAPSHOT_VERSION, source_question_id="q_fixture_0012",
-        practice_status="review", grading_status="auto",
-        stem_blocks_json="[]", options_blocks_json=_dump(_options_blocks()),
-        answer_blocks_json="[]", solution_blocks_json="[]",
-        shared_blocks_json="[]", member_index_json="[]", quality_flags_json="[]",
-    )
-    _update_question(
-        con, PENDING_QID,
-        bank_version=SNAPSHOT_VERSION, source_question_id="q_fixture_0013",
-        practice_status="practice", grading_status="pending",
-        stem_blocks_json="[]", options_blocks_json=_dump(_options_blocks()),
-        answer_blocks_json="[]", solution_blocks_json="[]",
-        shared_blocks_json="[]", member_index_json="[]",
-        quality_flags_json=_dump([{"code": "ANSWER_MISSING", "message": "参考答案缺失，判分待核验"}]),
-    )
-    _update_question(
-        con, LEAK_QID,
-        bank_version=SNAPSHOT_VERSION, source_question_id="q_fixture_0014",
-        practice_status="practice", grading_status="auto",
-        stem_plain="答案泄漏门禁标记题【答案】B 【详解】解析内容混入题干",
-        stem_blocks_json=_dump([_block("b900030", "答案泄漏门禁标记题【答案】B 【详解】解析内容混入题干")]),
-        options_blocks_json=_dump(_options_blocks()),
-        answer_blocks_json="[]", solution_blocks_json="[]",
-        shared_blocks_json="[]", member_index_json="[]", quality_flags_json="[]",
-    )
+def _insert_row(con, table, values):
+    """按目标表实际列插入：老/新基线 schema 差异由列集合自适应。"""
+    columns = [row[1] for row in con.execute(f'PRAGMA table_info("{table}")')]
+    marks = ", ".join("?" for _ in columns)
+    names = ", ".join(f'"{column}"' for column in columns)
+    con.execute(f'INSERT INTO "{table}" ({names}) VALUES ({marks})',
+                [values.get(column) for column in columns])
 
+
+def _question_row(qid, *, doc_id="fixture0001", subject=SUBJECT, **values):
+    """一条自造题目：默认是「无题组单选」（新列全部显式赋值，不依赖基线旧列）。"""
+    row = {
+        "qid": qid, "question_id": qid, "subject": subject, "year": 2024,
+        "province": "全国", "paper_type": "模拟", "paper_name": f"{subject}测试卷",
+        "doc_id": doc_id, "exam_id": doc_id, "section_title": None, "section_kind": None,
+        "number_label": "1", "order_in_paper": 1, "type": "single_choice",
+        "objective": 1, "stem_plain": "", "options_json": "[]",
+        "answer_text": None, "answer_kind": "choice", "answer_note": None,
+        "solution": "", "binding_method": None, "group_id": None, "group_role": None,
+        "has_figure": 0, "has_formula": 0, "images_json": "[]", "source_blocks_json": "[]",
+        "tier": None, "bank_version": SNAPSHOT_VERSION,
+        "source_question_id": "q_" + qid.replace(":", "_"),
+        "parent_source_question_id": None, "group_kind": None,
+        "practice_status": "practice", "grading_status": "auto",
+        "content_revision": None, "answer_revision": None, "pua_remaining": 0,
+        "stem_blocks_json": "[]", "options_blocks_json": "[]", "answer_blocks_json": "[]",
+        "solution_blocks_json": "[]", "shared_blocks_json": "[]",
+        "member_index_json": "[]", "quality_flags_json": "[]",
+    }
+    row.update(values)
+    return row
+
+
+def _group_payload():
+    """题组的共用块、成员索引与题目行必须一致（详情页与组接口共用这份读模型）。"""
     shared_blocks = [
         _block("b900100", "材料正文：阅读下面的文字，完成 14～16 题。"),
         _block("b900101", "父题说明：下列各句中，加点词的意义和用法相同的一项是"),
@@ -166,7 +162,7 @@ def _seed_snapshot(con):
             "practice_status": "practice", "grading_status": "auto",
         },
         {
-            "qid": "52d8ed86ac5664af:15", "in_bank": True, "source_question_id": "q_group_15",
+            "qid": GROUP_REVIEW_QID, "in_bank": True, "source_question_id": "q_group_15",
             "number_label": "15", "sub_question_label": None, "type": "single_choice",
             "group_role": "sub", "order": 15,
             "practice_status": "review", "grading_status": "auto",
@@ -182,56 +178,136 @@ def _seed_snapshot(con):
             ],
         },
     ]
-    _update_question(
-        con, GROUP_QID,
-        bank_version=SNAPSHOT_VERSION, source_question_id="q_group_14",
-        parent_source_question_id="p_q_0025", group_kind="material",
-        practice_status="practice", grading_status="auto",
-        content_revision="c0ffee123456", answer_revision="feedbeef7890",
-        stem_blocks_json=_dump([_block("b900120", "14.下列各个句子在文中的意思，不正确的一项是")]),
+    return shared_blocks, members
+
+
+def _seed_snapshot(con):
+    """清空复制来的 schema 中的任何数据，写入自造题库（共 EXPECTED_QUESTIONS 题）。"""
+    for table in ("question_images", "images", "papers", "groups", "questions"):
+        con.execute(f'DELETE FROM "{table}"')
+
+    main_quality = [{"code": "FORMULA_FALLBACK_ONLY", "message": "公式仅有原卷图，按图显示"}]
+    main_stem = "1.—I’m sorry I didn’t finish it on time."
+    _insert_row(con, "questions", _question_row(
+        MAIN_QID,
+        stem_plain=main_stem,
+        options_json=_dump(_options_json()),
+        answer_text="D",
+        solution="解析：选 D。",
+        content_revision="c0ffee123456",
+        answer_revision="feedbeef7890",
+        stem_blocks_json=_dump([
+            _block("b900001", main_stem),
+            _block("b900002", "语法填空 x_{1} + y^{2}", order=1, kind="math"),
+        ]),
         options_blocks_json=_dump(_options_blocks()),
+        answer_blocks_json=_dump([_block("b900020", "D")]),
+        solution_blocks_json=_dump([_block("b900021", "解析：选 D。")]),
+        quality_flags_json=_dump(main_quality),
+    ))
+    _insert_row(con, "questions", _question_row(
+        QUARANTINED_QID, number_label="10", order_in_paper=10,
+        practice_status="quarantined", grading_status="disabled", pua_remaining=3,
+        stem_plain=QUARANTINE_MARKER + "，整段乱码无法还原",
+        quality_flags_json=_dump([
+            {"code": "PUA_MOJIBAKE_QUARANTINED", "message": "整段乱码，无法还原，整题隔离"},
+        ]),
+    ))
+    _insert_row(con, "questions", _question_row(
+        CONTEXT_QID, number_label="11", order_in_paper=11,
+        practice_status="context", grading_status="disabled",
+        stem_plain=CONTEXT_MARKER + "仅供阅读",
+        stem_blocks_json=_dump([_block("b900011", CONTEXT_MARKER)]),
+    ))
+    _insert_row(con, "questions", _question_row(
+        REVIEW_QID, number_label="12", order_in_paper=12,
+        practice_status="review", grading_status="auto",
+        options_json=_dump(_options_json()),
+        options_blocks_json=_dump(_options_blocks()),
+        answer_text="B",
+    ))
+    _insert_row(con, "questions", _question_row(
+        PENDING_QID, number_label="13", order_in_paper=13,
+        practice_status="practice", grading_status="pending",
+        options_json=_dump(_options_json()),
+        options_blocks_json=_dump(_options_blocks()),
+        answer_text="C",
+        quality_flags_json=_dump([
+            {"code": "ANSWER_MISSING", "message": "参考答案缺失，判分待核验"},
+        ]),
+    ))
+    leak_stem = LEAK_MARKER + "【答案】B 【详解】解析内容混入题干"
+    _insert_row(con, "questions", _question_row(
+        LEAK_QID, number_label="2", order_in_paper=2,
+        stem_plain=leak_stem,
+        stem_blocks_json=_dump([_block("b900030", leak_stem)]),
+        options_json=_dump(_options_json()),
+        options_blocks_json=_dump(_options_blocks()),
+        answer_text="B",
+    ))
+
+    shared_blocks, members = _group_payload()
+    _insert_row(con, "questions", _question_row(
+        GROUP_QID, doc_id=GROUP_DOC_ID, subject=GROUP_SUBJECT, year=2000,
+        group_id="m_0002", group_role="sub",
+        number_label="14", order_in_paper=14,
+        parent_source_question_id="p_q_0025", group_kind="material",
+        stem_plain="14.下列各个句子在文中的意思，不正确的一项是",
+        stem_blocks_json=_dump([_block("b900120", "14.下列各个句子在文中的意思，不正确的一项是")]),
+        options_json=_dump(_options_json()),
+        options_blocks_json=_dump(_options_blocks()),
+        answer_text="B",
+        solution="解析：选 B。",
         answer_blocks_json=_dump([_block("b900121", "B")]),
         solution_blocks_json=_dump([_block("b900122", "解析：选 B。")]),
         shared_blocks_json=_dump(shared_blocks),
         member_index_json=_dump(members),
-        quality_flags_json="[]",
-    )
-    con.execute("UPDATE questions SET group_kind='material' WHERE doc_id='52d8ed86ac5664af' AND group_id='m_0002'")
-    # 成员状态以题库行实时值为准：fixture 的 member_index 与题目行必须一致。
-    _update_question(con, "52d8ed86ac5664af:15",
-                     bank_version=SNAPSHOT_VERSION, practice_status="review", grading_status="auto")
-    con.execute(
-        "UPDATE groups SET bank_version=?, group_kind='material', parent_source_question_id=NULL, "
-        "shared_blocks_json=?, member_index_json=?, n_members=?, n_practice=? WHERE group_id=?",
-        (SNAPSHOT_VERSION, _dump(shared_blocks), _dump(members), 3, 2, GROUP_ID),
-    )
-    assert con.execute("SELECT 1 FROM groups WHERE group_id=?", (GROUP_ID,)).fetchone(), GROUP_ID
+        content_revision="c0ffee123456",
+        answer_revision="feedbeef7890",
+    ))
+    _insert_row(con, "questions", _question_row(
+        GROUP_REVIEW_QID, doc_id=GROUP_DOC_ID, subject=GROUP_SUBJECT, year=2000,
+        group_id="m_0002", group_role="sub",
+        number_label="15", order_in_paper=15,
+        stem_plain="15.下列各句中，没有语病的一项是",
+        options_json=_dump(_options_json()),
+        options_blocks_json=_dump(_options_blocks()),
+        answer_text="B",
+        practice_status="review",
+        grading_status="auto",
+    ))
+    _insert_row(con, "groups", {
+        "group_id": GROUP_ID, "doc_id": GROUP_DOC_ID, "subject": GROUP_SUBJECT,
+        "year": 2000, "province": "全国", "paper_name": "语文测试卷",
+        "section_title": None, "material_kind": "material",
+        "material_text": "材料正文：阅读下面的文字，完成 14～16 题。",
+        "parent_label": "14", "parent_type": "material",
+        "parent_stem": "父题说明：下列各句中，加点词的意义和用法相同的一项是",
+        "n_children_total": 3, "n_children_strict": 2, "children_json": "[]",
+        "bank_version": SNAPSHOT_VERSION, "group_kind": "material",
+        "parent_source_question_id": None,
+        "shared_blocks_json": _dump(shared_blocks),
+        "member_index_json": _dump(members),
+        "n_members": 3, "n_practice": 2,
+    })
 
 
 @pytest.fixture(scope="module")
 def snapshot_bank(tmp_path_factory):
-    """只读基线题库的临时快照副本：复制 → ALTER 新列 → 写入读模型 fixture。"""
+    """基线 schema + 自造数据的临时快照题库（不复制真实题目，不依赖固定 qid）。"""
     from app import db
 
     source = db.BANK_DIR / "题库.db"
     assert source.is_file(), f"missing baseline bank: {source}"
     root = tmp_path_factory.mktemp("snapshot-bank")
     destination = root / "题库.db"
-    with closing(sqlite3.connect(source.as_uri() + "?mode=ro", uri=True, timeout=20)) as source_con:
-        with closing(sqlite3.connect(destination)) as destination_con:
-            source_con.backup(destination_con)
+    _copy_schema(source, destination)
     with closing(sqlite3.connect(destination)) as con:
         _alter(con, "questions", QUESTION_COLUMNS)
         _alter(con, "groups", GROUP_COLUMNS)
         _seed_snapshot(con)
-        for statement in (
-            "CREATE INDEX IF NOT EXISTS idx_q_practice_status ON questions(practice_status)",
-            "CREATE INDEX IF NOT EXISTS idx_q_parent_src ON questions(parent_source_question_id)",
-            "CREATE INDEX IF NOT EXISTS idx_g_doc ON groups(doc_id)",
-        ):
-            con.execute(statement)
         con.commit()
-    material_dir = root / "语文"
+    material_dir = root / GROUP_SUBJECT
     material_dir.mkdir()
     (material_dir / "groups.jsonl").write_text(
         _dump({
@@ -287,10 +363,12 @@ def test_snapshot_question_detail_exposes_read_model(snapshot_client):
     assert "answer_blocks" not in detail and "solution_blocks" not in detail
     assert "answer" not in detail and "solution" not in detail
     assert snapshot_client.get("/api/reveal", params={"qid": MAIN_QID}).status_code == 403
-    # 列表摘要同样读取新列且不泄漏答案。
-    listing = snapshot_client.get("/api/questions", params={"subject": "英语", "page_size": 3})
+    # 列表摘要同样读取新列且不泄漏答案；隔离/上下文/泄密题不进常规检索（共 3 道可练题）。
+    listing = snapshot_client.get("/api/questions", params={"subject": SUBJECT, "page_size": 3})
     assert listing.status_code == 200, listing.text
-    items = listing.json()["items"]
+    body = listing.json()
+    assert body["total"] == 3
+    items = body["items"]
     assert items
     for item in items:
         assert "answer_blocks" not in item and "answer_text" not in item
@@ -362,11 +440,13 @@ def test_snapshot_practice_status_gates_and_pending_grading(snapshot_client):
         for flag in pending_body["question"]["quality_flags"]
     )
 
+    # 目录计数来自自造题库：context/quarantined 不计入可练总数。
     catalog = snapshot_client.get("/api/catalog").json()
-    assert catalog["source_total"] == 7659
-    # 可练总数 = 总数 - 隔离数；快照题库会叠加数据侧隔离结论，这里校验三者一致性。
+    assert catalog["source_total"] == EXPECTED_QUESTIONS
+    assert catalog["available_total"] == EXPECTED_QUESTIONS - EXPECTED_UNAVAILABLE
+    assert catalog["quarantined_count"] == EXPECTED_UNAVAILABLE
     assert catalog["available_total"] + catalog["quarantined_count"] == catalog["source_total"]
-    assert catalog["quarantined_count"] >= 21
+    assert SUBJECT in catalog["subjects"] and GROUP_SUBJECT in catalog["subjects"]
 
 
 def test_snapshot_group_endpoint_and_member_progress(snapshot_client, second_client):
@@ -376,8 +456,8 @@ def test_snapshot_group_endpoint_and_member_progress(snapshot_client, second_cli
     group = response.json()
     assert group["group_id"] == GROUP_ID
     assert group["bank_version"] == SNAPSHOT_VERSION
-    assert group["subject"] == "语文"
-    assert group["year"] == 2000
+    assert group["subject"] == GROUP_SUBJECT
+    assert int(group["year"]) == 2000
     assert group["group_kind"] == "material"
     assert group["n_members"] == 3
     assert group["n_practice"] == 2
@@ -479,7 +559,7 @@ def test_public_answer_leak_stops_practice_and_search(snapshot_client):
     assert detail.status_code == 409
     assert "答案解析" in detail.json()["detail"]
     assert snapshot_client.post("/api/attempts", data={"qid": LEAK_QID, "answer": "B"}).status_code == 409
-    search = snapshot_client.get("/api/questions", params={"q": "答案泄漏门禁标记题"})
+    search = snapshot_client.get("/api/questions", params={"q": LEAK_MARKER})
     assert search.status_code == 200
     assert search.json()["total"] == 0
     # 未混入答案的题目不受影响
