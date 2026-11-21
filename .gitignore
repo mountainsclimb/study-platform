@@ -19,3 +19,4 @@ screenshots/accept-report*.json
 screenshots/accept-*.json
 # 第五轮验收报告（生成物；证据摘要写入 docs/ 实施记录，报告本身不入库）
 screenshots/round5-*.json
+screenshots/run-preview.png

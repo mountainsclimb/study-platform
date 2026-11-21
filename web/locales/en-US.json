@@ -4783,5 +4783,12 @@
   "study.demo.threeLoadFailed": "The 3D view failed to load; switched to the isometric diagram.",
   "study.demo.title": "Principle demo",
   "study.demo.untitled": "Untitled demo",
-  "study.demo.webglFallback": "3D is not supported on this device; switched to the isometric diagram."
+  "study.demo.webglFallback": "3D is not supported on this device; switched to the isometric diagram.",
+  "study.review.unifiedNote": "Due dates are written by the server-side four-button schedule; home, insight and practice all use the same date.",
+  "study.review.serverSchedule": "Server schedule",
+  "study.review.ratedCard": "Rated card",
+  "study.review.homeDue": "{count} due for review today",
+  "study.review.homeDueCaliber": "Server four-button schedule · {algorithm} · {count} due today",
+  "study.review.homeUnavailable": "The review schedule is unavailable; showing the wrong-answer book's due count.",
+  "study.review.goReview": "Go to review"
 }

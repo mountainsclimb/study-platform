@@ -703,40 +703,59 @@ def test_compare_due_classifies_match_mismatch_missing_extra(review_env):
     client = _client_for(USER_A)
     _sync(client)
 
-    # 旧口径：第二张卡的旧 next_review_at 比新卡 due 早 48 小时 → mismatch。
-    with db.connection() as con:
-        con.execute(
-            "UPDATE review_cards SET due_at=? WHERE user_id=? AND card_key=?",
-            ("2026-02-28T08:00:00+00:00", USER_A, "q:docA:2"),
-        )
-    # 有卡但活跃错题已删 → extra_cards。
+    # 评分后卡是权威（评分已把旧表镜像到 03-05）。
+    card = sr.card_by_ref(USER_A, "docA:2")
+    rated = client.post(
+        f"/api/review-cards/{card['card_id']}/ratings",
+        json={"rating": 3, "card_version": card["version"], "idempotency_key": "cmp-rate-1"},
+    )
+    assert rated.status_code == 200, rated.text
+    assert rated.json()["due_at"] == "2026-03-05T08:00:00+00:00"
+    # 有卡但活跃错题已删 → extra_cards（先做，避免后续 sync 顺带修复下面的漂移）。
     _insert_wrong(USER_A, "docA:4", next_review_at="2026-02-27T08:00:00+00:00")
     _sync(client)
     with db.connection() as con:
         con.execute(
             "DELETE FROM wrong_questions WHERE user_id=? AND qid=?", (USER_A, "docA:4")
         )
-    # 活跃错题但还没有卡 → missing_cards（最后插入，不再 sync）。
-    _insert_wrong(USER_A, "docA:3", next_review_at="2026-02-27T08:00:00+00:00")
+    # 最后一次 sync 之后手动制造旧表与已评分卡的 48 小时漂移。
+    with db.connection() as con:
+        con.execute(
+            "UPDATE wrong_questions SET next_review_at=? WHERE user_id=? AND qid=?",
+            ("2026-03-03T08:00:00+00:00", USER_A, "docA:2"),
+        )
+    ratings_before = len(_rating_rows(USER_A))
 
     compared = client.get("/api/review-cards/compare").json()
-    assert compared["checked"] == 3  # docA:1/2/3（docA:4 已不在活跃错题里）
+    assert compared["checked"] == 2  # 活跃错题 docA:1/2（docA:4 已不在活跃错题里）
     assert compared["matched"] == 1
     assert len(compared["mismatched"]) == 1
     mismatch = compared["mismatched"][0]
     assert mismatch["qid"] == "docA:2"
-    assert mismatch["old_due"] == "2026-02-26T08:00:00+00:00"
-    assert mismatch["new_due"] == "2026-02-28T08:00:00+00:00"
+    assert mismatch["old_due"] == "2026-03-03T08:00:00+00:00"
+    assert mismatch["new_due"] == "2026-03-05T08:00:00+00:00"
     assert mismatch["diff_hours"] == 48.0
-    assert compared["missing_cards"] == ["docA:3"]
+    assert compared["missing_cards"] == []
     assert compared["extra_cards"] == ["q:docA:4"]
-    assert "只读" in compared["note"] and "容差 1 秒" in compared["note"]
+    assert "惰性迁移" in compared["note"] and "容差 1 秒" in compared["note"]
 
-    # 对账是只读的：不改变任何数据，也不写复习日志。
-    assert _card_row(sr.card_by_ref(USER_A, "docA:2")["card_id"])["due_at"] == (
-        "2026-02-28T08:00:00+00:00"
-    )
-    assert _rating_rows(USER_A) == []
+    # 对账不改变已评分卡排程，也不追加评分日志。
+    assert _card_row(card["card_id"])["due_at"] == "2026-03-05T08:00:00+00:00"
+    assert len(_rating_rows(USER_A)) == ratings_before
+
+    # 新错题到来触发惰性迁移：补卡的同时把已评分卡的旧表到期拉齐（自愈），missing 恒为空。
+    _insert_wrong(USER_A, "docA:3", next_review_at="2026-02-27T08:00:00+00:00")
+    healed = client.get("/api/review-cards/compare").json()
+    assert healed["checked"] == 3 and healed["matched"] == 3
+    assert healed["mismatched"] == [] and healed["missing_cards"] == []
+    assert healed["extra_cards"] == ["q:docA:4"]
+    assert sr.card_by_ref(USER_A, "docA:3")["due_at"] == "2026-02-27T08:00:00+00:00"
+    with db.connection() as con:
+        row = con.execute(
+            "SELECT next_review_at FROM wrong_questions WHERE user_id=? AND qid=?",
+            (USER_A, "docA:2"),
+        ).fetchone()
+    assert str(row[0]) == "2026-03-05T08:00:00+00:00"
 
 
 def test_compare_due_after_migration_is_clean(review_env):

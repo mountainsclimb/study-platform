@@ -65,6 +65,7 @@ CALIBER = {
         "recent 为最近 5 次已提练习。"
     ),
     "activity_mix": "活动混合=近 days 天内各模块的真实活动计数：题库练习（attempts）、课堂小测（cls_quiz_attempts）、整卷练习（已提交的 pl_paper_attempts）、AI 助手（用户消息 asst_messages）。",
+    "review_due": "『今日复习』以服务端四档复习卡（/api/review-cards）为准：due_now=已到期未归档卡，due_today=本 UTC 自然日结束前到期（含已逾期）；卡到期在同一事务镜像到旧错题到期字段，因此学情、首页、错题本与学习计划使用同一个日期。",
 }
 
 
@@ -1063,6 +1064,41 @@ def _recommendations(data, overview: dict, knowledge: dict, mistakes: dict) -> l
 # ---------------------------------------------------------------------------
 
 
+def _review_caliber(user_id: int) -> dict:
+    """复习排程统一口径（M2）：读服务端四档复习卡，失败降级为旧错题口径。"""
+    try:
+        from . import study_review
+
+        stats = study_review.stats(user_id)
+        return {
+            "available": True,
+            "due_now": int(stats.get("due_now") or 0),
+            "due_today": int(stats.get("due_today") or 0),
+            "total": int(stats.get("total") or 0),
+            "new": int(stats.get("new") or 0),
+            "learning": int(stats.get("learning") or 0),
+            "review": int(stats.get("review") or 0),
+            "relearning": int(stats.get("relearning") or 0),
+            "algorithm": stats.get("algorithm"),
+            "algorithm_version": stats.get("algorithm_version"),
+            "due_source": "review-cards",
+            "caliber": CALIBER["review_due"],
+            "note": "",
+        }
+    except Exception as error:  # noqa: BLE001 - 排程不可用不能拖垮学情其他统计
+        return {
+            "available": False,
+            "due_now": None,
+            "due_today": None,
+            "total": None,
+            "algorithm": None,
+            "algorithm_version": None,
+            "due_source": "legacy",
+            "caliber": CALIBER["review_due"],
+            "note": f"复习排程暂不可用，沿用旧错题到期口径（{type(error).__name__}）",
+        }
+
+
 def build_report(user_id: int, days: int = DEFAULT_DAYS, subject: str | None = None) -> dict:
     """构建个人学情报告（实时聚合；供 API 与 AI 建议任务复用）。"""
     days = _clamp_days(days)
@@ -1088,6 +1124,8 @@ def build_report(user_id: int, days: int = DEFAULT_DAYS, subject: str | None = N
         "knowledge": knowledge,
         "mistakes": mistakes,
         "recommendations": recommendations,
+        # M2：复习排程统一口径（与首页/错题/练习同一到期值）。
+        "review": _review_caliber(user_id),
         "has_data": overview["has_data"],
         "caliber": CALIBER,
     }
@@ -1105,7 +1143,10 @@ def overview(
     user=Depends(current_user),
 ):
     """学情总览：摘要指标、分学科正确率、每日活动与周趋势（默认近 90 天）。"""
-    return _overview_payload(_collect(user["id"], days, subject))
+    payload = _overview_payload(_collect(user["id"], days, subject))
+    # M2：总览也带复习排程统一口径，前端可与首页/错题本核对同一天。
+    payload["review"] = _review_caliber(user["id"])
+    return payload
 
 
 @router.get("/knowledge")

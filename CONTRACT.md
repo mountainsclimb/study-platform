@@ -409,3 +409,24 @@ for every public read path, and distribution changes must keep the fingerprint/.
       namespaces `study.formula.*` / `study.review.*` / `study.demo.*` stay zh/en aligned (4,785 keys each).
       `tests/test_round5_integration.py` and the per-module tests cover idempotency, version conflicts, two-account
       isolation and degraded paths.
+
+13. **M2 unified review due date (2026-11-21).** `review_cards.due_at` is the single source of truth for when a
+    question is due. Direction of authority: a card **with a real four-button rating** (`reps > 0`) owns the due date —
+    ordinary grading never advances it, and `rate_card`/`sync_wrong_question` mirror the card due into the legacy
+    `wrong_questions.next_review_at` + `interval_days` inside the same transaction; a card **without** a real rating
+    follows ordinary grading/migration (first due). Archive flags always flow wrongbook → card; archived cards do not
+    participate in due alignment. `ensure_user_cards(user_id)` compares wrong-question qids with card keys and calls
+    the idempotent `sync_user_cards` only when cards are missing, so legacy users migrate on their first read of
+    home/wrongbook/reviews/insights/stats (two small reads when already consistent). Due comparisons use
+    `study_review.now_utc()` (`STUDY_REVIEW_CLOCK` fixed clock; falls back to `db.utcnow()` when unavailable).
+    Read surfaces keep every legacy field and add: `review.{available,due_now,due_today,total,algorithm,
+    algorithm_version,due_source,caliber,note}` on `/api/insight/home`, `/api/insight/overview` and `/api/stats`;
+    `due_source`/`due_note` plus per-item `due_source/review_card_id/review_card_state/review_card_rated` on
+    `/api/wrongbook`, `/api/review/queue`, `/api/reviews` (`next_review_at`/`due` are overlaid from the card);
+    `due_source`/`note` on `/api/review-cards/due`, `due_source`/`legacy_mirror` on `/api/review-cards/stats`.
+    `GET /api/review-cards/compare` keeps `matched/mismatched/missing_cards/extra_cards` but performs the idempotent
+    lazy migration first and never changes an existing schedule or rating log. Frontend: home shows the unified
+    "today's review" count from `review` (falls back to `personal.due_reviews` with a Chinese note), wrongbook shows a
+    unified-caliber note and server-schedule/rated badges. `tests/test_review_due_unified.py` plus updated
+    `tests/test_study_review.py` cover the authority direction, lazy migration, clock, two-account isolation and
+    drift-free reconciliation.

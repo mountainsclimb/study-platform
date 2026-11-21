@@ -45,6 +45,8 @@ export async function renderWrongbook(container, version) {
   let page = 1;
   const pageSize = 18;
   let activeSession = null;
+  // M2：/api/wrongbook 顶层 due_note（服务端统一到期口径说明）；接口未下发时用固定文案键兜底。
+  let reviewDueNote = '';
   // 筛选/翻页请求序号：连续切换筛选时旧响应必须丢弃，避免慢请求覆盖新结果。
   let listSeq = 0;
   let kpAggSeq = 0;
@@ -144,6 +146,33 @@ export async function renderWrongbook(container, version) {
     });
   }
 
+  /* M2「统一到期值」展示接线（只做展示，不改排程/评分逻辑）：
+   * - 统计条下方追加一行小字口径说明：优先用 /api/wrongbook 顶层 due_note（服务端原文），
+   *   接口未下发时用固定文案键 study.review.unifiedNote 兜底；
+   * - 列表项若 due_source === "review-cards"，在「下次复习」旁挂轻量徽标（服务端排程），
+   *   review_card_rated 为 true 时再标「已评分卡」；legacy 不显示徽标（不误标旧数据）；
+   * - 日期格式保持原样（dateText），不在这里改写 next_review_at。 */
+  function reviewUnifiedNoteText() {
+    return String(reviewDueNote || '').trim() || t('study.review.unifiedNote');
+  }
+
+  function reviewUnifiedNoteNode() {
+    return el('span', {
+      class: 'review-due-bar-help review-due-bar-unified-note',
+      style: 'flex-basis:100%',
+      'data-review-unified-note': 'true',
+    }, reviewUnifiedNoteText());
+  }
+
+  function reviewDueBadgeNodes(entry) {
+    if (entry?.due_source !== 'review-cards') return null;
+    const sourceBadge = badge(t('study.review.serverSchedule'), 'teal');
+    sourceBadge.setAttribute('title', reviewUnifiedNoteText());
+    const nodes = [sourceBadge];
+    if (entry.review_card_rated) nodes.push(badge(t('study.review.ratedCard'), 'blue'));
+    return nodes;
+  }
+
   function renderReviewBar() {
     const algorithm = reviewAlgorithmText(reviewStats || [...reviewCardIndex.values()][0] || null);
     reviewBar.hidden = false;
@@ -153,7 +182,9 @@ export async function renderWrongbook(container, version) {
         badge(t('study.review.badge'), 'teal'),
         el('strong', { class: 'review-due-bar-count' },
           t('study.review.stats', { count: number(reviewDueToday), algorithm }))),
-      el('span', { class: 'review-due-bar-help' }, t('study.review.scaleNote')));
+      el('span', { class: 'review-due-bar-help' }, t('study.review.scaleNote')),
+      // M2：服务端统一到期口径说明（与首页/学情/练习同一天）。
+      reviewUnifiedNoteNode());
   }
 
   function renderReviewUnavailable() {
@@ -378,6 +409,13 @@ export async function renderWrongbook(container, version) {
         page_size: pageSize,
       })}`, { latest: true, latestKey: 'wrongbook-list' });
       if (mine !== listSeq || !current(version)) return;
+      // M2：服务端 /api/wrongbook 顶层 due_note 是统一到期口径说明（首页/错题本/学情同一天）；
+      // 与当前说明不同时只更新统计条下方那行小字，不整页刷新、不影响筛选与行内评分状态。
+      const serverDueNote = typeof data.due_note === 'string' ? data.due_note.trim() : '';
+      if (serverDueNote && serverDueNote !== reviewDueNote) {
+        reviewDueNote = serverDueNote;
+        if (!reviewBar.hidden && !reviewBar.classList.contains('is-unavailable')) renderReviewBar();
+      }
       const total = data.total ?? data.items?.length ?? 0;
       summary.textContent = t('wrongbook.totalWrong', { count: number(total) });
       list.replaceChildren();
@@ -409,6 +447,8 @@ export async function renderWrongbook(container, version) {
         const dueCard = entry.archived ? null : lookupReviewCard(entry, q);
         const nextReviewNode = el('span', {},
           t('wrongbook.nextReview', { time: dateText(reviewNextDueValue(entry, q)) }));
+        // M2：服务端统一到期徽标（review-cards 才显示；已真实评分再标「已评分卡」）。
+        const dueBadges = reviewDueBadgeNodes(entry);
         const ratingSlot = dueCard
           ? renderReviewRating({
               card: dueCard,
@@ -436,6 +476,7 @@ export async function renderWrongbook(container, version) {
           tags.length ? el('div', { class: 'pg-status-row' }, ...tags.map(t => badge(t, 'amber'))) : null,
           el('div', { class: 'pg-question-review' },
             nextReviewNode,
+            dueBadges,
             el('span', {}, t('wrongbook.intervalDays', { count: Math.round(entry.interval_days || 1) })),
             entry.failures ? el('span', {}, t('wrongbook.failCount', { count: entry.failures })) : null,
             entry.streak ? el('span', {}, t('wrongbook.streakCount', { count: entry.streak })) : null),
@@ -458,6 +499,8 @@ export async function renderWrongbook(container, version) {
             { disabled: entry.unavailable === true, title: entry.unavailable ? t('wrongbook.tryAgainUnavailable') : null })));
         grid.append(el('article', {
           class: `card pg-question-card${entry.archived ? ' pg-question-card--archived' : ''}`,
+          // M2 数据来源标记：review-cards（服务端四档卡）| legacy（旧到期兜底），便于核对。
+          'data-due-source': entry.due_source || '',
         }, ...children));
       }
       list.append(grid);

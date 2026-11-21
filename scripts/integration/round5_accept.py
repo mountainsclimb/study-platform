@@ -241,9 +241,18 @@ def _run_flows(args, client_a, client_b, report: dict) -> None:
         evidence.status_code == 200 and int(counts.get("total") or 0) == 1,
         f"total={counts.get('total')} verdict={(evidence_body.get('effective') or {}).get('verdict')}",
     )
-    wrongbook = client_a.get("/api/wrongbook").json().get("items") or []
+    wrongbook_body = client_a.get("/api/wrongbook", params={"page_size": 200}).json()
+    wrongbook = wrongbook_body.get("items") or []
     wrong_hit = any((item.get("ref") == picked["ref"]) or (item.get("qid") == picked["qid"]) for item in wrongbook)
     record("错误作答进入错题本", wrong_hit, f"错题条数={len(wrongbook)}")
+    wrong_item = next(
+        (item for item in wrongbook if item.get("ref") == picked["ref"] or item.get("qid") == picked["qid"]), {},
+    )
+    record(
+        "错题到期来源为服务端复习卡（M2 统一到期）",
+        wrong_item.get("due_source") == "review-cards" and bool(wrong_item.get("next_review_at")),
+        f"due_source={wrong_item.get('due_source')} due={wrong_item.get('next_review_at')}",
+    )
 
     # ------------------------------------------------------------------
     # 3. 四档复习：迁移 → 到期 → 评分 → 幂等重放 → 版本冲突
@@ -291,11 +300,35 @@ def _run_flows(args, client_a, client_b, report: dict) -> None:
                   "idempotency_key": "accept-stale-" + secrets.token_hex(3)},
         )
         record("过期卡片版本被拒绝", stale.status_code == 409, f"HTTP {stale.status_code}")
+        # M2：评分后旧错题表被同一事务镜像，错题本/首页/学情/统计读到同一个到期值。
+        wb_after = client_a.get("/api/wrongbook", params={"page_size": 200}).json()
+        wb_after_item = next(
+            (item for item in wb_after.get("items") or []
+             if item.get("ref") == picked["ref"] or item.get("qid") == picked["qid"]), {},
+        )
+        home_after = client_a.get("/api/insight/home").json()
+        overview_after = client_a.get("/api/insight/overview").json()
+        stats_after = client_a.get("/api/stats").json()
+        home_review = home_after.get("review") or {}
+        overview_review = overview_after.get("review") or {}
+        stats_review = stats_after.get("review") or {}
+        record(
+            "评分后错题本/首页/学情/统计统一到期",
+            wb_after_item.get("next_review_at") == new_due
+            and home_review.get("available") is True
+            and home_review.get("due_source") == "review-cards"
+            and overview_review.get("due_source") == "review-cards"
+            and stats_review.get("due_source") == "review-cards",
+            f"错题本={wb_after_item.get('next_review_at')} 首页due_today={home_review.get('due_today')} "
+            f"学情due_now={overview_review.get('due_now')} 统计due_now={stats_review.get('due_now')}",
+        )
         compare = client_a.get("/api/review-cards/compare")
         compare_body = compare.json() if compare.status_code == 200 else {}
         record(
-            "新旧到期双读对账可导出",
-            compare.status_code == 200 and "mismatched" in compare_body,
+            "镜像后新旧到期对账无漂移",
+            compare.status_code == 200
+            and compare_body.get("matched") == compare_body.get("checked")
+            and not compare_body.get("mismatched"),
             f"checked={compare_body.get('checked')} matched={compare_body.get('matched')} "
             f"mismatched={len(compare_body.get('mismatched') or [])}",
         )

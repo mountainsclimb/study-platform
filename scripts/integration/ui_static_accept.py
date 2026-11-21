@@ -572,6 +572,18 @@ class UiStaticAccept:
                        "renderReviewRating" in wrongbook and "/review-cards/due" in wrongbook
                        and "/ratings" in wrongbook,
                        "wrongbook.js 需引用 renderReviewRating 并调用 due/ratings 接口"))
+        # M2（统一到期读路径）：首页读服务端 review 块并可回退旧字段；错题页标注统一口径。
+        home = self._read(HOME_JS)
+        checks.append(("首页接入统一复习到期口径（M2）",
+                       all(token in home for token in
+                           ("due_now", "study.review.homeDue", "study.review.homeUnavailable",
+                            "study.review.goReview"))
+                       and "personal.due_reviews" in home,
+                       "home.js 需优先读 home.review 块并回退 personal.due_reviews"))
+        checks.append(("错题页标注统一到期与服务端排程（M2）",
+                       "due_source" in wrongbook and "study.review.unifiedNote" in wrongbook
+                       and "study.review.serverSchedule" in wrongbook,
+                       "wrongbook.js 需按 due_source 显示统一口径说明与服务端排程徽标"))
 
         question = self._read(QUESTION_JS)
         checks.append(("题目详情接入「查看原理」并懒加载播放器",
@@ -606,6 +618,9 @@ class UiStaticAccept:
             "study.formula.review.sectionTitle", "study.formula.validate.braces",
             "study.review.scaleNote", "study.review.degraded",
             "study.demo.open", "study.demo.webglFallback", "study.demo.saveArtifact",
+            # M2：统一到期读路径的关键文案。
+            "study.review.unifiedNote", "study.review.homeDue",
+            "study.review.homeUnavailable", "study.review.serverSchedule",
         )
         missing_keys = [key for key in required if key not in zh or key not in en]
         checks.append(("第五轮关键 locale 键存在（公式/四档/原理）", not missing_keys,

@@ -1950,7 +1950,7 @@ def _build_search_sql(
             values.append(user_id)
         elif status == "due":
             clauses.append("EXISTS (SELECT 1 FROM wrong_questions wq WHERE wq.user_id=? AND wq.qid=q.qid AND wq.archived=0 AND wq.next_review_at<=?)")
-            values.extend([user_id, utcnow()])
+            values.extend([user_id, _review_clock_iso()])
         elif status in LEVELS:
             if status == "未掌握":
                 clauses.append("(NOT EXISTS (SELECT 1 FROM mastery ms WHERE ms.user_id=? AND ms.qid=q.qid) OR EXISTS (SELECT 1 FROM mastery ms WHERE ms.user_id=? AND ms.qid=q.qid AND ms.level='未掌握'))")
@@ -2292,7 +2292,7 @@ def _bank_questions_page(
             if max_slots > 0:
                 seen_set = _seen_review_set(seen_reviews, items)
                 rev_where = where_sql + " AND EXISTS (SELECT 1 FROM wrong_questions wq_i WHERE wq_i.user_id=? AND wq_i.qid=q.qid AND wq_i.archived=0 AND wq_i.next_review_at<=?)"
-                rev_params = [*params, user_id, utcnow()]
+                rev_params = [*params, user_id, _review_clock_iso()]
                 # §4.1: same_kp_only restricts interleaved wrong items to KPs present on current page when kp_id filter is not set
                 if prefs.get("same_kp_only") and not kp_id:
                     page_kp_ids = sorted({kp["kp_id"] for it in items for kp in it.get("knowledge_points", [])})
@@ -4025,6 +4025,21 @@ def _missing_official_card(qid: str) -> dict:
     }
 
 
+def _review_clock_iso() -> str:
+    """复习到期比较使用服务端复习时钟（默认真实 UTC；验收可用 STUDY_REVIEW_CLOCK 固定）。
+
+    M2 起复习卡是到期真相源：旧到期过滤/``due`` 标记与复习模块必须用同一个时钟，
+    否则固定时钟验收或将来注入服务端时钟时，「卡到期」与「错题到期」会判断不一致。
+    复习模块不可用时回退 ``db.utcnow()``。
+    """
+    try:
+        from . import study_review
+
+        return study_review.now_utc().isoformat()
+    except Exception:  # noqa: BLE001 - 回退旧时钟，不阻断错题/复习列表
+        return utcnow()
+
+
 def _app_wrong_rows(user_id, *, due_only=False, include_archived=False, error_tag=None):
     """应用库里的个人题错题行（与题库错题同一张 wrong_questions 表）。"""
     clauses = ["wq.user_id = ?", "wq.qid LIKE 'app:%'"]
@@ -4033,7 +4048,7 @@ def _app_wrong_rows(user_id, *, due_only=False, include_archived=False, error_ta
         clauses.append("wq.archived = 0")
     if due_only:
         clauses.append("wq.next_review_at <= ?")
-        params.append(utcnow())
+        params.append(_review_clock_iso())
     if error_tag:
         clauses.append("wq.error_tags_json LIKE ? ESCAPE '\\'")
         params.append(_contains_pattern(f'"{error_tag}"'))
@@ -4050,7 +4065,7 @@ def _app_wrong_cards(user_id, rows: list[dict]) -> list[dict]:
     qids = [row["qid"] for row in rows]
     latest_map = _latest_attempt_map(user_id, qids)
     mastery_map = _mastery_map(user_id, qids)
-    now_iso = utcnow()
+    now_iso = _review_clock_iso()
     cards = []
     for row in rows:
         qid = row["qid"]
@@ -4083,7 +4098,7 @@ def _official_wrong_rows(user_id, *, due_only=False, include_archived=False, err
         clauses.append("wq.archived = 0")
     if due_only:
         clauses.append("wq.next_review_at <= ?")
-        params.append(utcnow())
+        params.append(_review_clock_iso())
     if error_tag:
         clauses.append("wq.error_tags_json LIKE ? ESCAPE '\\'")
         params.append(_contains_pattern(f'"{error_tag}"'))
@@ -4101,7 +4116,7 @@ def _official_wrong_cards(user_id, rows: list[dict]) -> list[dict]:
     qids = [row["qid"] for row in rows]
     latest_map = _latest_attempt_map(user_id, qids)
     mastery_map = _mastery_map(user_id, qids)
-    now_iso = utcnow()
+    now_iso = _review_clock_iso()
     cards = []
     for row in rows:
         qid = row["qid"]
@@ -4149,6 +4164,64 @@ def _app_card_matches(card, *, subject=None, type=None, province=None, year=None
     return True
 
 
+def _apply_review_due(user_id: int, items: list[dict]) -> list[dict]:
+    """M2：用复习卡的权威到期值覆盖旧读投影（错题本/复习队列与首页/学情同一个到期值）。
+
+    复习卡写入时已把到期镜像到 ``wrong_questions``（见 study_review._mirror_due_to_wrong），
+    这里再次以卡为准覆盖展示字段，并标注 ``due_source``，便于验收核对「所有入口同一天」。
+    模块不可用时静默降级为旧值，不影响错题/复习列表。
+    """
+    try:
+        from . import study_review
+
+        cards = study_review.due_map(user_id)
+    except Exception as error:  # noqa: BLE001 - 复习排程不可用不能拖垮错题本
+        _log.warning("复习卡到期读取失败（沿用旧到期）：%s", type(error).__name__)
+        cards = {}
+    now_iso = _review_clock_iso()
+    for item in items:
+        entry = cards.get(str(item.get("qid") or ""))
+        if not entry:
+            item.setdefault("due_source", "legacy")
+            continue
+        item["next_review_at"] = entry["due_at"]
+        item["due"] = str(entry["due_at"]) <= now_iso
+        item["due_source"] = "review-cards"
+        item["review_card_id"] = entry["card_id"]
+        item["review_card_state"] = entry["state"]
+        item["review_card_rated"] = bool(entry.get("rated"))
+    return items
+
+
+def _review_stats_block(user_id: int) -> dict:
+    """M2：/api/stats 的复习排程统一口径（读服务端复习卡；失败降级为旧错题到期）。"""
+    try:
+        from . import study_review
+
+        stats = study_review.stats(user_id)
+        return {
+            "available": True,
+            "due_now": int(stats.get("due_now") or 0),
+            "due_today": int(stats.get("due_today") or 0),
+            "total": int(stats.get("total") or 0),
+            "algorithm": stats.get("algorithm"),
+            "algorithm_version": stats.get("algorithm_version"),
+            "due_source": "review-cards",
+            "note": "",
+        }
+    except Exception as error:  # noqa: BLE001 - 排程不可用时统计仍返回旧口径
+        return {
+            "available": False,
+            "due_now": None,
+            "due_today": None,
+            "total": None,
+            "algorithm": None,
+            "algorithm_version": None,
+            "due_source": "legacy",
+            "note": f"复习排程暂不可用，due_count 沿用旧错题到期口径（{type(error).__name__}）",
+        }
+
+
 def _wrong_items_bank(
     user_id,
     subject=None,
@@ -4176,7 +4249,7 @@ def _wrong_items_bank(
             w_clauses.append("wq.archived = 0")
         if due_only:
             w_clauses.append("wq.next_review_at <= ?")
-            w_params.append(utcnow())
+            w_params.append(_review_clock_iso())
         if error_tag:
             # error_tags_json 是 JSON 数组文本：按 `"tag"` 精确匹配；必须转义 LIKE 通配符，
             # 否则用户传入 % 或 _ 会扩大匹配范围（错题本筛选结果失真）。
@@ -4197,7 +4270,7 @@ def _wrong_items_bank(
             [*full_params, page_size, (page - 1) * page_size],
         ).fetchall()
         cards = _batch_summaries(con, rows, user_id)
-        now_iso = utcnow()
+        now_iso = _review_clock_iso()
         for card, raw in zip(cards, rows):
             card["ref"] = card.get("ref") or question_ref.build(question_ref.SOURCE_BANK, card["qid"])
             card["source"] = question_ref.SOURCE_BANK
@@ -4261,11 +4334,12 @@ def _wrong_items(
         )
     ] if official_rows else []
     if not app_cards and not official_cards:
-        return _wrong_items_bank(
+        cards, total = _wrong_items_bank(
             user_id, subject=subject, due_only=due_only, type=type, province=province,
             year=year, difficulty=difficulty, q=q, kp_id=kp_id, error_tag=error_tag,
             include_archived=include_archived, page=page, page_size=page_size,
         )
+        return _apply_review_due(user_id, cards), total
     window = max(int(page) * int(page_size), int(page_size))
     bank_cards, bank_total = _wrong_items_bank(
         user_id, subject=subject, due_only=due_only, type=type, province=province,
@@ -4277,7 +4351,9 @@ def _wrong_items(
         key=lambda card: (str(card.get("next_review_at") or ""), str(card.get("qid") or "")),
     )
     start = (max(int(page), 1) - 1) * int(page_size)
-    return merged[start:start + int(page_size)], bank_total + len(app_cards) + len(official_cards)
+    return _apply_review_due(user_id, merged[start:start + int(page_size)]), (
+        bank_total + len(app_cards) + len(official_cards)
+    )
 
 
 @router.get("/wrongbook")
@@ -4295,7 +4371,15 @@ def wrongbook(
         user["id"], subject=subject, due_only=due_only, kp_id=kp_id,
         error_tag=error_tag, include_archived=include_archived, page=page, page_size=page_size,
     )
-    return {"items": items, "total": total, "page": page, "page_size": page_size}
+    return {
+        "items": items,
+        "total": total,
+        "page": page,
+        "page_size": page_size,
+        # M2：到期值以服务端复习卡为准（卡到期镜像到旧错题字段），所有页面同一日期。
+        "due_source": "review-cards",
+        "due_note": "错题到期时间由服务端四档复习排程写入；首页、复习队列、学情与学习计划使用同一天。",
+    }
 
 
 @router.get("/wrongbook/export")
@@ -4356,7 +4440,7 @@ def wrongbook_by_kp(subject: str | None = None, user=Depends(current_user)):
             "JOIN knowledge_points kp ON kp.id=qk.kp_id "
             "WHERE wq.user_id=? AND wq.archived=0"
         )
-        params = [utcnow(), user["id"]]
+        params = [_review_clock_iso(), user["id"]]
         if subject:
             sql += " AND kp.subject=?"
             params.append(subject)
@@ -4387,7 +4471,13 @@ def reviews(
         user["id"], subject=subject, due_only=True, type=type, province=province,
         year=year, difficulty=difficulty, q=q, kp_id=kp_id, page=1, page_size=4,
     )
-    return {"items": items, "total": total, "message": "到期错题推荐，不改变检索结果与总数"}
+    return {
+        "items": items,
+        "total": total,
+        "message": "到期错题推荐，不改变检索结果与总数",
+        "due_source": "review-cards",
+        "due_note": "到期时间以服务端四档复习排程为准（与首页/错题本/学情同一日期）。",
+    }
 
 
 def _pending_attempt_cards(user_id, *, subject=None, exclude=None, limit=50) -> list[dict]:
@@ -4506,6 +4596,8 @@ def review_queue(
         "pending_count": len(pending),
         "limit": limit,
         "message": "题库题、个人题与平台精选题在同一复习队列；未判分题单独列出，不计入错题复习安排",
+        "due_source": "review-cards",
+        "due_note": "队列内到期时间以服务端四档复习排程为准；评分后同一日期同时反映到首页、错题本与学情。",
     }
 
 
@@ -4519,7 +4611,7 @@ def stats(user=Depends(current_user)):
         wrong_count = con.execute("SELECT COUNT(*) FROM wrong_questions WHERE user_id=? AND archived=0", (user["id"],)).fetchone()[0]
         due_count = con.execute(
             "SELECT COUNT(*) FROM wrong_questions WHERE user_id=? AND archived=0 AND next_review_at<=?",
-            (user["id"], utcnow()),
+            (user["id"], _review_clock_iso()),
         ).fetchone()[0]
         counts = {row[0]: row[1] for row in con.execute("SELECT level,COUNT(*) FROM mastery WHERE user_id=? GROUP BY level", (user["id"],))}
         recent = [dict(row) for row in con.execute("SELECT * FROM attempts WHERE user_id=? ORDER BY id DESC LIMIT 6", (user["id"],))]
@@ -4584,6 +4676,8 @@ def stats(user=Depends(current_user)):
         "official_attempts": official_attempts, "official_practiced": official_practiced,
         "official_wrong_count": official_wrong_count,
         "official": official_caliber,
+        # M2：复习排程统一口径（与首页/错题/学情同一到期值）。
+        "review": _review_stats_block(user["id"]),
         "mastered": counts.get("熟练掌握", 0), "mastery_counts": {level: counts.get(level, 0) for level in LEVELS},
         "subject_progress": list(progress.values()), "recent_attempts": [_attempt_public(row) for row in recent],
     }

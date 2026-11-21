@@ -81,6 +81,11 @@ CALIBER = {
         "不做个性化推断。"
     ),
     "due": "待复习 = 错题本未归档且已到复习时间（next_review_at）的题目数，与错题本一致。",
+    "review_due": (
+        "『今日复习』以服务端四档复习卡（/api/review-cards）为准：due_now=已到期未归档卡，"
+        "due_today=本 UTC 自然日结束前到期（含已逾期）。卡到期时间在同一事务镜像到旧错题字段，"
+        "因此首页、错题本、复习队列、学情与学习计划看到同一个日期。"
+    ),
     "official": (
         "平台精选口径来自 app/official.py：只统计当前公开可见的精选题（社区待核验/已核验/精选；"
         "撤回/争议在查询时即时剔除，不缓存）；可自动判分=单选/多选（有选项且有答案）或填空题"
@@ -418,6 +423,44 @@ def _weak_knowledge(knowledge: dict) -> tuple[list[dict], str | None]:
     return weak, note
 
 
+def _review_payload(user_id: int) -> dict:
+    """今日复习统一口径（M2）：读服务端四档复习卡，失败降级为旧错题口径。
+
+    返回 ``{available, due_now, due_today, total, algorithm, algorithm_version,
+    due_source, caliber, note}``；前端只在 available 时显示复习卡入口，不用本地估算。
+    """
+    try:
+        from . import study_review
+
+        stats = study_review.stats(user_id)
+        return {
+            "available": True,
+            "due_now": int(stats.get("due_now") or 0),
+            "due_today": int(stats.get("due_today") or 0),
+            "total": int(stats.get("total") or 0),
+            "algorithm": stats.get("algorithm"),
+            "algorithm_version": stats.get("algorithm_version"),
+            "due_source": "review-cards",
+            "caliber": CALIBER["review_due"],
+            "note": "",
+        }
+    except Exception as error:  # noqa: BLE001 - 复习排程不可用不能拖垮首页其他真实统计
+        return {
+            "available": False,
+            "due_now": None,
+            "due_today": None,
+            "total": None,
+            "algorithm": None,
+            "algorithm_version": None,
+            "due_source": "legacy",
+            "caliber": CALIBER["due"],
+            "note": (
+                "复习排程暂不可用，首页沿用错题本到期时间；"
+                f"（{type(error).__name__}）"
+            ),
+        }
+
+
 def _personal_payload(user_id: int, days: int) -> dict:
     from . import insight  # 延迟导入：insight 在模块底部注册本模块的路由
 
@@ -456,6 +499,7 @@ def _personal_payload(user_id: int, days: int) -> dict:
             "pending": CALIBER["pending"],
             "weak": CALIBER["weak"],
             "due": CALIBER["due"],
+            "review_due": CALIBER["review_due"],
         },
     }
 
@@ -487,9 +531,10 @@ def _official_caliber(user_id: int) -> dict:
 
 
 def build_home(user_id: int, days: int = DEFAULT_DAYS) -> dict:
-    """首页统计快照：题库全局口径 + 平台精选口径 + 当前账号个人口径。"""
+    """首页统计快照：题库全局口径 + 平台精选口径 + 当前账号个人口径 + 复习排程口径。"""
     personal = _personal_payload(user_id, days)
     official = _official_caliber(user_id)
+    review = _review_payload(user_id)
     bank = dict(_bank_caliber())
     # 平台精选可练数量同时挂到 bank 块：首页题库卡片按这个字段展示（旧后端无该字段时
     # 前端能力探测降级，不伪造数字）。
@@ -502,6 +547,8 @@ def build_home(user_id: int, days: int = DEFAULT_DAYS) -> dict:
         "bank": bank,
         "official": official,
         "personal": personal,
+        # M2：今日复习以服务端四档复习卡为准（与错题/练习/学情同一到期值）。
+        "review": review,
         "caliber": CALIBER,
     }
 

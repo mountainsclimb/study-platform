@@ -2,8 +2,10 @@
 
 本模块是所有复习入口（首页今日复习、练习插题、错题本、学情、学习计划）共用的
 **服务器排程真相源**：每个用户 + 卡面键只保存一份排程状态，四档人工评分写幂等
-复习日志，服务端返回下一次到期时间。旧 ``wrong_questions`` 仍是当前读写路径，本模块
-先旁路铺新读逻辑，用 ``compare_due`` 做切换前对账证据，不改变旧表。
+复习日志，服务端返回下一次到期时间。M2 起旧 ``wrong_questions.next_review_at`` 作为
+**只读兼容字段**被同一事务镜像（:func:`_mirror_due_to_wrong`）：已有真实评分的卡是权威，
+普通判分/重判不再推进排程；尚未评分的卡跟随普通判分推进首次待复习。首页/错题/练习/
+学情/Anki 导出因此看到同一个到期值，``compare_due`` 仍可作为漂移对账证据。
 
 ## 算法口径（本地参考实现 + 外部引擎适配位）
 
@@ -594,6 +596,36 @@ def _legacy_due(value, moment: datetime) -> str:
     return _iso(parsed)
 
 
+def _due_interval_days(due_at: str, moment: datetime) -> int:
+    """到期时间 → 旧表 ``interval_days``（至少 1 天，四舍五入到天）。"""
+    parsed = _as_utc(due_at)
+    if parsed is None:
+        return 1
+    delta = (parsed - moment).total_seconds() / 86400.0
+    return max(1, int(round(delta)))
+
+
+def _mirror_due_to_wrong(con, user_id: int, ref_value, *, due_at: str, moment: datetime) -> bool:
+    """把复习卡的权威到期时间镜像到旧 ``wrong_questions.next_review_at``。
+
+    M2「统一到期值」：错题本/复习队列/首页/学情/Anki 导出等旧读取方继续读
+    ``wrong_questions``，因此服务端在同一事务内把卡到期写回旧表，保证所有入口看到
+    同一个日期；返回是否命中旧行（卡对应的旧错题已删除时返回 False）。
+    """
+    try:
+        storage_qid = question_ref.storage_key(ref_value)
+    except question_ref.QuestionRefError:
+        return False
+    if not storage_qid:
+        return False
+    changed = con.execute(
+        "UPDATE wrong_questions SET next_review_at=?, interval_days=? "
+        "WHERE user_id=? AND qid=?",
+        (due_at, _due_interval_days(due_at, moment), user_id, storage_qid),
+    ).rowcount
+    return bool(changed)
+
+
 def _insert_card(
     con,
     *,
@@ -637,7 +669,15 @@ def _insert_card(
 
 
 def _sync_one(con, user_id: int, wrong_row, moment: datetime) -> tuple[str, dict | None]:
-    """同步一条错题记录，返回 (动作, 卡投影)；动作为 created/updated/archived/unchanged/skipped。"""
+    """同步一条错题记录，返回 (动作, 卡投影)；动作为 created/updated/archived/unchanged/skipped。
+
+    到期值权威方向（M2「服务端一个到期值」）：
+
+    * 卡尚未被真实四档评分（``reps=0``）：普通判分仍推进首次待复习 → **卡跟随旧表**到期；
+    * 卡已有真实评分（``reps>0``）：卡是权威，普通判分/重判不再推进排程 → **旧表跟随卡**
+      （同一事务镜像，错题本/首页/学情/Anki 导出读到同一天）；
+    * 归档标记始终从旧表同步。
+    """
     try:
         card_key = _card_key_for(wrong_row["qid"])
         ref = _canonical_ref(wrong_row["qid"])
@@ -650,18 +690,44 @@ def _sync_one(con, user_id: int, wrong_row, moment: datetime) -> tuple[str, dict
         (user_id, card_key),
     ).fetchone()
     if existing is not None:
-        # 已有卡：唯一允许同步的字段是归档标记，绝不覆盖真实排程状态与 due。
-        if (_as_int(existing["archived"], 0) or 0) != archived:
+        reps = max(0, _as_int(existing["reps"], 0) or 0)
+        archive_changed = (_as_int(existing["archived"], 0) or 0) != archived
+        if archive_changed:
             con.execute(
                 "UPDATE review_cards SET archived=?, updated_at=? WHERE id=? AND user_id=?",
                 (archived, _iso(moment), existing["id"], user_id),
             )
-            updated = con.execute(
+        if archived:
+            # 归档卡只同步归档标记，不参与到期对齐（恢复后按既有状态继续）。
+            fresh = con.execute(
                 f"SELECT {_CARD_COLUMNS} FROM review_cards WHERE id=? AND user_id=?",
                 (existing["id"], user_id),
             ).fetchone()
-            return ("archived" if archived else "updated"), _card_public(updated)
-        return "unchanged", _card_public(existing)
+            return ("archived" if archive_changed else "unchanged"), _card_public(fresh)
+        changed = archive_changed
+        if reps > 0:
+            # 真实评分后的卡是权威：把旧表到期拉齐（普通判分不再覆盖排程）。
+            _mirror_due_to_wrong(
+                con, user_id, existing["question_ref"],
+                due_at=existing["due_at"], moment=moment,
+            )
+        else:
+            # 尚未真实评分的卡：首次待复习由普通判分推进，卡跟随旧表到期。
+            legacy_due = _legacy_due(wrong_row["next_review_at"], moment)
+            if legacy_due != existing["due_at"]:
+                state = _load_state(existing["state_json"])
+                state["due"] = legacy_due
+                con.execute(
+                    "UPDATE review_cards SET due_at=?, state_json=?, updated_at=? "
+                    "WHERE id=? AND user_id=?",
+                    (legacy_due, _dump_state(state), _iso(moment), existing["id"], user_id),
+                )
+                changed = True
+        fresh = con.execute(
+            f"SELECT {_CARD_COLUMNS} FROM review_cards WHERE id=? AND user_id=?",
+            (existing["id"], user_id),
+        ).fetchone()
+        return ("updated" if changed else "unchanged"), _card_public(fresh)
     # 首次创建：迁移旧到期时间作为「首次待复习」，状态 new，等真实评分才初始化算法状态。
     card = _insert_card(
         con,
@@ -750,6 +816,72 @@ def sync_user_cards(user_id: int, *, con=None) -> dict:
     }
 
 
+def ensure_user_cards(user_id: int, *, con=None) -> dict:
+    """惰性迁移：该用户还有错题没有对应复习卡时，自动迁移一次（幂等，逐条判定）。
+
+    读取入口（到期队列/统计/对账/错题本覆盖、首页与学情）调用：保证旧用户、以及升级后
+    新产生的错题第一次读取就有到期卡；卡与错题已一致时只做两次小查询，不写库。
+    """
+    with _use(con) as dbcon:
+        wrong_qids = [
+            str(row[0]) for row in dbcon.execute(
+                "SELECT qid FROM wrong_questions WHERE user_id=? ORDER BY qid", (user_id,),
+            )
+        ]
+        if not wrong_qids:
+            return {"migrated": False, "created": 0, "total": 0,
+                    "note": "没有错题，无需迁移"}
+        card_keys = {
+            str(row[0]) for row in dbcon.execute(
+                "SELECT card_key FROM review_cards WHERE user_id=?", (user_id,),
+            )
+        }
+    missing = 0
+    for qid in wrong_qids:
+        try:
+            key = "q:" + question_ref.storage_key(qid)
+        except question_ref.QuestionRefError:
+            continue
+        if key not in card_keys:
+            missing += 1
+    if not missing:
+        return {"migrated": False, "created": 0, "total": len(wrong_qids),
+                "note": "复习卡与错题已一致，无需迁移"}
+    result = sync_user_cards(user_id, con=con)
+    return {"migrated": bool(result.get("created")), **result}
+
+
+def due_map(user_id: int, *, con=None) -> dict[str, dict]:
+    """按写库 qid 批量返回复习卡到期投影（供旧读取方覆盖为同一个到期值）。
+
+    返回 ``{qid: {due_at, card_id, state, version, rated, archived}}``；``qid`` 是
+    ``wrong_questions.qid`` 的写库键（题库裸 qid、`app:<id>`、`official:<id>`），
+    键与旧错题卡一一对应。读取前会做一次惰性迁移，保证旧用户也有一致的到期值。
+    """
+    ensure_user_cards(user_id, con=con)
+    with _use(con) as dbcon:
+        rows = dbcon.execute(
+            f"SELECT {_CARD_COLUMNS} FROM review_cards WHERE user_id=?",
+            (user_id,),
+        ).fetchall()
+    result: dict[str, dict] = {}
+    for row in rows:
+        try:
+            storage_qid = question_ref.storage_key(row["question_ref"])
+        except question_ref.QuestionRefError:
+            continue
+        card = _card_public(row)
+        result[storage_qid] = {
+            "due_at": card["due_at"],
+            "card_id": card["card_id"],
+            "state": card["state"],
+            "version": card["version"],
+            "rated": int(card.get("reps") or 0) > 0,
+            "archived": bool(card.get("archived")),
+        }
+    return result
+
+
 # ---------------------------------------------------------------------------
 # 读取：卡、到期队列、统计、双读对账
 # ---------------------------------------------------------------------------
@@ -825,6 +957,7 @@ def due_cards(
     moment = _normalize_now(now)
     moment_iso = _iso(moment)
     limit_value = _limit_value(limit)
+    ensure_user_cards(user_id, con=con)
     clauses = ["user_id=?", "archived=0"]
     params: list = [user_id]
     if not include_future:
@@ -861,6 +994,8 @@ def due_cards(
         "message": message,
         "limit": limit_value,
         "include_future": bool(include_future),
+        "due_source": "review-cards",
+        "note": "到期时间由服务端复习卡排程写入，并镜像到旧错题到期字段；首页/错题/练习/学情同一日期。",
     }
 
 
@@ -876,6 +1011,7 @@ def stats(user_id: int, *, now=None) -> dict:
     tomorrow_start = datetime.combine(
         moment.date() + timedelta(days=1), dt_time.min, tzinfo=timezone.utc
     ).isoformat()
+    ensure_user_cards(user_id)
     counts = {state: 0 for state in STATES}
     total = archived = due_now = due_today = 0
     with db.connection() as dbcon:
@@ -908,11 +1044,13 @@ def stats(user_id: int, *, now=None) -> dict:
         "archived": archived,
         "algorithm": FSRS_ALGORITHM,
         "algorithm_version": FSRS_ALGORITHM_VERSION,
+        "due_source": "review-cards",
+        "legacy_mirror": True,
     }
 
 
 def compare_due(user_id: int, *, now=None, con=None) -> dict:
-    """旧错题排程与新复习卡的双读对账（只读，不改变任何数据）。
+    """旧错题排程与新复习卡的双读对账（不改变已有排程，必要时先做幂等惰性迁移）。
 
     逐条比较「未归档错题的 ``next_review_at``」与「对应未归档卡的 ``due_at``」：
 
@@ -925,6 +1063,7 @@ def compare_due(user_id: int, *, now=None, con=None) -> dict:
     :return: ``{checked, matched, mismatched, missing_cards, extra_cards, note}``。
     """
     _normalize_now(now)  # 保持与其它读接口一致的时钟校验/固定时钟语义（本函数不依赖 now）
+    ensure_user_cards(user_id, con=con)
     with _use(con) as dbcon:
         wrong_rows = dbcon.execute(
             "SELECT qid, next_review_at FROM wrong_questions "
@@ -980,9 +1119,10 @@ def compare_due(user_id: int, *, now=None, con=None) -> dict:
         "missing_cards": missing,
         "extra_cards": extra,
         "note": (
-            "双读对账（只读）：旧 wrong_questions.next_review_at 与新 review_cards.due_at "
+            "双读对账：旧 wrong_questions.next_review_at 与新 review_cards.due_at "
             "按未归档错题逐条比较，容差 1 秒；diff_hours = 新 due − 旧 due。"
-            "差异仅作为切换前证据，本接口不修改任何数据。"
+            "对账前会做一次幂等惰性迁移（旧用户首次读取自动建卡），"
+            "但不会改变已有卡的真实排程或到期值；差异仅作为切换/漂移证据。"
         ),
     }
 
@@ -1153,6 +1293,10 @@ def _apply_rating(con, *, user_id: int, card_id: int, rating: int, card_version,
     )
     if not getattr(cursor, "rowcount", 1):
         raise HTTPException(409, "复习卡已被更新，请刷新后重试")
+    # M2：同一事务把权威到期镜像到旧错题表，首页/错题/练习/学情/Anki 导出看到同一天。
+    _mirror_due_to_wrong(
+        con, user_id, card_row["question_ref"], due_at=due_at, moment=moment,
+    )
     con.execute(
         "INSERT INTO review_ratings(user_id, card_id, rating, idempotency_key, card_version, "
         "rated_at, due_at, state_before_json, state_after_json, algorithm, algorithm_version, "

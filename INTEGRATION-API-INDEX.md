@@ -1620,8 +1620,54 @@ checksum = sha256(`json.dumps(data, ensure_ascii=False, sort_keys=True, separato
 
 - `python -X utf8 scripts/integration/round5_baseline.py`：只读基线固定与数学知识点/OCR 分层抽检样本
   （`screenshots/round5-baseline.json`、`docs/r5-数学知识点抽检-20261121.{json,md}`）。
-- `python -X utf8 scripts/integration/round5_accept.py`：端到端 28 项（拍题块→作答证据→错题→四档评分→附件→跨页读取），
-  报告 `screenshots/round5-accept-report.json`。
-- `python -X utf8 scripts/integration/ui_static_accept.py`：前端静态契约 7 步（含第五轮）。
+- `python -X utf8 scripts/integration/round5_accept.py`：端到端 29 项（拍题块→作答证据→错题→四档评分→
+  附件→跨页读取→M2 统一到期），报告 `screenshots/round5-accept-report.json`。
+- `python -X utf8 scripts/integration/ui_static_accept.py`：前端静态契约 7 步（含第五轮/M2）。
 - 专项测试：`tests/test_study_{evidence,artifact,review}.py`、`tests/test_ocr_blocks.py`、
-  `tests/test_{paperlab,classroom}_study_evidence.py`、`tests/test_round5_integration.py`。
+  `tests/test_{paperlab,classroom}_study_evidence.py`、`tests/test_round5_integration.py`、
+  `tests/test_review_due_unified.py`（M2）。
+
+## 25. M2 四档复习统一到期读路径（2026-11-21，增量字段）
+
+> 详细记录见 `docs/知序优化实施记录-20261121-第六轮.md`。**服务端唯一到期真相源 =
+> `review_cards.due_at`**：四档评分更新卡后在同一事务镜像到 `wrong_questions.next_review_at`
+> （旧读取方继续可用）；未评分卡跟随普通判分推进首次待复习，已评分卡只在真实四档评分后推进。
+> 读接口字段只增不改，旧 `due_reviews`/`due_count`/`next_review_at` 语义保持（值已统一）。
+
+### 25.1 统一约定
+
+- `due_source`：`"review-cards"`（服务端复习卡口径）或 `"legacy"`（复习模块不可用时的回退）。
+- 惰性迁移：任一读入口发现「有错题没有对应卡」时自动 `sync_user_cards`（幂等），旧用户首次打开
+  首页/错题/复习/统计即完成迁移；无缺卡时只做两次小查询、不写库。
+- 时钟：到期比较/`due` 判定使用 `study_review.now_utc()`（`STUDY_REVIEW_CLOCK` 可固定），
+  复习模块不可用时回退 `db.utcnow()`；对账容差 1 秒。
+
+### 25.2 各读接口的增量字段
+
+| 方法/路径 | 增量 |
+| --- | --- |
+| `GET /api/insight/home` | 顶层 `review:{available,due_now,due_today,total,algorithm,algorithm_version,due_source,caliber,note}`；`personal.due_reviews` 保留。 |
+| `GET /api/insight/overview` | 顶层 `review`（同结构 + `new/learning/review/relearning` 分布）。 |
+| `GET /api/stats` | 顶层 `review` 块；`due_count` 保留且一致。 |
+| `GET /api/wrongbook?due_only=` | 顶层 `due_source`/`due_note`；条目 `due_source`、`review_card_id`、`review_card_state`、`review_card_rated`；`next_review_at`/`due` 按卡到期覆盖；到期筛选使用统一时钟。 |
+| `GET /api/review/queue` | 同 wrongbook；`due_source`/`due_note` 顶层。 |
+| `GET /api/reviews` | 同条目字段；返回 `due_source`/`due_note`。 |
+| `GET /api/review-cards/due` | 顶层 `due_source`、`note`。 |
+| `GET /api/review-cards/stats` | 顶层 `due_source:"review-cards"`、`legacy_mirror:true`。 |
+| `GET /api/review-cards/compare` | 语义更新：对账前幂等惰性迁移（逐条补缺卡）；不改变已有排程/评分日志；`matched==checked` 表示无漂移。 |
+| `POST /api/review-cards/{id}/ratings` | 评分成功后同事务镜像旧错题到期与 `interval_days`；响应字段不变。 |
+
+### 25.3 前端
+
+- `web/js/pages/home.js`：首页「今日复习」优先读 `review` 块（`available && due_now != null`），
+  显示「今日待复习 N 张（服务端四档排程 fsrs-reference v5.0-local）」与「去复习」；不可用时回退
+  `personal.due_reviews` 并显示中文降级说明，不伪造 0。
+- `web/js/pages/wrongbook.js`：统计条下补充统一口径说明；条目显示「服务端排程」/「已评分卡」徽标；
+  上一轮四档评分、降级、409、幂等重放逻辑不变。
+- 新增 locale 键：`study.review.unifiedNote/serverSchedule/ratedCard/homeDue/homeDueCaliber/homeUnavailable/goReview`
+  （合并后 zh/en 各 4,792 键）。
+
+### 25.4 验收
+
+- `tests/test_review_due_unified.py`（5 项）：作答/评分/旧用户惰性迁移/两账号隔离/统一到期与对账无漂移。
+- `scripts/integration/round5_accept.py` 新增 M2 三项：错题到期来源、评分后四入口统一到期、镜像后对账无漂移（29/29）。

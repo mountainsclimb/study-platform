@@ -1,7 +1,7 @@
 import { api } from '../core/api.js';
 import { state } from '../core/state.js';
 import {
-  el, icon, button, heading, number, dateText, resultLabel, resultBadge, readableSummary,
+  el, icon, button, heading, number, dateText, resultLabel, resultBadge, readableSummary, badge,
 } from '../core/dom.js';
 import { go, current } from '../core/router.js';
 import { taskNames, statusNames } from '../core/jobs.js';
@@ -32,6 +32,63 @@ function inlineStat(value, label) {
   return el('div', { class: 'pg-inline-stat' },
     el('strong', {}, value),
     el('span', {}, label));
+}
+
+/* =========================================================================
+ * M2 复习到期统一口径（服务端唯一到期值）
+ *
+ * 后端契约（app/home_stats.py::_review_payload → GET /api/insight/home 顶层 review 块，
+ * 先读代码核对）：
+ *   {available, due_now, due_today, total, algorithm, algorithm_version, due_source, caliber, note}
+ * - available=true：due_now/due_today 来自服务端四档复习卡（fsrs-reference v5.0-local），
+ *   是首页/错题本/复习队列/学情共用的同一个到期值；
+ * - available=false：复习排程降级，due_now 为 null（不是 0）——必须回退旧字段
+ *   personal.due_reviews（同源镜像）并显示中文降级提示，绝不显示 0 冒充数据；
+ * - 旧后端没有 review 块：同样回退旧字段，但不提示降级（避免把「字段未就绪」误报成故障）。
+ * ========================================================================= */
+
+/** 算法展示串：``fsrs-reference v5.0-local``；服务端缺字段时按契约默认值兜底（不参与计算）。 */
+function reviewAlgorithmText(review) {
+  const algorithm = String(review?.algorithm || 'fsrs-reference').trim() || 'fsrs-reference';
+  let version = String(review?.algorithm_version || '').trim();
+  if (!version) return algorithm;
+  if (!version.startsWith('v')) version = `v${version}`;
+  return `${algorithm} ${version}`;
+}
+
+/**
+ * 首页到期数字快照：优先 review 块，降级/旧后端回退旧错题到期字段（镜像值），不做本地估算。
+ * @returns {{review: object|null, available: boolean, degraded: boolean, dueNow: number|null,
+ *   dueToday: number|null, legacy: number|null, count: number|null, algorithmText: string,
+ *   degradeNote: string}}
+ */
+function reviewDueSnapshot(homeStats, personal, stats) {
+  const review = homeStats?.review && typeof homeStats.review === 'object' ? homeStats.review : null;
+  const rawDueNow = review?.due_now;
+  const available = Boolean(review
+    && review.available === true
+    && rawDueNow !== null && rawDueNow !== undefined
+    && Number.isFinite(Number(rawDueNow)));
+  const rawDueToday = review?.due_today;
+  const dueToday = rawDueToday === null || rawDueToday === undefined || !Number.isFinite(Number(rawDueToday))
+    ? null
+    : Number(rawDueToday);
+  const legacy = personal
+    ? (Number.isFinite(Number(personal.due_reviews)) ? Number(personal.due_reviews) : 0)
+    : (Number.isFinite(Number(stats?.due_count)) ? Number(stats.due_count) : null);
+  return {
+    review,
+    available,
+    // 只有「接口返回了 review 且明确 available=false」才提示降级；旧后端缺块保持原有空态/隐藏。
+    degraded: Boolean(review && review.available === false),
+    dueNow: available ? Number(rawDueNow) : null,
+    dueToday: available ? dueToday : null,
+    legacy,
+    count: available ? Number(rawDueNow) : legacy,
+    algorithmText: reviewAlgorithmText(review),
+    // 服务端降级说明（含异常类型）优先；没有时用固定文案键兜底。
+    degradeNote: review && review.available === false ? String(review.note || '').trim() : '',
+  };
 }
 
 /* 平台精选学情口径（WS26 契约）：`/api/insight/home` 顶层 official 对象
@@ -93,15 +150,23 @@ function actionCard({ title, text, meta, iconName, onOpen, countText, actionLabe
     el('p', { class: 'pg-focus-meta' }, meta || ''));
 }
 
-function actionCards(personal, bank) {
+function actionCards(personal, bank, reviewDue = null) {
   const library = personal?.library || {};
-  const due = personal ? Number(personal.due_reviews || 0) : null;
+  // M2：到期数字优先用服务端四档复习卡口径（review.due_now）；降级/旧后端回退旧字段。
+  // 数字与「到期复习」卡片同源（镜像保证一致），避免首页出现两个互相矛盾的数字。
+  const due = reviewDue?.available
+    ? reviewDue.dueNow
+    : (personal ? Number(personal.due_reviews || 0) : null);
   const pendingReview = personal ? Number(library.pending_review || 0) : null;
   const bankCountText = personal
     ? t('home.action.mybank.count', { count: number(library.questions || 0) })
     : null;
   const dueCountText = personal
-    ? (due > 0 ? t('home.action.review.count', { count: number(due) }) : t('home.action.review.none'))
+    ? (due > 0
+      ? (reviewDue?.available
+        ? t('study.review.homeDue', { count: number(due) })
+        : t('home.action.review.count', { count: number(due) }))
+      : t('home.action.review.none'))
     : null;
   return el('section', { class: 'pg-focus-grid', 'aria-label': t('home.action.aria') },
     actionCard({
@@ -136,7 +201,10 @@ function actionCards(personal, bank) {
     }));
 }
 
-/* 学习统计行：待复习 / 今日练习 / 首次正确率 / 当前最弱知识点（带真实样本数）。 */
+/* 学习统计行：待复习 / 今日练习 / 首次正确率 / 当前最弱知识点（带真实样本数）。
+ * M2 口径说明：这里的「待复习」仍按旧错题本到期字段展示（标签已写明「错题本到期」）；
+ * 首页「到期复习」卡片与行动卡已切到服务端四档复习卡口径（review.due_now），两者由服务端
+ * 同事务镜像保证一致，降级时同样回退到这里，因此不会自相矛盾。 */
 function learningStats(personal) {
   if (!personal) {
     return el('div', { class: 'pg-inline-stats', 'aria-label': t('home.stat.aria') },
@@ -145,10 +213,13 @@ function learningStats(personal) {
   const first = personal.first_attempt || {};
   const weak = (personal.weak_knowledge || [])[0];
   const today = personal.today || {};
+  const dueStat = inlineStat(
+    t('home.stats.dueValue', { count: number(personal.due_reviews || 0) }),
+    t('home.stats.dueLabel'));
+  // 旧口径说明（服务端 CALIBER.due）：鼠标悬停可核对与其他卡片的关系。
+  if (personal.caliber?.due) dueStat.setAttribute('title', String(personal.caliber.due));
   return el('div', { class: 'pg-inline-stats', 'aria-label': t('home.stat.aria') },
-    inlineStat(
-      t('home.stats.dueValue', { count: number(personal.due_reviews || 0) }),
-      t('home.stats.dueLabel')),
+    dueStat,
     inlineStat(
       t('home.stats.todayValue', { count: number(today.total || 0) }),
       t('home.stats.todayLabel', { practice: number(today.practice || 0), paper: number(today.paper || 0), classroom: number(today.classroom || 0) })),
@@ -241,9 +312,14 @@ function weakKnowledgeCard(personal) {
 
 // 按实际活动决定首屏主操作：未完成的待核验作答 → 到期错题 → 新账号 →
 // 继续上次练习（题库题/个人题，直达原题）→ 继续上次整卷 → 常规继续。
-function resolveNextStep(stats, dueItems, personal) {
+function resolveNextStep(stats, dueItems, personal, reviewDue = null) {
   const attempts = stats.recent_attempts || [];
   const last = personal?.continue?.last_attempt || attempts[0] || null;
+  // M2：到期数字优先取服务端四档复习卡（review.due_now），降级时回退旧错题到期字段，
+  // 与「到期复习」卡片保持同一个数字；不额外展示第二份口径。
+  const dueNow = reviewDue?.available
+    ? reviewDue.dueNow
+    : Number(personal?.due_reviews ?? stats.due_count);
   const pending = (last && (last.result === 'pending' || last.result === 'ungraded') ? last : null)
     || attempts.find(item => item.result === 'pending' || item.result === 'ungraded');
   if (pending) {
@@ -266,10 +342,10 @@ function resolveNextStep(stats, dueItems, personal) {
       meta: t('home.next.new.meta', { count: number(stats.total_questions) }),
     };
   }
-  if (Number(personal?.due_reviews ?? stats.due_count) > 0 || dueItems.length) {
+  if (dueNow > 0 || dueItems.length) {
     return {
       title: t('home.next.due.title'),
-      text: t('home.next.due.text', { count: number(personal?.due_reviews ?? stats.due_count) }),
+      text: t('home.next.due.text', { count: number(dueNow) }),
       label: t('home.next.due.label'),
       icon: 'repeat',
       run: () => go('wrongbook'),
@@ -830,13 +906,31 @@ export async function renderHome(container, version) {
   if (!current(version)) return;
   const personal = homeStats?.personal || null;
   const bank = homeStats?.bank || null;
+  // M2：首页到期数字快照——优先 /api/insight/home 顶层 review 块（服务端四档复习卡唯一到期值），
+  // 降级/旧后端回退旧错题到期字段（personal.due_reviews 同源镜像），不在前端估算或写死数字。
+  const reviewDue = reviewDueSnapshot(homeStats, personal, stats);
   // 精选学情口径卡：字段未就绪（旧后端）时返回 null，不占据首屏、不显示 0 假数字。
   const officialCard = officialCaliberCard(stats, homeStats);
   const dueItems = reviews.items || [];
-  const next = resolveNextStep(stats, dueItems, personal);
+  const next = resolveNextStep(stats, dueItems, personal, reviewDue);
   const recent = (stats.recent_attempts || []).slice(0, 4);
   const greet = new Date().getHours() < 12 ? t('home.greet.morning') : new Date().getHours() < 18 ? t('home.greet.afternoon') : t('home.greet.evening');
-  const dueCount = Number(personal?.due_reviews ?? stats.due_count ?? dueItems.length);
+  const dueCount = reviewDue.count ?? dueItems.length;
+  const hasDue = dueItems.length > 0 || Number(dueCount) > 0;
+  // 口径说明行（不新增第二份数字）：可用时展示「服务端排程」徽标 + fsrs-reference v5.0-local +
+  // 今日到期数；降级时展示服务端 note（含异常类型）或固定文案；旧后端缺 review 块时不显示。
+  const dueCaliberNode = reviewDue.available
+    ? el('p', { class: 'pg-focus-meta home-due-caliber', 'data-review-source': 'review-cards' },
+      badge(t('study.review.serverSchedule'), 'teal'),
+      el('span', { title: String(reviewDue.review?.caliber || '') },
+        t('study.review.homeDueCaliber', {
+          algorithm: reviewDue.algorithmText,
+          count: number(reviewDue.dueToday ?? dueCount),
+        })))
+    : (reviewDue.degraded && personal
+      ? el('p', { class: 'pg-focus-meta home-due-caliber is-degraded', 'data-review-source': 'legacy' },
+        reviewDue.degradeNote || t('study.review.homeUnavailable'))
+      : null);
 
   const focusPrimary = el('section', { class: 'pg-focus pg-focus--primary', 'aria-labelledby': 'home-next-title' },
     el('p', { class: 'pg-kicker' }, t('home.next.kicker')),
@@ -846,15 +940,25 @@ export async function renderHome(container, version) {
     el('div', { class: 'pg-focus-actions' },
       button(next.label, next.run, '', next.icon)));
 
-  const dueCard = el('section', { class: 'pg-focus', 'aria-labelledby': 'home-due-title' },
+  // 保留旧卡片位置与文案结构，只换数据源（review 块优先、旧字段兜底）。
+  const dueCard = el('section', {
+    class: 'pg-focus',
+    'aria-labelledby': 'home-due-title',
+    // 数据来源标记：review-cards（服务端四档卡）| legacy（旧错题到期兜底）| unknown（旧后端无该块）。
+    'data-review-source': reviewDue.available ? 'review-cards' : (reviewDue.degraded ? 'legacy' : 'unknown'),
+  },
     el('p', { class: 'pg-kicker' }, t('home.due.kicker')),
-    el('h2', { id: 'home-due-title' }, dueItems.length ? t('home.due.count', { count: number(dueCount) }) : t('home.due.none')),
+    el('h2', { id: 'home-due-title' }, hasDue ? t('home.due.count', { count: number(dueCount) }) : t('home.due.none')),
+    dueCaliberNode,
     dueItems.length
       ? el('div', { class: 'pg-due-list' }, ...dueItems.slice(0, 3).map(dueQuestionButton))
       : el('p', {}, t('home.due.emptyText')),
     el('div', { class: 'pg-focus-actions' },
-      dueItems.length
-        ? button(t('home.due.startReview'), () => go('wrongbook'), 'secondary small', 'repeat')
+      hasDue
+        ? button(
+          // 服务端口径可用时用「去复习」；降级时沿用旧文案，避免暗示四档排程正常。
+          reviewDue.available ? t('study.review.goReview') : t('home.due.startReview'),
+          () => go('wrongbook'), 'secondary small', 'repeat')
         : button(t('home.due.goPractice'), () => go('practice'), 'secondary small', 'book')));
 
   const pendingGrading = Number(personal?.pending_grading?.questions || 0);
@@ -897,7 +1001,7 @@ export async function renderHome(container, version) {
   const pageSections = [
     heading('LEARNING OVERVIEW', t('home.greeting', { greet, name: state.user.username }),
       t('home.subheading')),
-    actionCards(personal, bank),
+    actionCards(personal, bank, reviewDue),
     learningStats(personal),
     el('section', { class: 'pg-focus-grid', 'aria-label': t('home.next.aria') }, focusPrimary, dueCard, recentCard),
     workbench.node,
