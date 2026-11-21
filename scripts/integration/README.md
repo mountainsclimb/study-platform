@@ -514,6 +514,12 @@ python scripts/integration/plaza_accept.py --base-url http://127.0.0.1:8856 --sk
 | `screenshots/integration/official-accept-report.json` | 追加 `data{classroom,assistant,grade,insight,quality_gate}`（课堂 outline.sources、助手工具结果、学段筛选元数据、门禁 origin/恢复） |
 | `screenshots/integration/ui-static-accept-report.json` | `steps[]/checks[]`、`environment`（Node 版本、检查范围）、`problems/warnings` |
 
+> 浏览器验收（ccept_runner.py --ui）：需先以**全新** STUDY_DATA_DIR 启动同构建隔离实例并
+> --base-url 指向它；广场脚本在实例产生抽检记录后会被 initial_100 门禁自动激活拦截，因此
+> 浏览器验收实例设置 STUDY_PLAZA_QUALITY_GATE=off（试点关闭），门禁本身由 ops_accept.py
+> 在初始状态显式启用并验收（默认不阻断 / 显式激活后阻断两种状态合并覆盖）。详见
+> docs/知序优化-环境与发布前验收记录-20261121.md。
+
 > 可重复运行：账号登录优先（复跑 0 次注册请求）；`ops_accept.py` 会清理历史失败运行遗留的
 > 待处理纠错积压并断言实例累计指标（`>=` 口径），同一实例复跑通过。已知缺陷：运维监控
 > `withdrawn` 撤回传播抽样对「同一 public_id 的新版本重新签发（v2 active + v1 withdrawn）」
