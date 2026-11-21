@@ -11,7 +11,7 @@ try:  # 本地未安装 arq 时仍允许导入模块（Web 进程和单元测试
 except ImportError:  # pragma: no cover - 仅缺少可选依赖时发生
     cron = None
 
-from app import ai, db, practice
+from app import ai, assistant, classroom, db, insight, paperlab, practice
 from app.ai.jobs import QUEUE_NAME, execute_dispatched_job, redis_settings, redis_url
 
 
@@ -43,6 +43,11 @@ async def startup(ctx):
     db.init_db()
     practice.init_practice()
     ai.init_ai()
+    # 整合模块的扩展任务执行器必须与 Web 进程一致地注册到 Worker 进程。
+    classroom.init_classroom()
+    paperlab.init_paperlab()
+    insight.init_insight()
+    assistant.init_assistant()
     await write_worker_heartbeat(ctx)
 
 

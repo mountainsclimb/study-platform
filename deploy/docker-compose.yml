@@ -6,13 +6,19 @@ services:
       dockerfile: deploy/Dockerfile
     restart: unless-stopped
     environment: &app_env
-      STUDY_ALLOWED_HOSTS: "localhost,127.0.0.1,${STUDY_ALLOWED_HOSTS:-localhost}"
-      FORWARDED_ALLOW_IPS: "*"
-      STUDY_PUBLIC_MODE: "${STUDY_PUBLIC_MODE:-0}"
+      # 公网关键值不再提供本地回退：缺失时 docker compose 直接拒绝启动（${VAR:?}）。
+      # 应用启动时 app/config_guard.py 还会对公网模式再做一次 fail-closed 自检。
+      STUDY_DOMAIN: "${STUDY_DOMAIN:-localhost}"
+      STUDY_ALLOWED_HOSTS: "${STUDY_ALLOWED_HOSTS:?请设置允许的 Host（例如 zhixu.example.com，禁止 * 与本地地址）}"
+      FORWARDED_ALLOW_IPS: "${FORWARDED_ALLOW_IPS:?请设置可信反向代理 IP/CIDR（例如 172.16.0.0/12，禁止 *）}"
+      STUDY_PUBLIC_MODE: "${STUDY_PUBLIC_MODE:?请显式设置 STUDY_PUBLIC_MODE（本地 0 / 公网 1）}"
       STUDY_REGISTRATION_MODE: "${STUDY_REGISTRATION_MODE:-}"
       STUDY_ADMIN_INIT_TOKEN: "${STUDY_ADMIN_INIT_TOKEN:-}"
       STUDY_DATA_DIR: /data
       STUDY_BANK_DIR: /bank
+      # 显式声明容器部署布局：公网模式下缺失 PostgreSQL/Redis/可信反代等关键项时应用拒绝启动。
+      # （非标准目录的部署也请设置该变量，否则只按 /data、/bank 标准路径推断。）
+      STUDY_DEPLOYMENT_LAYOUT: "1"
       # 挂载的是题库根目录：跟随 releases/CURRENT 读取同一份快照。
       # 若要固定到某个发布包，把 HOST_BANK_DIR 指到 releases/<version> 并删掉本行。
       STUDY_BANK_FOLLOW_POINTER: "1"
@@ -25,9 +31,10 @@ services:
       # 可选：部署探针口令。携带 X-Health-Token 调用 /api/health/ready 可读到完整依赖详情；
       # 未登录且无口令时只返回精简状态（不含宿主路径/题量/Redis 细节）。
       STUDY_HEALTH_TOKEN: "${STUDY_HEALTH_TOKEN:-}"
-      # Redis 默认启用密码认证；密码含 @ : / ? 等 URL 保留字符时请在 REDIS_PASSWORD 里
-      # 填写百分号编码后的值（例如 p%40ss），Web/Worker 的连接串与 redis 服务共用该变量。
-      REDIS_URL: "redis://:${REDIS_PASSWORD:-changeme}@redis:6379/0"
+      # Redis 强制密码认证且不再回退示例值：密码含 @ : / ? 等 URL 保留字符时，
+      # 请在 REDIS_PASSWORD 里填写百分号编码后的值（例如 p%40ss），Web/Worker 与 redis
+      # 服务共用该变量；缺失 REDIS_PASSWORD 时 Compose 直接拒绝启动。
+      REDIS_URL: "redis://:${REDIS_PASSWORD:?请设置 REDIS_PASSWORD（禁止 changeme 等示例值）}@redis:6379/0"
       DATABASE_URL: "${DATABASE_URL:-postgresql://zhixu:${PG_PASSWORD:?请设置 PG_PASSWORD}@postgres:5432/zhixu}"
       S3_BUCKET: "${S3_BUCKET:-}"
       S3_ENDPOINT_URL: "${S3_ENDPOINT_URL:-}"
@@ -87,10 +94,11 @@ services:
   redis:
     image: redis:7-alpine
     restart: unless-stopped
-    # 默认启用密码：Redis 只应被 Web/Worker 访问；公网部署请务必在 deploy/.env 覆盖 REDIS_PASSWORD。
-    command: ["redis-server", "--appendonly", "yes", "--requirepass", "${REDIS_PASSWORD:-changeme}"]
+    # 强制密码认证且不允许示例回退：Redis 只应被 Web/Worker 访问，
+    # 公网部署必须显式设置 REDIS_PASSWORD（缺失时 Compose 拒绝启动）。
+    command: ["redis-server", "--appendonly", "yes", "--requirepass", "${REDIS_PASSWORD:?请设置 REDIS_PASSWORD（禁止 changeme 等示例值）}"]
     environment:
-      REDIS_PASSWORD: "${REDIS_PASSWORD:-changeme}"
+      REDIS_PASSWORD: "${REDIS_PASSWORD:?请设置 REDIS_PASSWORD（禁止 changeme 等示例值）}"
     healthcheck:
       test: ["CMD-SHELL", "redis-cli --no-auth-warning -a \"$${REDIS_PASSWORD}\" ping | grep -q PONG"]
       interval: 5s

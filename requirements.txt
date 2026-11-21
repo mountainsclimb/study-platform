@@ -7,6 +7,14 @@ pillow==12.2.0
 pypdf==6.10.2
 pypdfium2==5.14.0
 python-docx==1.2.0
+# Anki 牌组导出（MIT License，Copyright (c) Kerrick Staley；纯 Python，无原生扩展）。
+genanki==0.13.1
+# AI 课堂 PPTX 导出（MIT License；本机环境已安装，容器部署随主依赖安装）。
+python-pptx==1.0.2
 python-multipart==0.0.26
 PyYAML==6.0.3
 sympy==1.14.0
+# 本地 OCR（离线、CPU）：RapidOCR(PP-OCRv4) + ONNX Runtime。
+# RapidOCR Apache-2.0；PP-OCR 模型 Apache-2.0；onnxruntime MIT。见 THIRD_PARTY_NOTICES.md。
+rapidocr-onnxruntime==1.4.4
+onnxruntime==1.20.1

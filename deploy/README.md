@@ -72,12 +72,18 @@ curl -fsS -H "X-Health-Token: $STUDY_HEALTH_TOKEN" https://<域名>/api/health/r
 
 | 环境变量 | 行为 |
 |---|---|
-| `STUDY_PUBLIC_MODE=1` | 公网模式：注册默认关闭，首个注册者不会自动成为管理员；会话 Cookie 强制 `Secure`。 |
+| `STUDY_PUBLIC_MODE=1` | 公网模式：注册默认关闭，首个注册者不会自动成为管理员；会话 Cookie 强制 `Secure`。应用启动时执行公网配置自检（`app/config_guard.py`），危险默认值 fail-closed。 |
 | `STUDY_REGISTRATION_MODE=open|closed` | 强制注册开关（优先于数据库设置，便于部署脚本固定策略）。 |
-| `STUDY_ADMIN_INIT_TOKEN` | 一次性管理员初始化口令；未配置时初始化接口返回 503。 |
+| `STUDY_ADMIN_INIT_TOKEN` | 一次性管理员初始化口令；未配置时初始化接口返回 503。公网模式首次部署必须配置（或数据库已有管理员）。 |
+| `STUDY_ALLOWED_HOSTS` | Host 头白名单（逗号分隔）。公网必须显式配置，禁止通配符与本地/回环地址；仅本地的配置会被启动自检拒绝。 |
+| `FORWARDED_ALLOW_IPS` | uvicorn 信任的 `X-Forwarded-*` 来源（IP/CIDR，逗号分隔）。公网必须显式配置且禁止 `*`；Compose 中为必填项。 |
 | `STUDY_HEALTH_TOKEN` | 部署探针口令：携带 `X-Health-Token` 读取 `/api/health/ready` 完整详情；未配置则不开放。 |
 | `REDIS_URL` | Redis 连接串，支持 `redis://` / `rediss://`、`redis://:密码@host:6379/0`、ACL `redis://用户名:密码@host:6379/0`；可选 `?socket_timeout=3`。密码含保留字符时需百分号编码。 |
-| `REDIS_PASSWORD` | Compose 传给 `redis-server --requirepass` 的密码，并自动拼进 Web/Worker 的 `REDIS_URL`。**公网部署必须覆盖默认值。** |
+| `REDIS_PASSWORD` | Compose 传给 `redis-server --requirepass` 的密码，并自动拼进 Web/Worker 的 `REDIS_URL`。**Compose 必填，禁止示例值。** |
+
+公网配置自检：`STUDY_PUBLIC_MODE=1` 时应用启动会检查 Host 白名单、可信反代、PostgreSQL/Redis
+密码、管理员初始化路径与 AI 出站策略；显式危险配置直接拒绝启动，缺失的生产依赖强告警。
+部署前可运行 `python scripts/check_public_config.py --env-file deploy/.env` 预检，退出码可判。
 
 ## 4. 在线热备份与恢复演练
 ```bash
@@ -94,28 +100,106 @@ python -m app.ops verify data/backups/zhixu-backup-xxxx.zip
 python -m app.ops restore data/backups/zhixu-backup-xxxx.zip --target ./restore-drill
 ```
 
-备份包包含账号表、恢复码、本地附件与 SHA-256 清单。**默认不包含 `api-key.key`**：
-它是应用级加密密钥，泄露即可解密所有已保存的模型 API Key。ZIP 本身不加密（标准库 `zipfile`
-没有加密能力，本项目不引入额外加密依赖），因此安全边界是「排除敏感文件 + 清单校验 + 离机保管」：
-需要完整离线恢复时用 `--include-key`，并把 ZIP 与密钥分别存放在受控介质；普通备份把
-`api-key.key` 单独按密钥规范备份。恢复后若缺少密钥，已有模型连接的 Key 需要重新录入。
+备份包包含账号表、恢复码、本地附件（练习作答图 `attempts/`、AI 资料 `ai-files/`、题目报错
+截图 `issues/`、**工坊页图与配图** `paperlab/pages`、`paperlab/assets`、**课堂素材**
+`classroom/assets`（TTS/配图/视频）与 `classroom/video-work`、人工补采的
+`official-sources/`）及 SHA-256 清单。
+`manifest.json` 还记录 `bank_version` / `bank_source`（备份对应的题库版本）、`directories`
+（各目录文件数与字节数）、`key_included` / `key_present` 与按设计排除的 `excluded_entries`，
+恢复演练时可逐项核对「备份对应哪版题库、新增资产是否真的入包」。
+
+**默认不包含 `api-key.key`**：它是应用级加密密钥，泄露即可解密所有已保存的模型 API Key。
+ZIP 本身不加密（标准库 `zipfile` 没有加密能力，本项目不引入额外加密依赖），因此安全边界是
+「排除敏感文件 + 清单校验 + 离机保管」：需要完整离线恢复时用 `--include-key`，并把 ZIP 与密钥
+分别存放在受控介质；普通备份把 `api-key.key` 单独按密钥规范备份。恢复后若缺少密钥，已有模型
+连接的 Key 需要重新录入。
 
 归档成员路径在解压前按 POSIX + Windows 双语义校验：拒绝绝对路径、`..` 穿越、驱动器号、
 NTFS 备用数据流（`a::b`）与 Windows 保留设备名；`verify`/`restore` 都不会把危险成员写到目标目录。
-PostgreSQL 部署需另外用 `pg_dump` / `pg_restore` 导出账号与学习记录，并单独备份 S3 桶；
-快照里发现 `attempts.image_path`、`ai_uploads.extra_files_json` 等字段引用 `s3:` 时会拒绝本地 ZIP 备份。
+
+恢复边界与演练口径：
+
+- **SQLite 部署**：`verify` 校验全部成员 SHA-256 与数据库 `PRAGMA integrity_check`，并回显
+  `bank_version`/`directories`；`restore` 先完整解压到暂存目录校验，再逐个原子替换，返回
+  `restored_files` 与 `restored_directories`。上线前应固定做一次恢复到独立目录的演练，并抽查
+  工坊页图、课堂素材、历史作答与发布状态是否齐全。
+- **PostgreSQL / 对象存储**：设置 `DATABASE_URL` 时 `create_backup` 拒绝生成 SQLite ZIP，改用
+  `pg_dump` / `pg_restore` 导出账号与学习记录；设置 `S3_BUCKET` 时同样抛出
+  `ExternalStorageBackupRequired`——本地 ZIP 不包含 S3 桶内文件，必须用对象存储快照单独备份附件。
+  快照里发现 `attempts.image_path`、`ai_uploads.extra_files_json`、`pl_pages.storage_name`、
+  `cls_assets.storage_name` 等字段引用 `s3:` 时也会拒绝本地 ZIP 备份，避免「备份成功」的假象。
+- **不参与热备份**：录取数据 `admission*.sqlite3`（可按 §5.2 重建）、`admission-gaps.json`、
+  `.admission-cache`、`backups/` 本身与 SQLite WAL/SHM 文件；manifest 的 `excluded_entries`
+  会记录实际存在的项，便于区分「设计排除」与「漏备」。每日一句是
+  `web/vendor/quotes/daily-quotes.json` 的构建产物（不在数据目录内），随应用镜像分发，无需备份。
+
+### 4.1 请求体与上传限额
+
+反代、API 与图片解码三层同时限额，任一层都会拒绝超限请求，且都不会把超大文件整读进内存：
+
+| 层 | 位置 | 上限 | 超限行为 |
+|---|---|---|---|
+| 反代 | `deploy/Caddyfile` 的 `request_body max_size`（Caddy ≥ 2.10） | 768MB（覆盖 20×30MB 批量导入 + multipart 开销） | Caddy 直接返回 413，不进入应用 |
+| API | 单个上传：工坊导入 30MB、题库导入 10MB、答题卡单页 30MB、ASR 25MB、课程包 200MB | 见 `app/paperlab/db.py` 等模块常量 | 工坊/扫描/课堂 422，题库导入 413 |
+| 解码 | 答题卡扫描 `scan.MAX_PAGE_PIXELS`（40MP） | 只读图片文件头，`cv2` 解码前拒绝像素炸弹 | 422 |
+
+上传处理统一采用「`MAX_* + 1` 有界读取」：只多读 1 字节判断是否超限，不会先把整个超大文件
+读进内存再检查。批量接口另有页数/文件数/像素预算（工坊单次 ≤20 页、≤20 个文件；答题卡单次
+≤10 页），这些检查都在解码/落盘前完成。调整任一上限时请同步本表与 `deploy/Caddyfile`。
+
 
 ## 5. Docker Compose 公网部署
 
-复制 `deploy/.env.example` 为 `deploy/.env`，配置公网域名 `STUDY_DOMAIN`、允许访问的域名
-`STUDY_ALLOWED_HOSTS`、数据库密码 `PG_PASSWORD`、Redis 密码 `REDIS_PASSWORD`、宿主机题库路径
-`HOST_BANK_DIR`、`STUDY_PUBLIC_MODE=1`、`STUDY_ADMIN_INIT_TOKEN` 与部署探针口令
+### 公网启用检查清单（P0）
+
+Compose 的公网关键值全部使用 `${VAR:?}` 强制显式：`STUDY_ALLOWED_HOSTS`、
+`FORWARDED_ALLOW_IPS`、`STUDY_PUBLIC_MODE`、`PG_PASSWORD`、`REDIS_PASSWORD` 缺失或为空时
+Compose 直接拒绝启动，本地默认值不会再回退到公网。应用启动时（`STUDY_PUBLIC_MODE=1`）
+还会执行一次 fail-closed 自检：显式危险配置拒绝启动，缺失的生产依赖在日志中强告警。
+「真实部署布局」由显式 `STUDY_DEPLOYMENT_LAYOUT=1`（Compose 已设置）或标准 `/data`、`/bank`
+挂载路径判定；这种布局下缺失 PostgreSQL/Redis/可信反代来源或 `STUDY_DOMAIN` 不在 Host
+白名单会**拒绝启动**。开发与 CI 只把题库/数据目录固定到本机路径（如 `E:\...\releases\bank-r5`）
+不算部署布局，不会被误伤；非标准目录的服务器部署请显式加 `STUDY_DEPLOYMENT_LAYOUT=1`。
+部署前先跑同一套规则，退出码可直接用于 CI：
+
+```bash
+python scripts/check_public_config.py --env-file deploy/.env
+# 管理员已初始化、不再保留初始化口令时：
+python scripts/check_public_config.py --env-file deploy/.env --admin-exists
+```
+
+启用公网前逐项确认：
+
+- [ ] **管理员初始化分离**。首次部署设置一次性 `STUDY_ADMIN_INIT_TOKEN`（至少 8 位随机串），
+      调用 `/api/auth/init-admin` 创建唯一管理员并生成恢复码；完成后从环境移除口令。
+      公网模式不再允许首个注册者成为管理员，注册默认关闭，需管理员显式开放。
+- [ ] **非示例密钥**。`PG_PASSWORD`、`REDIS_PASSWORD`、`STUDY_HEALTH_TOKEN` 全部替换为随机强口令；
+      示例/占位值（`changeme`、`please-change-me`）会被启动自检拒绝。
+- [ ] **可信反代**。`FORWARDED_ALLOW_IPS` 显式为 Caddy 所在网段/IP（例如 `172.16.0.0/12`），
+      禁止 `*`；`STUDY_ALLOWED_HOSTS` 只列实际公网域名，禁止通配符与本地地址。
+- [ ] **PostgreSQL / Redis**。公网必须使用 PostgreSQL；Redis 必须启用密码；两者都纳入备份与恢复演练。
+- [ ] **AI 出站策略**。保持 `public_https`，或设为 `allowlist` 并用 `STUDY_AI_ALLOWED_HOSTS` 与管理页
+      白名单限定域名；普通账号不能修改平台白名单，公网禁止 `local_open`。
+- [ ] **备份**。`pg_dump` / `pg_restore`、S3 桶、`api-key.key` 与数据卷分别备份，并做恢复演练。
+- [ ] **对象存储**。启用 S3/MinIO 时先建桶，Web 与 Worker 使用同一桶与凭据。
+- [ ] **探针**。配置 `STUDY_HEALTH_TOKEN`，确认 `/api/health/ready` 的题库、Redis、Worker 检查为 ok。
+- [ ] **验证**。隔离环境验证 HTTPS 注册/登录、Worker 就绪、异地恢复与两账号数据隔离。
+
+复制 `deploy/.env.example` 为 `deploy/.env`，至少配置：公网域名 `STUDY_DOMAIN`、允许访问的域名
+`STUDY_ALLOWED_HOSTS`、数据库密码 `PG_PASSWORD`、Redis 密码 `REDIS_PASSWORD`、可信反代来源
+`FORWARDED_ALLOW_IPS`、`STUDY_PUBLIC_MODE=1`、首次部署的 `STUDY_ADMIN_INIT_TOKEN` 与部署探针口令
 `STUDY_HEALTH_TOKEN`。含 URL 保留字符的密码需要在 `DATABASE_URL` / `REDIS_PASSWORD` 中使用百分号编码。
 Caddy 签发公网证书需要把域名解析到服务器，并开放 TCP 80 和 443。
 
-Redis 服务默认启用密码认证（`requirepass ${REDIS_PASSWORD:-changeme}`），Web/Worker 的连接串自动带上
-该密码；**公网部署必须覆盖默认值 changeme**。如需 TLS 或 Redis 6+ ACL，把 `REDIS_URL` 改成
-`rediss://用户名:密码@redis:6379/0` 形式（就绪检查与 arq 均按 DSN 解析）。
+本地开发不受影响：直接 `python -m uvicorn app.main:app --host 127.0.0.1 --port 8765`（或运行
+`pytest`）时 `STUDY_PUBLIC_MODE` 非真值，启动自检完全不触发，SQLite/本地模型地址照常可用。
+Compose 面向部署，因此要求显式提供密码与域名，不再保留「未配置也能以本地默认值启动」的回退。
+
+Redis 服务强制密码认证（`requirepass ${REDIS_PASSWORD:?}`），Web/Worker 的连接串自动带上该密码；
+未设置 `REDIS_PASSWORD` 时 Compose 拒绝启动；应用公网自检会拒绝示例密码，空密码在启动时强告警、
+部署前脚本按错误处理。
+如需 TLS 或 Redis 6+ ACL，把 Compose 中的 `REDIS_URL` 改成 `rediss://用户名:密码@redis:6379/0`
+形式（就绪检查与 arq 均按 DSN 解析）。
 
 ```bash
 cd deploy
@@ -160,10 +244,12 @@ Worker 支持 `STUDY_WORKER_CONCURRENCY`（默认 8）和 `STUDY_WORKER_JOB_TIME
    python scripts/import_admission.py            # 下载约 1.35GB，首次约 10–20 分钟
    ```
 
-2. 把生成的 `data/admission.sqlite3` 放进容器数据卷（`zhixu_data`）：
+2. 把生成的 `data/admission.sqlite3`（以及可选的官方补采批次线库 `data/admission-official.sqlite3`）放进容器数据卷（`zhixu_data`）：
 
    ```powershell
    docker compose cp data/admission.sqlite3 app:/data/admission.sqlite3
+   docker compose cp data/admission-official.sqlite3 app:/data/admission-official.sqlite3
+   docker compose cp data/admission-gaps.json app:/data/admission-gaps.json
    docker compose restart app
    ```
 

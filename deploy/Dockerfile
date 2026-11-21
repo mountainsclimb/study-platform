@@ -6,6 +6,11 @@ ENV PYTHONDONTWRITEBYTECODE=1 \
     STUDY_DATA_DIR=/data \
     STUDY_BANK_DIR=/bank
 
+# ONNX Runtime（本地 OCR）在 slim 镜像中需要 libgomp1；ffmpeg 供课堂视频导出使用（无则能力降级）。
+RUN apt-get update \
+    && apt-get install -y --no-install-recommends libgomp1 ffmpeg \
+    && rm -rf /var/lib/apt/lists/*
+
 COPY requirements.txt .
 COPY deploy/requirements.txt requirements-deploy.txt
 RUN pip install --no-cache-dir -r requirements.txt -r requirements-deploy.txt

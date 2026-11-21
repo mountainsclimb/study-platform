@@ -12,3 +12,8 @@ node_modules/
 .env
 *.zip
 screenshots/ui-audit/
+screenshots/integration/
+screenshots/p5-ui/
+screenshots/widgets/
+screenshots/accept-report*.json
+screenshots/accept-*.json

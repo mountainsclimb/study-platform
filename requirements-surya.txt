@@ -1,0 +1,6 @@
+# 可选依赖：图片试题转 LaTeX（Surya OCR 适配层 app/ai/surya_latex.py）。
+# 不进生产镜像；仅在需要「上传题目图片 → LaTeX」识别能力时安装：
+#   pip install -r requirements-surya.txt
+# 还需自备推理后端（vllm / llama-server，或 SURYA_INFERENCE_URL 指向已有服务），
+# 详见 https://github.com/datalab-to/surya 与 docs/平台设计.md。
+surya-ocr==0.24.0
