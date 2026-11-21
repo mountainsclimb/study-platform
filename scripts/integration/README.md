@@ -18,6 +18,7 @@
 | `round5_accept.py` | 第五轮端到端验收（临时数据目录 + TestClient，不访问外网/不读写生产数据、不调用真实模型）：拍题上传 → 确认含识别块（公式 LaTeX + bbox 往返/非法块 422）→ 题库取单选题 → 独立作答 → 同 `submission_id` 重复提交只入账一次 → 证据可读 → 错题本 → 四档复习迁移/评分/幂等重放/版本 409/他人 404/新旧到期对账 → 学习附件创建/新版本 CAS/固定版本读取/跨账号 404 → 题目详情 `study` 聚合 → 自评不覆盖核验证据 → 证据汇总与复习统计，输出 `round5-accept-report.json`；已接入 `scripts/accept_runner.py` 的 `round5` 阶段 |
 | `m3_accept.py` | M3 端到端验收（临时数据目录 + TestClient）：逐步提示创建（锁定正文不下发）→ 未提交尝试不能解锁 → 尝试后逐级解锁至完整解析 → 他人 404；上传 TXT 资料 → 按摘录/页/chunk 定位原文 → 缺失摘录 422 → 保存摘录与列表有效 → 重新定位 → 他人不可定位；掌握路径生成（2 节点/样本状态）→ 概念复述门槛与完成 → 变式练习无独立证据保持待完成 → 他人 404 → 归档；函数图与白板作为学习附件保存并可按题目 `by-target` 读取，输出 `m3-accept-report.json`；已接入 `accept_runner.py` 的 `m3` 阶段 |
 | `m4_accept.py` | M4 端到端验收（临时数据目录 + TestClient）：创建流程演示学习附件 → 建课堂 → meta 声明手工 `demo` 场景（既有生成类型不变）→ 插入固定版本演示场景 → 源附件升版后课堂仍保留原版本 → 导出 PPTX（含「固定版本」）/离线 HTML（`data-fixed-revision` + 内嵌快照）/ZIP（`demos/*.json`）/PDF → ZIP 导回课堂且演示仍为固定版本 → 笔记 `by-target` 读取附件 → 他人课程 404 → 删除演示场景并清空，输出 `m4-accept-report.json`；已接入 `accept_runner.py` 的 `m4` 阶段 |
+| `m5_accept.py` | M5 端到端验收（临时数据目录 + TestClient）：模板库（机械 3D/工厂仿真/参数元数据）→ 机械构建确定性 + 工程读数（速比/输出转速）→ 参数越界 422/未知模板 404 → 机械附件保存并插入课堂固定版本场景 → 离线 HTML 含 `data-demo-frame-ready` 帧就绪标记 → 工厂 DES 同 seed 逐字段可复现（事件/指标/瓶颈原因）→ 运行记录本人回读、他人 404 → 工厂附件插入课堂 → ZIP 含两份演示快照，输出 `m5-accept-report.json`；已接入 `accept_runner.py` 的 `m5` 阶段 |
 | `README.md` | 本文件 |
 
 ## 安全边界（务必遵守）

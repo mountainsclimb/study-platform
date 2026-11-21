@@ -40,6 +40,9 @@ const DEMO_KIND_META = Object.freeze({
   isometric: { key: 'study.m4.kind.isometric', fallback: '等距结构' },
   science_demo: { key: 'study.m4.kind.scienceDemo', fallback: '科学演示' },
   demo_3d: { key: 'study.m4.kind.demo3d', fallback: '3D 演示' },
+  // M5（§5.4 机械与工厂）：机械 3D 拆解/剖切与工厂产线仿真回放。
+  mech_3d: { key: 'study.m5.kind.mech3d', fallback: '机械 3D' },
+  factory_sim: { key: 'study.m5.kind.factorySim', fallback: '工厂仿真' },
 });
 
 /** 交给 principleDemo 渲染的 kind（其余读取本地 functionGraph / sketchBoard）。 */
@@ -988,6 +991,10 @@ export function createPlayerView({ container, version, courseId }) {
       assumptions = [assumptionsRaw.trim()];
     }
     const stepCountRaw = Number(content.step_count ?? artifact.step_count);
+    // M5：机械 3D 附件没有显式 step_count 时，用 data.steps 的长度展示「共 N 步」。
+    const mechStepCount = kind === 'mech_3d' && Array.isArray(artifact.data?.steps)
+      ? artifact.data.steps.length
+      : 0;
     return {
       kind,
       revision,
@@ -996,7 +1003,9 @@ export function createPlayerView({ container, version, courseId }) {
       poster: demoPosterDataUrl(artifact.preview) || demoPosterDataUrl(content.preview),
       sourceNote: String(content.source_note || '').trim(),
       assumptions,
-      stepCount: Number.isFinite(stepCountRaw) && stepCountRaw > 0 ? Math.round(stepCountRaw) : 0,
+      stepCount: Number.isFinite(stepCountRaw) && stepCountRaw > 0
+        ? Math.round(stepCountRaw)
+        : mechStepCount,
     };
   }
 
@@ -1089,6 +1098,43 @@ export function createPlayerView({ container, version, courseId }) {
         demoController = controller;
         loadingNode.remove();
         host.replaceChildren(controller.element);
+        markDemoReady(stage, info, scene);
+        return;
+      }
+      // M5（方案 §5.4「机械与工厂」）：机械 3D / 工厂仿真复用固定版本附件数据，
+      // 只读渲染；无 WebGL 或 three 加载失败由 mechDemo 内部降级为 SVG 示意图。
+      if (kind === 'mech_3d' || kind === 'factory_sim') {
+        const module = await import('./mechDemo.js');
+        if (stale()) return;
+        const demoData = info.data === undefined || info.data === null ? {} : info.data;
+        const demoSeed = demoData && typeof demoData === 'object' ? demoData.seed : undefined;
+        const viewOptions = {
+          readOnly: true,
+          // 就绪判断以组件帧回执为准：data-demo-ready 只在真正的首帧渲染完成后打标。
+          onFrameReady: () => markDemoReady(stage, info, scene),
+        };
+        const demo = {
+          kind,
+          title: info.title || demoKindLabel(kind),
+          data: demoData,
+          seed: demoSeed,
+        };
+        const view = kind === 'mech_3d'
+          ? module.createMechView(host, demo, viewOptions)
+          : module.createFactoryView(host, demo, viewOptions);
+        if (!view || !view.element) {
+          throw new Error(m4Text('study.m4.demoStage.invalidData', '演示数据不合法'));
+        }
+        if (stale()) {
+          try { view.destroy(); } catch { /* 忽略 */ }
+          return;
+        }
+        demoController = view;
+        loadingNode.remove();
+        host.replaceChildren(view.element);
+        try { await view.ready; } catch { /* ready 不应 reject；兼容异常实现 */ }
+        if (stale()) return;
+        // mech_3d 允许降级到 "svg"（组件内已中文提示）；factory_sim 固定为 "svg"。
         markDemoReady(stage, info, scene);
         return;
       }

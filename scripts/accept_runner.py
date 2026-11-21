@@ -82,6 +82,7 @@ STAGE_LABELS = {
     "round5": "第五轮共用学习数据层端到端（临时数据目录）",
     "m3": "M3 逐步提示/资料定位/掌握路径端到端（临时数据目录）",
     "m4": "M4 课堂版本化演示与固定版本导出端到端（临时数据目录）",
+    "m5": "M5 机械/工厂演示模板与固定种子仿真端到端（临时数据目录）",
     "pytest": "pytest（全量）",
     "ui-server": "UI 服务器可达性",
     "ui-plaza": "广场端到端（投稿→评审→发布→撤回）",
@@ -442,6 +443,14 @@ def build_stages(
         command=[python, "scripts/integration/m4_accept.py"],
         cwd=root,
         description="M4 端到端：课堂演示场景/固定版本导出/跨页附件（隔离数据目录，TestClient）",
+    )
+    candidates["m5"] = Stage(
+        key="m5", name=STAGE_LABELS["m5"],
+        # M5（方案 §5.4）：临时数据目录内跑通「模板库 → 固定种子机械构建/工厂 DES 仿真 →
+        # 学习附件 → 课堂固定版本导出（帧就绪标记）」；不读写题库与生产数据，无需浏览器。
+        command=[python, "scripts/integration/m5_accept.py"],
+        cwd=root,
+        description="M5 端到端：机械/工厂模板、DES 可复现、附件与课堂导出（隔离数据目录，TestClient）",
     )
     candidates["pytest"] = Stage(
         key="pytest", name=STAGE_LABELS["pytest"],

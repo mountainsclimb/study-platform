@@ -1801,3 +1801,56 @@ checksum = sha256(`json.dumps(data, ensure_ascii=False, sort_keys=True, separato
 - `scripts/accept_runner.py` 新增 `m4` 阶段（… → round5 → m3 → m4 → pytest）。
 - 专项测试：`tests/test_classroom_demo_scenes.py`（7）、`tests/test_m4_integration.py`（6），
   连同既有 `test_classroom_{api,export,import,dsl}.py` 共 80 passed。
+
+## 28. M5 机械 3D / 工厂固定种子仿真（2026-11-21，`/api/demos`）
+
+> 详细记录见 `docs/知序优化实施记录-20261121-第九轮.md`。模板由服务端注册表提供（模板 ID + 结构化参数），
+> 模型/前端只拿模板 ID 与参数，不编造几何与数值；工厂指标由确定性 DES 计算，同 `seed` 可复现并落库回读。
+> 新增学习附件 kind `mech_3d` / `factory_sim`（`app/study_artifact.ARTIFACT_KINDS` 与课堂
+> `DEMO_ARTIFACT_KINDS` 仅追加）。
+
+### 28.1 模板与构建/仿真（`app/demo_library.py`，4 条）
+
+| 方法/路径 | 请求 | 响应要点 |
+| --- | --- | --- |
+| `GET /api/demos/templates` | — | `{items:[{template_id,kind,title,description,parametric:true,params:[{name,label,type:int/float/list,default,min,max,step,unit,length?}],assumptions,source_note}],total}` |
+| `POST /api/demos/build` | `{template_id, params?}` | `{template_id,kind,title,seed,params,data,assumptions,source_note}`；不落库、确定性；未知模板 404，未知/越界/类型错误 422 中文。 |
+| `POST /api/demos/simulate` | `{template_id:"factory-line", params?}` | `{run:{run_id,template_id,seed,params,result{flow,station_labels,metrics,events},created_at},deterministic:true}`；仅工厂类模板可持久化。 |
+| `GET /api/demos/simulate/{run_id}` | — | `{run}`；本人限定，他人/不存在 404。 |
+
+模板：`gearbox-3d`（mech_3d，seed/input_rpm/driver_teeth/driven_teeth/module_mm）、`pump-3d`（mech_3d，
+seed/stroke_mm/rpm/bore_mm）、`factory-line`（factory_sim，seed/sim_seconds/arrival_interval_s/service_s[3]/
+buffer_capacity）、`factory-line-2d`（flow_animation，复用 DES 结果）。
+机械数据 `data`：`{version,basis:"local-teaching",seed,parts[{id,label,kind:box|cylinder|gear|rod|plate,
+position,size,color,parent?}],steps[{label,part_ids,explode}],readouts[{id,label,value,unit,note}],camera,
+assumptions,source_note}`；读数均工程公式 + 「教学近似」标注（速比=driven/driver、输出转速=input_rpm/速比、
+扭矩放大≈速比、分度圆直径=m·z、中心距=(d1+d2)/2；泵 V=π(b/2)²s、Q=Vn、v=2sn/60、ω=2πn/60）。
+工厂 DES：唯一随机源 `random.Random(seed)`、固定抽取顺序；事件 `{t(5 位小数),type:arrival|queue|
+service_start|service_end|blocked,station:0-2,item_id,queue}` 稳定排序、≤2000 条；指标
+`sim_seconds/arrivals/completed/throughput_per_min/avg_wait_s[3]/max_queue[3]/utilization[3]/
+bottleneck_station/bottleneck_reason/dropped/blocked`。
+
+### 28.2 前端组件与接入
+
+- `web/js/components/mechDemo.js`：`createMechView`（本地 three.js 拆解/剖切/运转/读数；
+  无 WebGL 降级 SVG 等距示意 + 中文提示；`onFrameReady`）、`createFactoryView`（指标卡/三工位流程/
+  队列曲线/事件回放时间轴，事件只回放不重算）、`openMechDemo`（模板选择、只读参数、保存附件）。
+- `web/vendor/principles/mechPresets.js`：本地兜底预设（gearbox-3d / pump-3d / factory-line）；
+  `web/styles-mech.css` 由 `web/index.html` 加载。
+- 题目页「机械演示」（物理/机械/技术，默认模板按学科，失败回退本地预设，保存为学习附件并 links 到题目）；
+  课堂播放器与笔记附件面板支持 `mech_3d`/`factory_sim` 只读打开（沿用固定版本徽标与
+  `data-demo-ready`/`zhixu:demo-ready`）。
+- 导出：课堂 demo 导出的 kind 标签追加「机械 3D」「工厂仿真」；离线 HTML demo 场景含
+  `<meta name="zhixu-demo-frame-ready">`、静态 `data-demo-frame-ready="1"` 与运行时 DOM 标记，
+  视频/截图管线可等待帧就绪（仍在 `__zhixuCapture.sceneCount` 内逐场景截帧）。
+- locale 新增 99 个 `study.m5.*` 键，zh/en 各 **5,177** 键对齐；ui_static 新增 M5 7 条断言与
+  `study.m5.` 命名空间下限。
+
+### 28.3 验收入口
+
+- `python -X utf8 scripts/integration/m5_accept.py`：端到端 18 项（模板/机械确定性与读数/参数校验/
+  工厂同种子可复现与指标/运行回读与隔离/附件与课堂固定版本导出/帧就绪标记/ZIP 双演示快照），
+  报告 `screenshots/m5-accept-report.json`。
+- `scripts/accept_runner.py` 新增 `m5` 阶段（… → m4 → m5 → pytest）。
+- 专项测试：`tests/test_demo_library.py`（15）、`tests/test_m5_integration.py`（6）、
+  `tests/test_m5_video_frames.py`（3），连同既有附件/课堂回归共 46 passed（专项 24 passed）。

@@ -23,6 +23,8 @@ from . import admission, assistant, auth, classroom, config_guard, db, focus, in
 from . import study_artifact, study_evidence, study_review
 # M3（§5.2/§5.3）：掌握路径、资料原文定位与摘录、逐步提示状态机。
 from . import doc_location, guided_hint, mastery_path
+# M5（§5.4）：机械/工厂演示模板库与固定种子离散事件仿真。
+from . import demo_library
 
 WEB_DIR = Path(__file__).resolve().parents[1] / "web"
 health_log = logging.getLogger("zhixu.health")
@@ -220,6 +222,8 @@ async def lifespan(app):
     mastery_path.init_mastery_path()
     doc_location.init_doc_location()
     guided_hint.init_guided_hints()
+    # M5：机械/工厂演示模板库与固定种子仿真运行记录。
+    demo_library.init_demo_library()
     dispatcher = asyncio.create_task(ai.recover_queued_jobs()) if ai.redis_url() else None
     try:
         yield
@@ -726,6 +730,8 @@ app.include_router(mastery_path.router)
 app.include_router(doc_location.router_docs)
 app.include_router(doc_location.router)
 app.include_router(guided_hint.router)
+# M5：机械/工厂演示模板与确定性仿真。
+app.include_router(demo_library.router)
 
 app.mount("/static", StaticFiles(directory=str(WEB_DIR)), name="static")
 

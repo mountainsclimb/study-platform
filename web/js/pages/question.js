@@ -40,6 +40,14 @@ function m4Text(key, fallback, vars) {
   ));
 }
 
+/**
+ * M5 机械/工厂演示文案：key 统一 `study.m5.*`，语言包由 Lead 合并；
+ * 缺键时回退中文常量。与 m4Text 同口径（用变量 key 调 t()，静态 locale 扫描不误报）。
+ */
+function m5Text(key, fallback, vars) {
+  return m4Text(key, fallback, vars);
+}
+
 // 掌握度是后端下发的中文枚举值：提交保持原值，界面展示按当前语言映射。
 const MASTERY_LEVEL_KEYS = {
   '未掌握': 'practice.masteryNotMastered',
@@ -1021,6 +1029,57 @@ async function openPrincipleDialog(q, trigger) {
 }
 
 /* ---------------------------------------------------------------------------
+ * M5 机械 3D / 工厂仿真入口（方案 §5.4「机械与工厂」/ §8 M5）
+ * ---------------------------------------------------------------------------
+ * - 与「查看原理」并列：物理/机械/技术题显示「机械演示」入口；
+ * - 点击懒加载 components/mechDemo.js，弹出统一弹层（优先 GET /api/demos/templates，
+ *   接口不可用回退本地 MECH_PRESETS；模板参数只读展示，前端不做数值模拟）；
+ * - 保存为学习附件时带 links=[{target_kind:'question', target_key:<统一题目引用>}]；
+ * - 无 WebGL / three 加载失败由组件内部降级为等距示意图并中文提示，本页不重复处理；
+ * - 失败只中文 toast，不影响作答主流程。
+ * ------------------------------------------------------------------------- */
+
+const MECH_DEMO_SUBJECTS = new Set(['物理', '机械', '技术']);
+
+// 学科 → 默认模板 ID；服务端模板库没有该 ID 时弹层自动回退到列表第一项。
+const MECH_TEMPLATE_HINTS = Object.freeze({
+  '物理': 'pump-3d',
+  '机械': 'gearbox-3d',
+  '技术': 'factory-line',
+});
+
+/** 打开机械/工厂演示弹层（懒加载组件；入口失败只 toast）。 */
+async function launchMechDemo(q, trigger) {
+  const module = await import('../components/mechDemo.js');
+  const subject = String(q?.subject || '').trim();
+  const ref = questionRefOf(q);
+  module.openMechDemo({
+    trigger,
+    template_id: MECH_TEMPLATE_HINTS[subject] || '',
+    links: ref ? [{ target_kind: 'question', target_key: ref }] : [],
+    onSaved: () => {
+      toast(m5Text('study.m5.saved', '已保存为学习附件'));
+    },
+  });
+}
+
+/** 题目详情「机械演示」按钮；学科不匹配时返回 null（与「查看原理」条件并列）。 */
+function mechDemoEntryButton(q) {
+  const subject = String(q?.subject || '').trim();
+  if (!MECH_DEMO_SUBJECTS.has(subject)) return null;
+  return button(m5Text('study.m5.open', '机械演示'), (event) => {
+    launchMechDemo(q, event.currentTarget).catch((error) => {
+      toast(m5Text('study.m5.openFailed', '打开机械演示失败：{v1}', {
+        v1: error?.message || '',
+      }), true);
+    });
+  }, 'soft small', 'sliders', {
+    title: m5Text('study.m5.openHint', '打开机械 3D 拆解/剖切演示或工厂产线仿真回放'),
+    'data-mech-demo-open': subject,
+  });
+}
+
+/* ---------------------------------------------------------------------------
  * M3 数学互动入口（方案 §3「数学主流程」第 2 步 / §5.4「Mafs 与 Excalidraw」「逐步辅导」）
  * ---------------------------------------------------------------------------
  * - 「函数图像」：数学题或题干含公式时显示；懒加载 components/functionGraph.js
@@ -1543,6 +1602,8 @@ export function renderQuestion(
       : null,
     // 方案界面落点：题目详情提供「查看原理」；仅六科显示（见 principleEntryButton）。
     principleEntryButton(q),
+    // M5 机械与工厂：物理/机械/技术题提供「机械演示」（懒加载 mechDemo.js，失败仅 toast）。
+    mechDemoEntryButton(q),
     // M3 数学互动：函数图像（数学/公式题）、画解题思路（所有题）、按步骤提示（所有题）。
     functionGraphEntryButton(q),
     sketchBoardEntryButton(q),

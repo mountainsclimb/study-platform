@@ -62,6 +62,9 @@ ARTIFACT_KINDS = (
     "isometric",
     "science_demo",
     "demo_3d",
+    # M5：机械/工厂演示模板库（app/demo_library.py）产出的机械 3D 与工厂仿真数据。
+    "mech_3d",
+    "factory_sim",
 )
 #: 附件可关联的目标类型白名单。
 TARGET_KINDS = ("question", "note", "classroom", "review", "assistant")

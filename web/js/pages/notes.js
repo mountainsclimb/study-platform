@@ -1499,6 +1499,9 @@ const NOTE_ARTIFACT_KIND_META = Object.freeze({
   science_demo: { key: 'study.m4.kind.scienceDemo', fallback: '科学演示' },
   demo_3d: { key: 'study.m4.kind.demo3d', fallback: '3D 演示' },
   reading_excerpt: { key: 'study.m4.kind.readingExcerpt', fallback: '阅读摘录' },
+  // M5（§5.4 机械与工厂）：机械 3D 与工厂仿真学习附件，只读打开复用 mechDemo 组件。
+  mech_3d: { key: 'study.m5.kind.mech3d', fallback: '机械 3D' },
+  factory_sim: { key: 'study.m5.kind.factorySim', fallback: '工厂仿真' },
 });
 
 const NOTE_ARTIFACT_DEMO_KINDS = new Set(['flow_animation', 'isometric', 'demo_3d', 'science_demo']);
@@ -1560,6 +1563,27 @@ async function mountNoteArtifactView(mount, { kind, title, data }) {
     const board = module.createSketchBoard({ scene: data, readOnly: true, ariaLabel: artTitle });
     mount.replaceChildren(board.element);
     return board;
+  }
+  // M5（§5.4 机械与工厂）：机械 3D / 工厂仿真学习附件只读打开，复用 mechDemo 组件；
+  // 数据不合法时组件内部给中文降级，不伪造演示内容。
+  if (kind === 'mech_3d' || kind === 'factory_sim') {
+    const module = await import('../components/mechDemo.js');
+    const host = el('div', { class: 'cls-note-artifact-view m5-note-view' });
+    const demo = {
+      kind,
+      title: artTitle,
+      data: data === undefined || data === null ? {} : data,
+      seed: data && typeof data === 'object' ? data.seed : undefined,
+    };
+    const view = kind === 'mech_3d'
+      ? module.createMechView(host, demo, { readOnly: true })
+      : module.createFactoryView(host, demo, { readOnly: true });
+    if (!view || !view.element) {
+      throw new Error(m4t('study.m4.notes.invalidData', '附件数据不合法'));
+    }
+    mount.replaceChildren(host);
+    try { await view.ready; } catch { /* ready 不应 reject；兼容异常实现 */ }
+    return view;
   }
   if (NOTE_ARTIFACT_DEMO_KINDS.has(kind)) {
     const module = await import('../components/principleDemo.js');

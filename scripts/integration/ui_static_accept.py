@@ -83,6 +83,10 @@ M4_PRESET_IDS = (
     "flow-review-loop", "flow-function-timeline", "flow-photosynthesis-states",
     "iso-anatomy-gearbox", "iso-biology-stomata",
 )
+# M5（§5.4）：机械 3D 与工厂仿真演示组件。
+MECH_DEMO_JS = JS / "components" / "mechDemo.js"
+MECH_PRESETS_JS = WEB / "vendor" / "principles" / "mechPresets.js"
+MECH_CSS = WEB / "styles-mech.css"
 INDEX_HTML = WEB / "index.html"
 ANKI_PY = ROOT / "app" / "anki_export.py"
 APP_PRACTICE_PY = ROOT / "app" / "practice.py"
@@ -111,6 +115,8 @@ LOCALE_NAMESPACES = (
     ("study.m3.", 90),
     # M4 命名空间：课堂版本化演示与学习附件（键量下限按本轮交付）。
     ("study.m4.", 60),
+    # M5 命名空间：机械/工厂演示（键量下限按本轮交付）。
+    ("study.m5.", 20),
 )
 
 #: 直接 t('literal') 键扫描的前端文件（WS30 相关页面/组件；其余页面键由既有 pytest 覆盖）。
@@ -659,6 +665,38 @@ class UiStaticAccept:
                        "question.js 需实现学科推荐 + 切换演示"))
         checks.append(("课堂演示场景样式已加载", "cls-demo-" in self._read(CLASSROOM_CSS),
                        "styles-classroom.css 需包含 cls-demo-* 样式"))
+
+        # M5：机械 3D / 工厂仿真组件与接线。
+        m5_files = (MECH_DEMO_JS, MECH_PRESETS_JS, MECH_CSS)
+        checks.append(("M5 机械/工厂演示文件齐全",
+                       all(path.is_file() for path in m5_files),
+                       f"缺少: {[str(path.name) for path in m5_files if not path.is_file()]}"))
+        mech_source = self._read(MECH_DEMO_JS)
+        checks.append(("机械 3D 支持拆解/剖切/运转读数与本地 three.js",
+                       all(token in mech_source for token in
+                           ("createMechView", "localClippingEnabled", "readouts",
+                            "vendor/interactive/three.module.min.js")),
+                       "mechDemo.js 需实现 three 本地渲染、剖切与读数"))
+        checks.append(("工厂仿真支持指标/事件回放与瓶颈",
+                       all(token in mech_source for token in
+                           ("createFactoryView", "bottleneck", "events")),
+                       "mechDemo.js 需渲染 metrics/events 与瓶颈"))
+        checks.append(("机械演示无 WebGL 时降级示意",
+                       ("WebGL" in mech_source or "webgl" in mech_source)
+                       and ("SVG" in mech_source or "svg" in mech_source)
+                       and "降级" in mech_source,
+                       "mechDemo.js 需在无 WebGL/加载失败时降级 SVG 示意"))
+        checks.append(("题目页接入机械/工厂演示入口",
+                       "mechDemo" in question_source and "study.m5" in question_source,
+                       "question.js 需懒加载 mechDemo 并展示机械演示入口"))
+        checks.append(("课堂播放器与笔记面板支持机械/工厂附件",
+                       all(token in player_source for token in ("mech_3d", "factory_sim", "mechDemo"))
+                       and all(token in notes for token in ("mech_3d", "factory_sim", "mechDemo")),
+                       "classroomPlayer.js/notes.js 需映射 mech_3d 与 factory_sim"))
+        index_source_m5 = self._read(INDEX_HTML)
+        checks.append(("主站加载机械演示样式",
+                       "styles-mech.css" in index_source_m5,
+                       "index.html 需引入 /static/styles-mech.css"))
 
         question = self._read(QUESTION_JS)
         checks.append(("题目详情接入「查看原理」并懒加载播放器",

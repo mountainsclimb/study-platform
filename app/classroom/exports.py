@@ -195,7 +195,8 @@ def _demo_section_html(title, content, *, heading_tag: str = "h2") -> str:
     heading_tag = heading_tag if heading_tag in ("h2", "h3") else "h2"
     parts: list[str] = [
         '<section class="cls-demo-scene" data-scene-type="demo" '
-        'data-artifact-id="%s" data-fixed-revision="%d">' % (artifact_id, revision),
+        'data-artifact-id="%s" data-fixed-revision="%d" data-demo-frame-ready="1">'
+        % (artifact_id, revision),
         '<div class="cls-demo-head"><span class="cls-demo-badge">原理演示 · 固定版本 v%d</span>'
         '<span class="cls-demo-kind">%s</span></div>' % (revision, kind_label),
         "<%s>%s</%s>" % (heading_tag, html_lib.escape(scene_title), heading_tag),
@@ -2027,7 +2028,8 @@ _HTML_JS = r"""
 
   function demoKindLabel(kind) {
     return { function_graph: '函数图', whiteboard: '解题白板', flow_animation: '流程动画',
-      isometric: '等距结构', science_demo: '科学演示', demo_3d: '3D 演示' }[kind] || (kind || '演示');
+      isometric: '等距结构', science_demo: '科学演示', demo_3d: '3D 演示',
+      mech_3d: '机械 3D', factory_sim: '工厂仿真' }[kind] || (kind || '演示');
   }
 
   // M4 手工「原理演示」场景：只按插入时冻结的固定版本快照渲染（海报 + 说明 + 数据 JSON），
@@ -2040,6 +2042,8 @@ _HTML_JS = r"""
     section.setAttribute('data-scene-type', 'demo');
     section.setAttribute('data-artifact-id', String(artifact.artifact_id || ''));
     section.setAttribute('data-fixed-revision', String(revision));
+    // 视频/截图管线：静态 DOM 就绪即可截帧；海报图片加载完成后再翻标记，便于外部等待。
+    section.setAttribute('data-demo-frame-ready', '1');
     var head = el('div', 'cls-demo-head');
     head.appendChild(el('span', 'cls-demo-badge', '原理演示 · 固定版本 v' + revision));
     head.appendChild(el('span', 'cls-demo-kind', demoKindLabel(artifact.kind)));
@@ -2052,6 +2056,9 @@ _HTML_JS = r"""
       image.className = 'cls-demo-image';
       image.src = png;
       image.alt = artifact.title || '演示海报';
+      image.addEventListener('load', function () {
+        section.setAttribute('data-demo-image-ready', '1');
+      });
       section.appendChild(image);
     } else {
       section.appendChild(el('p', 'cls-demo-missing', '未附加海报图像，请在知序课堂中播放该演示。'));
@@ -2208,6 +2215,7 @@ _HTML_TEMPLATE = """<!DOCTYPE html>
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
+__DEMO_META__
 <title>__TITLE__ · 知序 AI 课堂</title>
 <style>__CSS__</style>
 </head>
@@ -2273,12 +2281,20 @@ def build_offline_html(snapshot: dict, tts_assets: dict[int, dict] | None = None
     sources_html = _sources_html(data.get("sources") if isinstance(data.get("sources"), list) else [])
     # M4：文末「演示附件（固定版本）」静态备份（无演示场景时为空，既有导出结构不变）。
     demos_html = _demo_sections_html(data)
+    # M5：含演示场景时输出静态「帧就绪」标记（视频/截图管线等待；运行时另有 DOM
+    # data-demo-frame-ready / zhixu:demo-ready，静态标记便于外部工具与验收核对）。
+    has_demo = any(
+        str((scene.get("content") or {}).get("type") or scene.get("scene_type") or "") == "demo"
+        for scene in data.get("scenes") or []
+    )
+    demo_meta = '<meta name="zhixu-demo-frame-ready" content="1">' if has_demo else ""
     return (
         _HTML_TEMPLATE
         .replace("__JS__", _HTML_JS)
         .replace("__CSS__", _HTML_CSS)
         .replace("__SOURCES__", sources_html)
         .replace("__DEMOS__", demos_html)
+        .replace("__DEMO_META__", demo_meta)
         .replace("__TITLE__", title)
         .replace("__DATA__", data_json)
     )

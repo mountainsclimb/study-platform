@@ -505,3 +505,31 @@ for every public read path, and distribution changes must keep the fingerprint/.
     (`study.m4.*`) keep zh/en aligned (5,078 keys each); `accept_runner.py` gains an `m4` stage running
     `scripts/integration/m4_accept.py`, and `ui_static_accept.py` asserts the M4 player/classroom/notes wiring,
     the five preset ids and the `study.m4.` namespace minimum.
+
+16. **M5 mechanical 3D and deterministic factory simulation (2026-11-21).** `app/demo_library.py` owns a code
+    registry of presentation templates (`gearbox-3d`, `pump-3d` → `mech_3d`; `factory-line` → `factory_sim`;
+    `factory-line-2d` → `flow_animation`) exposed at `/api/demos/templates` with structured parameter metadata
+    (name/label/type/default/min/max/step/unit/length). `POST /api/demos/build` validates parameters (unknown
+    template 404; unknown/out-of-range/type errors 422 with Chinese details) and returns deterministic data —
+    mechanical parts carry an engineering readout list explicitly marked as teaching approximations
+    (ratio=driven/driver, output_rpm=input/ratio, torque≈ratio, pitch diameter=m·z, center distance; pump
+    V=π(b/2)²s, Q=Vn, v=2sn/60, ω=2πn/60) — while the factory template runs a deterministic discrete-event
+    simulation (sole random source `random.Random(seed)`, fixed draw order, three serial stations with finite
+    buffers and blocking/dropping, stable event ordering, ≤2000 events; metrics cover arrivals/completed/
+    throughput/avg wait/max queue/utilization/bottleneck station + Chinese reason). `POST /api/demos/simulate`
+    persists a run in `demo_sim_runs` (idempotent-free, owner-scoped; foreign/missing run 404) and the same
+    `template_id+params+seed` reproduces identical results across processes. Two artifact kinds are appended to
+    `app/study_artifact.ARTIFACT_KINDS` and classroom `DEMO_ARTIFACT_KINDS`: `mech_3d` and `factory_sim`
+    (labels 「机械 3D」「工厂仿真」). Frontend `web/js/components/mechDemo.js` renders mechanically read-only
+    3D via the local three.js (rotate/zoom, explode steps, clipping-plane section, run animation, readouts;
+    `onFrameReady`), with a Chinese-labelled SVG isometric fallback when WebGL or the local three.js module is
+    unavailable, and a factory replay view (metric cards, three-station flow, queue timeline, event replay slider;
+    events are replayed, never recomputed). `openMechDemo` prefers `/api/demos/templates` + build/simulate and
+    falls back to local `web/vendor/principles/mechPresets.js`, saving `mech_3d`/`factory_sim` study artifacts with
+    `source_ref=<template_id>`. The question page shows a 「机械演示」 entry for physics/mechanics/technology
+    subjects, the classroom player and notes artifact panel accept both kinds read-only, and offline demo HTML
+    exports carry `<meta name="zhixu-demo-frame-ready">` plus static/runtime `data-demo-frame-ready` markers so the
+    video/screenshot pipeline can wait for the frame (demo scenes remain inside `__zhixuCapture.sceneCount`).
+    99 new locale keys (`study.m5.*`) keep zh/en aligned (5,177 keys each); `accept_runner.py` gains an `m5` stage
+    running `scripts/integration/m5_accept.py`, and `ui_static_accept.py` asserts the mechanical/factory components,
+    low-WebGL fallback, page wiring and the `study.m5.` namespace minimum.

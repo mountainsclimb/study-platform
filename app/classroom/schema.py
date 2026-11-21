@@ -53,6 +53,9 @@ DEMO_ARTIFACT_KINDS = (
     "isometric",
     "science_demo",
     "demo_3d",
+    # M5：机械 3D 与工厂仿真（app/demo_library.py 模板库产物）。
+    "mech_3d",
+    "factory_sim",
 )
 #: 演示附件类型的中文名（PPTX / 离线 HTML / 打印讲义共用）。
 DEMO_ARTIFACT_KIND_LABELS = {
@@ -62,6 +65,8 @@ DEMO_ARTIFACT_KIND_LABELS = {
     "isometric": "等距结构",
     "science_demo": "科学演示",
     "demo_3d": "3D 演示",
+    "mech_3d": "机械 3D",
+    "factory_sim": "工厂仿真",
 }
 #: 演示附件快照限额（与 ``study_artifact`` 的 256KB / 64KB 存储上限兼容，课堂侧再收窄）。
 MAX_DEMO_DATA_BYTES = 200 * 1024
