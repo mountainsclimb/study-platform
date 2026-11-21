@@ -50,9 +50,32 @@ _S3_REFERENCE_SCANS = (
     ("ai_uploads", "storage_name", "s3:%"),
     ("ai_uploads", "extra_files_json", "%s3:%"),
     ("content_issues", "screenshot_path", "s3:%"),
+    # 工坊页图/配图与课堂素材：storage_name 是本地内容名，只有对象存储部署才会存成 s3: 引用。
+    ("pl_pages", "storage_name", "s3:%"),
+    ("pl_questions", "content_json", '%"s3:%'),
+    ("cls_assets", "storage_name", "s3:%"),
 )
 
-_BACKUP_FOLDERS = ("attempts", "ai-files", "issues")
+# 进入本地 ZIP 的资产目录（相对 ``db.DATA_DIR`` 的顶层目录，递归收录）：
+#   attempts   普通练习作答图；ai-files AI 资料附件；issues 题目报错截图；
+#   paperlab   工坊页图 paperlab/pages 与裁切配图 paperlab/assets；
+#   classroom  课堂素材 classroom/assets（TTS/配图/视频）与 classroom/video-work 产物；
+#   official-sources 人工补采的官方批次线数据（需联网重建，体积小，值得随包保存）。
+_BACKUP_FOLDERS = (
+    "attempts", "ai-files", "issues", "paperlab", "classroom", "official-sources",
+)
+# 按设计不进入热备份的顶层条目：录取数据可随时重建，backups 是备份自身，
+# WAL/SHM 是 SQLite 运行时文件（快照已含一致性数据）。manifest 记录实际存在的项，
+# 恢复演练时能区分「设计排除」与「漏备」。
+_BACKUP_EXCLUDED_ENTRIES = (
+    "admission.sqlite3",
+    "admission-official.sqlite3",
+    "admission-gaps.json",
+    ".admission-cache",
+    "backups",
+    "app.sqlite3-wal",
+    "app.sqlite3-shm",
+)
 _MANIFEST_NAME = "manifest.json"
 _DATABASE_NAME = "app.sqlite3"
 _KEY_NAME = "api-key.key"
@@ -139,6 +162,11 @@ def _scan_external_references(con) -> None:
             )
 
 
+def _collect_excluded_entries(src_dir: Path) -> list[str]:
+    """实际存在、但按设计不进入本地 ZIP 的顶层条目（供 manifest/恢复演练核对）。"""
+    return sorted(name for name in _BACKUP_EXCLUDED_ENTRIES if (src_dir / name).exists())
+
+
 def create_backup(
     out_path: Path | None = None,
     *,
@@ -152,6 +180,13 @@ def create_backup(
     """
     if data_dir is None and db.postgres_enabled():
         raise ExternalStorageBackupRequired("PostgreSQL 部署请使用数据库和对象存储各自的备份工具")
+    # 对象存储模式下新文件在 S3 桶里，本地 ZIP 只能覆盖数据卷中的历史文件；
+    # 失败语义保持显式，避免「备份成功」的假象。
+    if os.environ.get("S3_BUCKET", "").strip():
+        raise ExternalStorageBackupRequired(
+            "启用对象存储（S3_BUCKET）时本地 ZIP 不包含 S3 桶内文件，"
+            "请用对象存储快照单独备份附件，或同时保留数据卷中的历史文件备份"
+        )
     src_dir = (data_dir or db.DATA_DIR).resolve()
     db_file = src_dir / _DATABASE_NAME
     if not db_file.is_file():
@@ -165,7 +200,9 @@ def create_backup(
     out_path.parent.mkdir(parents=True, exist_ok=True)
 
     manifest_files: dict[str, dict] = {}
+    directories: dict[str, dict] = {}
     key_included = False
+    key_file = src_dir / _KEY_NAME
     with tempfile.TemporaryDirectory() as tmp:
         tmp_path = Path(tmp)
         snap_db = tmp_path / _DATABASE_NAME
@@ -191,20 +228,29 @@ def create_backup(
                 zf.write(file_path, arcname)
 
             add_entry(snap_db, _DATABASE_NAME)
-            key_file = src_dir / _KEY_NAME
             if include_key and key_file.is_file():
                 add_entry(key_file, _KEY_NAME)
                 key_included = True
 
-            # 作答图片、AI 资料文件与题目报错截图都必须进包，否则恢复后截图入口 404。
+            # 作答图片、AI 资料、报错截图、工坊页图/配图与课堂素材都必须进包，
+            # 否则恢复后图片/视频入口 404、备份成功无法证明资产可恢复。
             for folder_name in _BACKUP_FOLDERS:
                 folder = src_dir / folder_name
                 if not folder.is_dir():
                     continue
+                folder_files = 0
+                folder_bytes = 0
                 for item in sorted(folder.rglob("*")):
-                    if item.is_file():
-                        rel = item.relative_to(src_dir).as_posix()
-                        add_entry(item, _validate_archive_member(rel))
+                    if not item.is_file():
+                        continue
+                    rel = item.relative_to(src_dir).as_posix()
+                    add_entry(item, _validate_archive_member(rel))
+                    folder_files += 1
+                    folder_bytes += manifest_files[rel]["size"]
+                directories[folder_name] = {
+                    "file_count": folder_files,
+                    "bytes": folder_bytes,
+                }
 
             manifest = {
                 "created_at": db.utcnow(),
@@ -212,7 +258,16 @@ def create_backup(
                 "files": manifest_files,
                 # 供核对与恢复演练：默认不含密钥；ZIP 未加密，完整性由本清单保证。
                 "key_included": key_included,
+                # 密钥文件是否存在（即使按默认策略排除，也能核对恢复后是否缺密钥）。
+                "key_present": key_file.is_file(),
                 "encrypted": False,
+                # 恢复演练可核对「备份对应哪版题库、包含哪些数据目录」；旧包没有这些字段，
+                # verify/restore 按缺失处理，保持向后兼容。
+                "format_version": 2,
+                "bank_version": db.bank_version_hint(),
+                "bank_source": str(getattr(db, "BANK_SOURCE", "") or ""),
+                "directories": directories,
+                "excluded_entries": _collect_excluded_entries(src_dir),
             }
             zf.writestr(_MANIFEST_NAME, json.dumps(manifest, ensure_ascii=False, indent=2))
 
@@ -222,6 +277,11 @@ def create_backup(
         "file_count": len(manifest_files),
         "created_at": manifest["created_at"],
         "key_included": key_included,
+        "key_present": manifest["key_present"],
+        "bank_version": manifest["bank_version"],
+        "bank_source": manifest["bank_source"],
+        "directories": directories,
+        "excluded_entries": manifest["excluded_entries"],
     }
 
 
@@ -273,6 +333,13 @@ def verify_backup(backup_zip: Path) -> dict:
         finally:
             con.close()
 
+    directories = manifest.get("directories")
+    if not isinstance(directories, dict):
+        directories = {}
+    excluded_entries = manifest.get("excluded_entries")
+    if not isinstance(excluded_entries, list):
+        excluded_entries = []
+
     return {
         "ok": True,
         "verified_files": verified,
@@ -282,6 +349,13 @@ def verify_backup(backup_zip: Path) -> dict:
         "created_at": manifest.get("created_at"),
         # 兼容旧包：旧清单没有 key_included 字段时按是否收录 api-key.key 判断。
         "key_included": bool(manifest.get("key_included", _KEY_NAME in files_meta)),
+        "key_present": bool(manifest.get("key_present", _KEY_NAME in files_meta)),
+        # 旧包没有以下字段：返回 1 / 空字符串 / 空列表，调用方按「兼容旧包」处理。
+        "format_version": int(manifest.get("format_version") or 1),
+        "bank_version": str(manifest.get("bank_version") or ""),
+        "bank_source": str(manifest.get("bank_source") or ""),
+        "directories": directories,
+        "excluded_entries": excluded_entries,
     }
 
 
@@ -296,6 +370,7 @@ def restore_backup(backup_zip: Path, target_dir: Path) -> dict:
     target_dir = Path(target_dir).resolve()
     target_dir.mkdir(parents=True, exist_ok=True)
     staging = Path(tempfile.mkdtemp(prefix=".zhixu-restore-", dir=str(target_dir)))
+    restored_files = 0
     try:
         with zipfile.ZipFile(backup_zip, "r") as zf:
             manifest = _load_manifest(zf)
@@ -311,6 +386,7 @@ def restore_backup(backup_zip: Path, target_dir: Path) -> dict:
             final = _resolve_member_path(target_dir, relative)
             final.parent.mkdir(parents=True, exist_ok=True)
             os.replace(staged, final)
+            restored_files += 1
     finally:
         shutil.rmtree(staging, ignore_errors=True)
 
@@ -319,7 +395,13 @@ def restore_backup(backup_zip: Path, target_dir: Path) -> dict:
         stale = target_dir / f"{_DATABASE_NAME}{suffix}"
         stale.unlink(missing_ok=True)
 
-    return {"restored_to": str(target_dir), **info}
+    return {
+        "restored_to": str(target_dir),
+        # 恢复演练证据：实际落盘文件数与包含的数据目录（旧包 directories 为空）。
+        "restored_files": restored_files,
+        "restored_directories": sorted((info.get("directories") or {}).keys()),
+        **info,
+    }
 
 
 def main(argv=None):

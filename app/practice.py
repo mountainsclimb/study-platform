@@ -22,7 +22,7 @@ from pydantic import BaseModel, Field
 from starlette.concurrency import run_in_threadpool
 
 from .auth import current_user, require_admin
-from . import db, storage
+from . import db, question_ref, storage
 from .db import BANK_DIR, DATA_DIR, connection, ensure_column, utcnow
 from .review_schedule import fsrs_enabled, fsrs_review
 
@@ -68,6 +68,18 @@ SNAPSHOT_GROUP_COLUMNS = frozenset({
 })
 PRACTICE_STATUSES = ("practice", "review", "context", "quarantined")
 GRADING_STATUSES = ("auto", "pending", "disabled")
+# 个人题（app:<pl_questions.id>）在 practice 侧的题型映射：工坊题型 → 题库练习题型。
+APP_PRACTICE_TYPE_MAP = {
+    "SINGLE": "single_choice",
+    "MULTIPLE": "multi_choice",
+    "BLANK": "fill_blank",
+    "SUBJECTIVE": "short_answer",
+    "MIXED": "material_group",
+}
+# 幂等台账（一次作答只入账一次 / 整卷逐题只入账一次）：
+# 主键 (user_id, kind, ledger_key) 是数据库级唯一约束，并发重复提交由数据库兜底。
+LEDGER_KIND_ATTEMPT = "attempt"
+LEDGER_KIND_PAPER_ITEM = "paper_item"
 PENDING_GRADE_MESSAGE = "参考答案待核验，暂不自动判分"
 QUARANTINE_DETAIL_MESSAGE = "该题材料缺失或混入答案，已进入数据复核队列"
 QUARANTINE_SUBMIT_MESSAGE = "该题材料缺失或混入答案，暂不可作答"
@@ -483,6 +495,18 @@ def init_practice():
                 qid TEXT PRIMARY KEY, stem_plain TEXT NOT NULL DEFAULT '',
                 paper_name TEXT NOT NULL DEFAULT '', material_text TEXT NOT NULL DEFAULT ''
             );
+            -- 幂等台账：单题作答（attempt）与整卷逐题入账（paper_item）共用；
+            -- (user_id, kind, ledger_key) 主键即数据库唯一约束，重复/并发提交只入账一次。
+            CREATE TABLE IF NOT EXISTS submission_ledger (
+                user_id INTEGER NOT NULL,
+                kind TEXT NOT NULL,
+                ledger_key TEXT NOT NULL,
+                qid TEXT NOT NULL,
+                attempt_id INTEGER,
+                created_at TEXT NOT NULL,
+                PRIMARY KEY (user_id, kind, ledger_key)
+            );
+            CREATE INDEX IF NOT EXISTS submission_ledger_attempt ON submission_ledger(attempt_id);
         """)
         ensure_column(con, "wrong_questions", "interval_days", "REAL NOT NULL DEFAULT 1")
         ensure_column(con, "wrong_questions", "ease", "REAL NOT NULL DEFAULT 2.0")
@@ -635,6 +659,68 @@ def _int_or_none(value):
         return int(value)
     except (TypeError, ValueError):
         return None
+
+
+# r5 发布包把 questions/groups 的所有列都建成 TEXT（objective='0'/'1'、order_in_paper='10'、
+# year='2010'）。Python 里 bool('0') 为真、TEXT 列按字典序排序都与数值语义不符，因此读取层
+# 统一走下面三个函数：标志位显式正规化、数字字段安全转型、排序/比较用引擎无关的显式转型。
+_FLAG_TRUE_TEXT = frozenset({"1", "true", "t", "yes", "y", "on"})
+_FLAG_FALSE_TEXT = frozenset({"", "0", "false", "f", "no", "n", "off", "none", "null"})
+
+
+def _flag(value) -> bool:
+    """把 TEXT/INTEGER 混合来源的标志位统一成 bool（'0'/''/None → False）。"""
+    if isinstance(value, bool):
+        return value
+    if value is None:
+        return False
+    if isinstance(value, (int, float)):
+        return value != 0
+    text = str(value).strip().lower()
+    if text in _FLAG_TRUE_TEXT:
+        return True
+    if text in _FLAG_FALSE_TEXT:
+        return False
+    try:
+        return float(text) != 0
+    except ValueError:
+        return True
+
+
+def _normalize_question_row(question: dict) -> dict:
+    """正规化题库行里的数字/标志字段，让 SQLite TEXT 列与 PG INTEGER 镜像输出同一类型。"""
+    for field in ("year", "order_in_paper", "pua_remaining"):
+        if field in question:
+            question[field] = _int_or_none(question[field])
+    for field in ("objective", "has_figure", "has_formula"):
+        if field in question:
+            question[field] = _flag(question[field])
+    return question
+
+
+def _int_sql(con, expression: str) -> str:
+    """题序/年份的数值表达式：SQLite 侧对 TEXT 列显式 CAST，PG 镜像导入层已落 INTEGER。
+
+    ``CAST(NULLIF(TRIM(col),'') AS INTEGER)`` 在 SQLite 下对非数字文本安全地得到 0；
+    PostgreSQL 若仍是 TEXT 列则 ``col = <int>`` 会直接报类型错误，因此镜像必须按语义建
+    INTEGER（见 ``db._ensure_postgres_bank``），这里直接引用数值列并保留索引可用。
+    """
+    if isinstance(con, db._Postgres):
+        return f"COALESCE({expression}, 0)"
+    return f"COALESCE(CAST(NULLIF(TRIM({expression}), '') AS INTEGER), 0)"
+
+
+def _member_sort(entries: list[dict]) -> list[dict]:
+    """按数值 order 排序题组成员快照；缺 order 的保持原相对顺序排在后面。"""
+    if not entries:
+        return entries
+    indexed = list(enumerate(entries))
+    indexed.sort(key=lambda pair: (
+        0 if _int_or_none(pair[1].get("order")) is not None else 1,
+        _int_or_none(pair[1].get("order")) or 0,
+        pair[0],
+    ))
+    return [entry for _, entry in indexed]
 
 
 def _data_quality_flags(value):
@@ -983,7 +1069,16 @@ def _resolve_difficulty(meta_row, stat_total: int = 0, stat_correct: int = 0, in
 
 
 def load_question(qid: str) -> dict:
-    """Trusted backend projection. Never return this dictionary without filtering."""
+    """Trusted backend projection. Never return this dictionary without filtering.
+
+    ``official:<public_id>`` 引用转 ``app/official.py`` 读取平台精选公开题（按查询时
+    可见性判定，撤回/争议立即 404）；其余（裸 qid / ``bank:``）仍读只读题库。
+    """
+    text = str(qid or "")
+    if text.lower().startswith(question_ref.SOURCE_OFFICIAL + ":"):
+        from . import official as official_module
+
+        return official_module.load_official_question(text.split(":", 1)[1].strip())
     with _bank() as con:
         row = con.execute(
             f"SELECT * FROM {_bank_table(con, 'questions')} WHERE qid=?", (qid,)
@@ -991,6 +1086,7 @@ def load_question(qid: str) -> dict:
         if row is None:
             raise HTTPException(404, "题目不存在")
         question = dict(row)
+        _normalize_question_row(question)
         question["options"] = _json(question.pop("options_json", None), [])
         question["images"] = _json(question.pop("images_json", None), [])
         # 快照契约 §5 新增列：缺失列时全部回落到旧行为，禁止 500。
@@ -1000,8 +1096,8 @@ def load_question(qid: str) -> dict:
         question["solution_blocks"] = _dict_list(question.pop("solution_blocks_json", None))
         question["shared_blocks"] = _dict_list(question.pop("shared_blocks_json", None))
         question["member_index"] = _dict_list(question.pop("member_index_json", None))
-        question["member_index"] = _overlay_member_live_status(
-            con, _redact_member_blocks(question["member_index"]))
+        question["member_index"] = _member_sort(
+            _overlay_member_live_status(con, _redact_member_blocks(question["member_index"])))
         question["data_quality_flags"] = _data_quality_flags(question.pop("quality_flags_json", None))
         question["bank_version"] = _text(question.get("bank_version"))
         question["source_question_id"] = _text(question.get("source_question_id")) or question.get("question_id")
@@ -1019,11 +1115,19 @@ def load_question(qid: str) -> dict:
             if stored:
                 stored = dict(stored)
                 member_index = _dict_list(stored.get("member_index_json")) or question["member_index"]
-                member_index = _overlay_member_live_status(con, _redact_member_blocks(member_index))
+                member_index = _member_sort(
+                    _overlay_member_live_status(con, _redact_member_blocks(member_index)))
                 shared_blocks = _dict_list(stored.get("shared_blocks_json")) or question["shared_blocks"]
                 # 组级实时计数：快照 n_practice 可能因隔离过期，详情页与组接口必须一致。
                 live_practice = sum(1 for entry in _group_member_view_list(member_index)
                                     if entry.get("in_bank") is not False and entry.get("available"))
+                if not member_index:
+                    # 无 member_index 的题库（r5 的 member_index_json 全为空）走 questions 反查：
+                    # 用实时可作答成员数，避免详情页 n_practice 恒为 0 而组接口是真实值。
+                    live_practice = sum(
+                        1 for member in _group_members(con, key, stored)
+                        if member.get("in_bank") and member.get("available")
+                    )
                 n_members = len(member_index) or (_int_or_none(stored.get("n_members"))
                                                   or _int_or_none(stored.get("n_children_total")) or 0)
                 n_practice = live_practice
@@ -1032,7 +1136,7 @@ def load_question(qid: str) -> dict:
                     "parent_stem": stored.get("parent_stem") or "",
                     "section_title": stored.get("section_title"),
                     "material_kind": stored.get("material_kind"),
-                    "n_children_total": stored.get("n_children_total"),
+                    "n_children_total": _int_or_none(stored.get("n_children_total")),
                     "material_images": _source_groups(question["subject"]).get(key, {}).get("material_images", []),
                     "group_kind": _text(stored.get("group_kind")) or question["group_kind"],
                     "parent_source_question_id": _text(stored.get("parent_source_question_id"))
@@ -1103,6 +1207,263 @@ def load_question(qid: str) -> dict:
     return question
 
 
+# ---------------------------------------------------------------------------
+# 统一题目引用：bank:<qid> / app:<pl_questions.id>（official 预留）
+# 个人题读取统一走 paperlab 的归属校验（本人 + 未删除），不越权读取他人题目。
+# ---------------------------------------------------------------------------
+
+def _ref_error(exc) -> HTTPException:
+    return HTTPException(422, str(exc))
+
+
+def _storage_qid(value) -> str:
+    """把任意引用/旧裸 qid 转成写库键；bank 保持裸 qid，app 用 app:<id>。"""
+    try:
+        return question_ref.storage_key(value)
+    except question_ref.QuestionRefError as exc:
+        raise _ref_error(exc) from None
+
+
+def _parse_ref(value):
+    try:
+        return question_ref.parse(value)
+    except question_ref.QuestionRefError as exc:
+        raise _ref_error(exc) from None
+
+
+def _paperlab_modules():
+    """惰性导入工坊模块：practice 先于 paperlab 初始化，避免模块级循环依赖。"""
+    from .paperlab import db as paperlab_db
+    return paperlab_db
+
+
+def _app_question_images(question_id: int, content: dict) -> list[dict]:
+    """把个人题 content.images 转成前端可读的配图列表。
+
+    ``file``/``asset`` 都是服务端签发的资产引用，``/api/bank-image?qid=app:<id>``
+    会再次校验归属与「该资产确实被本题引用」；``url`` 作为等价直链备用。
+    """
+    images: list[dict] = []
+    for index, image in enumerate(content.get("images") or []):
+        if not isinstance(image, dict):
+            continue
+        asset = _text(image.get("asset"))
+        if not asset:
+            continue
+        images.append({
+            "index": index,
+            "asset": asset,
+            "file": asset,
+            "role": _text(image.get("role")) or "figure",
+            "url": f"/api/paperlab/questions/{int(question_id)}/images/{index}",
+        })
+    return images
+
+
+def _app_content_answers(content: dict) -> list[str]:
+    answers = [str(item).strip() for item in content.get("answers") or [] if str(item).strip()]
+    if not answers:
+        # 材料题/混合题：顶层没有答案时汇总子题答案，仅用于展示，不参与自动判分。
+        for part in content.get("parts") or []:
+            if isinstance(part, dict):
+                answers.extend(str(item).strip() for item in part.get("answers") or [] if str(item).strip())
+    return answers
+
+
+def _app_question_dict(row: dict) -> dict:
+    """把 ``pl_questions`` 行投影成与 ``load_question`` 同形的练习题目字典。"""
+    question_id = int(row.get("id") or 0)
+    db_module = _paperlab_modules()
+    content = db_module.json_load(row.get("content_json"), {})
+    if not isinstance(content, dict):
+        content = {}
+    ftype = str(row.get("type") or "SUBJECTIVE").upper()
+    options = [
+        {"label": str(option.get("label") or "").strip(), "text": str(option.get("text") or "")}
+        for option in content.get("options") or []
+        if isinstance(option, dict) and str(option.get("label") or "").strip()
+    ]
+    answers = _app_content_answers(content)
+    explanation = str(content.get("explanation") or "")
+    rubric = str(content.get("rubric") or "")
+    stem = str(content.get("stem") or "").strip()
+    practice_type = APP_PRACTICE_TYPE_MAP.get(ftype, "short_answer")
+    objective = ftype in ("SINGLE", "MULTIPLE") and bool(options)
+    auto_gradeable = (objective or ftype == "BLANK") and bool(answers)
+    images = _app_question_images(question_id, content)
+    stem_blocks: list[dict] = [{"kind": "text", "text": stem}] if stem else []
+    for image in images:
+        stem_blocks.append({
+            "kind": "image",
+            "asset": {"file": image["asset"], "role": image.get("role") or "figure"},
+        })
+    tags = db_module.json_load(row.get("knowledge_tags_json"), [])
+    if not isinstance(tags, list):
+        tags = []
+    version = str(row.get("version") or 1)
+    qid = f"{question_ref.SOURCE_APP}:{question_id}"
+    answer_text = "；".join(answers)
+    return {
+        "qid": qid,
+        "source": question_ref.SOURCE_APP,
+        "ref": qid,
+        "source_label": question_ref.SOURCE_LABELS[question_ref.SOURCE_APP],
+        "subject": str(row.get("subject") or ""),
+        "grade": str(row.get("grade") or ""),
+        "year": None,
+        "province": "",
+        "paper_name": "",
+        "paper_type": str(row.get("source") or "app"),
+        "type": practice_type,
+        "type_label": TYPE_LABELS.get(practice_type, practice_type),
+        "number_label": None,
+        "group_id": None,
+        "group_role": None,
+        "stem_plain": stem,
+        "stem_blocks": stem_blocks,
+        "options": options,
+        "options_blocks": [],
+        "images": images,
+        "objective": objective,
+        "has_answer": bool(answers),
+        "has_solution": bool(explanation.strip() or rubric.strip()),
+        "quality_flags": [],
+        "grading_flags": [],
+        "data_quality_flags": [],
+        "practice_allowed": True,
+        "quarantined": False,
+        "quarantine_reason": None,
+        "practice_status": "practice",
+        "grading_status": "auto" if auto_gradeable else "pending",
+        "bank_version": "",
+        "content_revision": version,
+        "answer_revision": version,
+        "parent_source_question_id": None,
+        "group_kind": None,
+        "shared_blocks": [],
+        "member_index": [],
+        "group": None,
+        "answer": {"text": answer_text, "kind": "reference", "note": rubric or None,
+                   "solution": explanation},
+        "answer_text": answer_text,
+        "solution": explanation,
+        "answer_blocks": [],
+        "solution_blocks": [],
+        "knowledge_tags": [str(tag) for tag in tags if str(tag).strip()],
+        # 内部字段：不进入 _public_question 白名单，仅供作答判分使用。
+        "app_content": content,
+        "app_type": ftype,
+    }
+
+
+def _find_app_question_row(user_id: int, question_id: int) -> dict | None:
+    """按工坊归属校验读取个人题原始行（本人 + 未删除）；不存在返回 None。"""
+    db_module = _paperlab_modules()
+    try:
+        return db_module.find_question(int(question_id), int(user_id))
+    except HTTPException:
+        return None
+    except Exception:  # noqa: BLE001 - 工坊表未初始化时按不存在处理，不 500
+        return None
+
+
+def _load_app_question(user_id: int, question_id: int) -> dict:
+    """读取本人个人题并投影成练习题目；他人/已删除统一 404。"""
+    row = _find_app_question_row(user_id, question_id)
+    if not row:
+        raise HTTPException(404, "题目不存在")
+    return _app_question_dict(row)
+
+
+def load_question_ref(ref, user_id: int) -> dict:
+    """按统一引用读取题目：bank 走只读题库，app 走 paperlab 归属校验，official 走公开题。"""
+    parsed = _parse_ref(ref)
+    if parsed.source == question_ref.SOURCE_APP:
+        return _load_app_question(user_id, int(parsed.key))
+    if parsed.source == question_ref.SOURCE_OFFICIAL:
+        return _official_module().load_official_question(parsed.key)
+    return load_question(parsed.key)
+
+
+def _official_module():
+    """惰性导入平台精选读取层（避免模块级循环依赖）。"""
+    from . import official as official_module
+
+    return official_module
+
+
+def _assert_ref_owned(value, user_id: int) -> str:
+    """写操作前的归属校验：app 引用必须是本人未删除的题目；返回写库键。
+
+    official 引用不做归属校验（公开题人人可读），但必须当前可见：撤回/争议/未发布
+    统一 404，历史记录仍可凭写库键读取。
+    """
+    parsed = _parse_ref(value)
+    if parsed.source == question_ref.SOURCE_APP:
+        if _find_app_question_row(user_id, int(parsed.key)) is None:
+            raise HTTPException(404, "题目不存在")
+    elif parsed.source == question_ref.SOURCE_OFFICIAL:
+        _official_module().load_official_question(parsed.key)
+    return parsed.storage_key
+
+
+# ---------------------------------------------------------------------------
+# 幂等台账：一次作答只入账一次
+# ---------------------------------------------------------------------------
+
+def _ledger_claim(con, user_id: int, kind: str, ledger_key: str, qid: str,
+                  attempt_id: int | None = None, now: str | None = None) -> bool:
+    """占用幂等键：数据库主键唯一约束保证并发只成功一次。"""
+    cursor = con.execute(
+        "INSERT INTO submission_ledger(user_id,kind,ledger_key,qid,attempt_id,created_at) "
+        "VALUES(?,?,?,?,?,?) ON CONFLICT(user_id,kind,ledger_key) DO NOTHING",
+        (int(user_id), kind, ledger_key, qid, attempt_id, now or utcnow()),
+    )
+    return cursor.rowcount == 1
+
+
+def _ledger_bind_attempt(con, user_id: int, kind: str, ledger_key: str, attempt_id: int) -> None:
+    con.execute(
+        "UPDATE submission_ledger SET attempt_id=? WHERE user_id=? AND kind=? AND ledger_key=?",
+        (int(attempt_id), int(user_id), kind, ledger_key),
+    )
+
+
+def _ledger_entry(con, user_id: int, kind: str, ledger_key: str):
+    return con.execute(
+        "SELECT * FROM submission_ledger WHERE user_id=? AND kind=? AND ledger_key=?",
+        (int(user_id), kind, ledger_key),
+    ).fetchone()
+
+
+def _ledger_release(con, user_id: int, kind: str, ledger_key: str) -> None:
+    """事务内回滚幂等键（仅在同一事务里失败回收时使用）。"""
+    con.execute(
+        "DELETE FROM submission_ledger WHERE user_id=? AND kind=? AND ledger_key=?",
+        (int(user_id), kind, ledger_key),
+    )
+
+
+def _attempt_row_for_user(con, user_id: int, attempt_id: int | None):
+    if attempt_id is None:
+        return None
+    return con.execute(
+        "SELECT * FROM attempts WHERE id=? AND user_id=?", (int(attempt_id), int(user_id))
+    ).fetchone()
+
+
+def _find_submission_attempt(user_id: int, ledger_key: str) -> dict | None:
+    """已入账的同一提交：返回既有作答（用于直接回放结果，不新增行）。"""
+    with connection() as con:
+        entry = _ledger_entry(con, user_id, LEDGER_KIND_ATTEMPT, ledger_key)
+        if entry is None:
+            return None
+        row = _attempt_row_for_user(con, user_id, entry["attempt_id"])
+    if row is None:
+        return None
+    return {"attempt_id": int(row["id"]), "attempt": dict(row), "duplicate": True}
+
+
 def latest_attempt(user_id: int, qid: str):
     with connection() as con:
         row = con.execute("SELECT * FROM attempts WHERE user_id=? AND qid=? ORDER BY id DESC LIMIT 1", (user_id, qid)).fetchone()
@@ -1117,8 +1478,16 @@ def ensure_unlocked(user_id: int, qid: str):
 def _attempt_public(row):
     if not row:
         return None
+    qid = row["qid"]
+    parsed = question_ref.try_parse(qid)
+    source = parsed.source if parsed is not None else question_ref.SOURCE_BANK
     return {
-        "id": row["id"], "qid": row["qid"], "answer_text": row["answer_text"],
+        "id": row["id"], "qid": qid,
+        # 统一题目引用：历史作答也带来源，前端可直接按 ref 解析（题库裸 qid 仍向后兼容）。
+        "ref": parsed.ref if parsed is not None else qid,
+        "source": source,
+        "source_label": question_ref.SOURCE_LABELS.get(source, source),
+        "answer_text": row["answer_text"],
         "result": row["result"], "grade_source": row["grade_source"],
         "has_image": bool(row.get("image_path")),
         "image_url": f"/api/attempt-image/{row['id']}" if row.get("image_path") else None,
@@ -1172,6 +1541,28 @@ def _public_question(question, user_id, summary=False):
                "content_revision", "answer_revision", "parent_source_question_id", "group_kind",
                "stem_blocks", "options_blocks", "shared_blocks", "member_index")
     result = {key: question.get(key) for key in allowed}
+    # 统一题目引用：题库题返回 bank:<qid>，个人题返回 app:<id> 与「我的题库」来源标签；
+    # 旧接口字段（qid 仍为写库键）保持不变。
+    parsed_ref = question_ref.try_parse(question["qid"])
+    if parsed_ref is not None:
+        result["ref"] = parsed_ref.ref
+        result["source"] = parsed_ref.source
+        result["source_label"] = parsed_ref.source_label
+    question_source = question.get("source")
+    if question_source in (question_ref.SOURCE_APP, question_ref.SOURCE_OFFICIAL):
+        result["knowledge_tags"] = list(question.get("knowledge_tags") or [])
+        result["grade"] = question.get("grade") or ""
+    if question_source == question_ref.SOURCE_OFFICIAL:
+        # 平台精选题：公开题号/审核状态/发布版本等随详情返回，前端据此显示来源徽标与
+        # 「社区待核验/已核验/平台精选」状态；撤回后题目本身已 404，不会走到这里。
+        for key in (
+            "public_id", "official_status", "status_label", "review_status",
+            "review_status_label", "published_version", "published_at", "featured",
+            "community_pending", "notice", "source_declaration", "figure_notice",
+        ):
+            if key in question:
+                result[key] = question[key]
+        result["unavailable"] = False
     with connection() as con:
         metadata = con.execute("SELECT * FROM question_metadata WHERE qid=?", (question["qid"],)).fetchone()
         mastery = con.execute("SELECT level FROM mastery WHERE user_id=? AND qid=?", (user_id, question["qid"])).fetchone()
@@ -1283,8 +1674,12 @@ def _batch_summaries(con: sqlite3.Connection, bank_rows: list[sqlite3.Row], user
         isolated = qid in _active_isolations()
         q_dict = {
             "qid": qid,
+            # 统一题目引用：列表卡也带来源与引用，前端可统一按 ref 处理个人题/题库题。
+            "ref": question_ref.build(question_ref.SOURCE_BANK, qid),
+            "source": question_ref.SOURCE_BANK,
+            "source_label": question_ref.SOURCE_LABELS[question_ref.SOURCE_BANK],
             "subject": row["subject"],
-            "year": row["year"],
+            "year": _int_or_none(row["year"]),
             "province": row["province"],
             "paper_name": row["paper_name"],
             "paper_type": row["paper_type"],
@@ -1297,7 +1692,7 @@ def _batch_summaries(con: sqlite3.Connection, bank_rows: list[sqlite3.Row], user
             "stem_plain": row["stem_plain"],
             "options": options,
             "images": images,
-            "objective": row["objective"],
+            "objective": _flag(row["objective"]),
             "has_answer": _has_reference(row["answer_text"]),
             # 与详情页同口径：纯文本解析为空但块级解析非空时也算「有解析」。
             "has_solution": (
@@ -1400,7 +1795,8 @@ def _excluded_search_sql(prefix: str = "q") -> tuple[list[str], list]:
     if not isolated:
         return [], []
     marks = ",".join("?" for _ in isolated)
-    return [f"{prefix}qid NOT IN ({marks})"], isolated
+    column = f"{prefix}.qid" if prefix else "qid"
+    return [f"{column} NOT IN ({marks})"], isolated
 
 
 def _build_search_sql(
@@ -1448,15 +1844,21 @@ def _build_search_sql(
         clauses.append("q.province IN (" + ",".join("?" for _ in provinces) + ")")
         values.extend(provinces)
 
-    if year is not None:
-        clauses.append("q.year = ?")
-        values.append(year)
-    if year_from is not None:
-        clauses.append("q.year >= ?")
-        values.append(year_from)
-    if year_to is not None:
-        clauses.append("q.year <= ?")
-        values.append(year_to)
+    # r5 的 year 是 TEXT：必须按数值转型比较，否则 '999' 会大于 '2026'。
+    # 非法筛选值安全降级为不过滤（FastAPI 层通常已把非整数输入挡成 422）。
+    year_expr = _int_sql(con, "q.year")
+    year_value = _int_or_none(year)
+    year_from_value = _int_or_none(year_from)
+    year_to_value = _int_or_none(year_to)
+    if year_value is not None:
+        clauses.append(f"{year_expr} = ?")
+        values.append(year_value)
+    if year_from_value is not None:
+        clauses.append(f"{year_expr} >= ?")
+        values.append(year_from_value)
+    if year_to_value is not None:
+        clauses.append(f"{year_expr} <= ?")
+        values.append(year_to_value)
 
     if has_answer is True:
         clauses.append("q.answer_text IS NOT NULL AND TRIM(REPLACE(REPLACE(q.answer_text,'_',''),'＿','')) != ''")
@@ -1597,21 +1999,34 @@ def search_similar_questions(text: str, subject: str | None = None, limit: int =
         excl = " AND ".join(excl_clauses)
         questions = _bank_table(con, "questions")
         sql = "SELECT q.qid, q.subject, q.year, q.province, q.paper_name, q.type, q.stem_plain, q.has_figure "
+        order_sql = ""
+        order_params: list = []
         if db.postgres_enabled():
-            contains_any = " OR ".join([_PG_BANK_CONTAINS] * len(snippets))
+            # 候选必须按命中质量排序：r5 的 LaTeX 题干会命中大量公共三角片段，
+            # 无序 LIMIT 40 会把题干完全相同的题挤出去（test_v2 拍照相似题回归）。
+            conditions = [_PG_BANK_CONTAINS for _ in snippets]
+            contains_any = " OR ".join(conditions)
+            snippet_params = [value for snippet in snippets for value in [_contains_pattern(snippet)] * 3]
+            hit_score = " + ".join(
+                f"(CASE WHEN ({condition}) THEN 1 ELSE 0 END)" for condition in conditions
+            )
             sql += f"FROM {questions} q WHERE ({contains_any}) AND {excl}"
-            params = [value for snippet in snippets for value in [_contains_pattern(snippet)] * 3]
-            params.extend(excl_params)
+            params = [*snippet_params, *excl_params]
+            order_sql = f" ORDER BY ({hit_score}) DESC"
+            order_params = list(snippet_params)
         else:
             ensure_fts_index(con)
             fts_expr = " OR ".join('"' + s.replace('"', '""') + '"' for s in snippets)
             sql += (f"FROM bank_fts f JOIN {questions} q ON q.qid = f.qid "
                     f"WHERE bank_fts MATCH ? AND {excl}")
             params = [fts_expr, *excl_params]
+            # FTS5 的 rank 是 bm25 相关度：相同题干稳定排在最前，LIMIT 截断不会漏掉它。
+            order_sql = " ORDER BY f.rank"
         if subject:
             sql += " AND q.subject = ?"
             params.append(subject)
-        sql += " LIMIT 40"
+        params.extend(order_params)
+        sql += order_sql + " LIMIT 40"
         candidates = con.execute(sql, params).fetchall()
     # Combine trigram Jaccard & n-gram vector cosine similarity for higher recall/precision
     from .search_vector import text_vector_similarity
@@ -1629,7 +2044,7 @@ def search_similar_questions(text: str, subject: str | None = None, limit: int =
         score = round(max(jacc, 0.5 * jacc + 0.5 * vec_sim), 3)
         if score >= 0.12:
             scored.append({
-                "qid": r["qid"], "subject": r["subject"], "year": r["year"],
+                "qid": r["qid"], "subject": r["subject"], "year": _int_or_none(r["year"]),
                 "province": r["province"], "paper_name": r["paper_name"],
                 "type": r["type"], "type_label": TYPE_LABELS.get(r["type"], r["type"]),
                 "stem_plain": (r["stem_plain"] or "")[:200],
@@ -1700,7 +2115,12 @@ def _build_catalog() -> dict:
             "types": [r[0] for r in con.execute(f"SELECT DISTINCT type FROM {questions} ORDER BY type")],
             "provinces": [r[0] for r in con.execute(
                 f"SELECT DISTINCT province FROM {questions} WHERE province IS NOT NULL ORDER BY province")],
-            "years": [r[0] for r in con.execute(f"SELECT DISTINCT year FROM {questions} ORDER BY year DESC")],
+            # 年份按数值排序并输出 int（r5 的 year 是 TEXT，字典序对四位年份碰巧一致，
+            # 但输出类型会随题库版本漂移；这里统一成稳定类型）。
+            "years": sorted(
+                {_int_or_none(r[0]) for r in con.execute(f"SELECT DISTINCT year FROM {questions}")} - {None},
+                reverse=True,
+            ),
             "total": total, "source_total": total, "available_total": available,
             "quarantined_count": total - available, "difficulties": list(DIFFICULTIES),
             "type_labels": TYPE_LABELS, "error_tag_presets": list(ERROR_TAG_PRESETS),
@@ -1743,6 +2163,139 @@ def _days_since(iso_str: str | None) -> int:
         return 0
 
 
+def _bank_questions_page(
+    user_id: int,
+    *,
+    subject: str | None = None,
+    type: str | None = None,
+    province: str | None = None,
+    year: int | None = None,
+    year_from: int | None = None,
+    year_to: int | None = None,
+    difficulty: str | None = None,
+    include_ai_difficulty: bool = False,
+    kp_id: str | None = None,
+    method_id: str | None = None,
+    status: str | None = None,
+    has_answer: bool | None = None,
+    has_solution: bool | None = None,
+    has_ai_explanation: bool | None = None,
+    sort: str = "year_desc",
+    q: str | None = None,
+    include_reviews: bool = False,
+    seen_reviews: str | None = None,
+    page: int = 1,
+    page_size: int = 12,
+) -> dict:
+    """题库题分页（原 ``GET /api/questions`` 主体；``source=bank`` 行为保持不变）。"""
+    with _app_with_bank() as con:
+        # r5 题序/年份都是 TEXT：显式数值转型后再排序（'10' 不能排在 '2' 前面）。
+        year_expr = _int_sql(con, "q.year")
+        order_expr = _int_sql(con, "q.order_in_paper")
+        order_map = {
+            "year_desc": f"{year_expr} DESC, q.subject, q.doc_id, {order_expr}",
+            "year_asc": f"{year_expr} ASC, q.subject, q.doc_id, {order_expr}",
+            "difficulty": (
+                "CASE (SELECT difficulty FROM question_metadata WHERE qid=q.qid) "
+                f"WHEN '困难' THEN 1 WHEN '中等' THEN 2 WHEN '简单' THEN 3 ELSE 4 END, {year_expr} DESC"
+            ),
+            "accuracy": (
+                "COALESCE((SELECT 1.0*SUM(CASE WHEN result='correct' THEN 1 ELSE 0 END)"
+                f"/NULLIF(COUNT(*),0) FROM attempts WHERE qid=q.qid AND result!='pending'), 2.0) ASC, {year_expr} DESC"
+            ),
+            "random": "RANDOM()",
+        }
+        join_sql, where_sql, params = _build_search_sql(
+            con, user_id, subject=subject, type=type, province=province,
+            year=year, year_from=year_from, year_to=year_to,
+            difficulty=difficulty, include_ai_difficulty=include_ai_difficulty,
+            kp_id=kp_id, method_id=method_id, status=status, has_answer=has_answer,
+            has_solution=has_solution, has_ai_explanation=has_ai_explanation, q=q,
+        )
+        questions = _bank_table(con, "questions")
+        total = con.execute(f"SELECT COUNT(*) FROM {questions} q {join_sql} WHERE {where_sql}", params).fetchone()[0]
+        # 先只取排好序的 qid，再按 qid 取回 12 行宽数据：排序不再搬运整行导致翻页变慢。
+        qid_rows = con.execute(
+            f"SELECT q.qid FROM {questions} q {join_sql} WHERE {where_sql} "
+            f"ORDER BY {order_map[sort]} LIMIT ? OFFSET ?",
+            [*params, page_size, (page - 1) * page_size],
+        ).fetchall()
+        rows = _fetch_bank_rows(con, [row[0] for row in qid_rows])
+        items = _batch_summaries(con, rows, user_id, include_ai_diff=include_ai_difficulty)
+        review_slots = []
+
+        if include_reviews and items:
+            prefs = get_user_prefs(user_id)
+            max_slots = min(2, int(prefs.get("interleave_per_page", 2)))
+            if max_slots > 0:
+                seen_set = _seen_review_set(seen_reviews, items)
+                rev_where = where_sql + " AND EXISTS (SELECT 1 FROM wrong_questions wq_i WHERE wq_i.user_id=? AND wq_i.qid=q.qid AND wq_i.archived=0 AND wq_i.next_review_at<=?)"
+                rev_params = [*params, user_id, utcnow()]
+                # §4.1: same_kp_only restricts interleaved wrong items to KPs present on current page when kp_id filter is not set
+                if prefs.get("same_kp_only") and not kp_id:
+                    page_kp_ids = sorted({kp["kp_id"] for it in items for kp in it.get("knowledge_points", [])})
+                    if page_kp_ids:
+                        kp_marks = ",".join("?" for _ in page_kp_ids)
+                        rev_where += f" AND EXISTS (SELECT 1 FROM question_kp qk_s WHERE qk_s.qid=q.qid AND qk_s.kp_id IN ({kp_marks}))"
+                        rev_params.extend(page_kp_ids)
+                    else:
+                        rev_where += " AND 0=1"
+                if seen_set:
+                    rev_where += " AND q.qid NOT IN (" + ",".join("?" for _ in seen_set) + ")"
+                    rev_params.extend(sorted(seen_set))
+                due_rows = con.execute(
+                    f"SELECT q.*, wq_r.last_wrong_at, wq_r.added_at AS wrong_added_at, wq_r.failures, wq_r.error_tags_json, wq_r.next_review_at "
+                    f"FROM {questions} q {join_sql} "
+                    f"JOIN wrong_questions wq_r ON wq_r.qid=q.qid AND wq_r.user_id=? "
+                    f"WHERE {rev_where} ORDER BY wq_r.next_review_at ASC LIMIT ?",
+                    [user_id, *rev_params, max_slots],
+                ).fetchall()
+                if due_rows:
+                    due_cards = _batch_summaries(con, due_rows, user_id, include_ai_diff=include_ai_difficulty)
+                    insert_positions = [3, 8]
+                    for idx, (card, raw) in enumerate(zip(due_cards, due_rows)):
+                        days = _days_since(raw["last_wrong_at"] or raw["wrong_added_at"])
+                        card["slot"] = "review"
+                        card["days_since_wrong"] = days
+                        card["failures"] = raw["failures"]
+                        card["error_tags"] = _json(raw["error_tags_json"], [])
+                        card["review_label"] = f"上次错于 {days} 天前" if days > 0 else "今天答错待复习"
+                        pos = min(insert_positions[idx], len(items))
+                        items.insert(pos, card)
+                        review_slots.append({"index": pos, "qid": card["qid"], "days_since_wrong": days})
+    return {"items": items, "total": total, "review_slots": review_slots}
+
+
+def _official_questions_page(
+    user_id: int,
+    *,
+    subject: str | None = None,
+    type: str | None = None,
+    q: str | None = None,
+    offset: int = 0,
+    page_size: int = 12,
+) -> dict:
+    """平台精选公开题分页：只应用学科/题型/关键词筛选（题库专属筛选不适用）。"""
+    payload = _official_module().search_official(
+        keyword=q, subject=subject, type=type, limit=page_size, offset=offset,
+    )
+    questions = [item for item in (payload.get("items") or []) if isinstance(item, dict)]
+    qids = [question["qid"] for question in questions]
+    latest_map = _latest_attempt_map(user_id, qids)
+    mastery_map = _mastery_map(user_id, qids)
+    items = [
+        _official_summary_card(
+            question, latest_map.get(question["qid"]), mastery_map.get(question["qid"]),
+        )
+        for question in questions
+    ]
+    return {"items": items, "total": int(payload.get("total") or 0)}
+
+
+#: ``GET /api/questions`` 的来源筛选：bank（默认，既有行为）/ official（平台精选）/ all（合并）。
+QUESTION_SOURCES = ("bank", "official", "all")
+
+
 @router.get("/questions")
 def list_questions(
     subject: str | None = None,
@@ -1763,83 +2316,83 @@ def list_questions(
     q: str | None = Query(None, max_length=200),
     include_reviews: bool = False,
     seen_reviews: str | None = None,
+    source: str = Query("bank"),
     page: int = Query(1, ge=1),
     page_size: int = Query(12, ge=1, le=50),
     user=Depends(current_user),
 ):
-    order_map = {
-        "year_desc": "q.year DESC, q.subject, q.doc_id, q.order_in_paper",
-        "year_asc": "q.year ASC, q.subject, q.doc_id, q.order_in_paper",
-        "difficulty": "CASE (SELECT difficulty FROM question_metadata WHERE qid=q.qid) WHEN '困难' THEN 1 WHEN '中等' THEN 2 WHEN '简单' THEN 3 ELSE 4 END, q.year DESC",
-        "accuracy": "COALESCE((SELECT 1.0*SUM(CASE WHEN result='correct' THEN 1 ELSE 0 END)/NULLIF(COUNT(*),0) FROM attempts WHERE qid=q.qid AND result!='pending'), 2.0) ASC, q.year DESC",
-        "random": "RANDOM()",
-    }
-    with _app_with_bank() as con:
-        join_sql, where_sql, params = _build_search_sql(
-            con, user["id"], subject=subject, type=type, province=province,
-            year=year, year_from=year_from, year_to=year_to,
-            difficulty=difficulty, include_ai_difficulty=include_ai_difficulty,
-            kp_id=kp_id, method_id=method_id, status=status, has_answer=has_answer,
-            has_solution=has_solution, has_ai_explanation=has_ai_explanation, q=q,
+    """题目列表：默认 ``source=bank``（既有行为/结构不变）。
+
+    - ``source=official``：平台精选公开题（社区待核验/已核验/精选），支持学科/题型/关键词，
+      撤回/争议在查询时立即不可见；
+    - ``source=all``：题库题 + 平台精选合并（题库在前），返回 ``bank_total``/``official_total``
+      各自总数；二次复习槽位仅 ``source=bank`` 提供；
+    - 非法 ``source`` 统一 422。
+    """
+    source_key = str(source or "bank").strip().lower()
+    if source_key not in QUESTION_SOURCES:
+        raise HTTPException(422, "来源筛选值无效，只支持 bank / official / all")
+    bank_kwargs = dict(
+        subject=subject, type=type, province=province, year=year, year_from=year_from,
+        year_to=year_to, difficulty=difficulty, include_ai_difficulty=include_ai_difficulty,
+        kp_id=kp_id, method_id=method_id, status=status, has_answer=has_answer,
+        has_solution=has_solution, has_ai_explanation=has_ai_explanation, sort=sort,
+        q=q, seen_reviews=seen_reviews,
+    )
+    if source_key == "bank":
+        payload = _bank_questions_page(
+            user["id"], include_reviews=include_reviews, page=page, page_size=page_size,
+            **bank_kwargs,
         )
-        questions = _bank_table(con, "questions")
-        total = con.execute(f"SELECT COUNT(*) FROM {questions} q {join_sql} WHERE {where_sql}", params).fetchone()[0]
-        # 先只取排好序的 qid，再按 qid 取回 12 行宽数据：排序不再搬运整行导致翻页变慢。
-        qid_rows = con.execute(
-            f"SELECT q.qid FROM {questions} q {join_sql} WHERE {where_sql} "
-            f"ORDER BY {order_map[sort]} LIMIT ? OFFSET ?",
-            [*params, page_size, (page - 1) * page_size],
-        ).fetchall()
-        rows = _fetch_bank_rows(con, [row[0] for row in qid_rows])
-        items = _batch_summaries(con, rows, user["id"], include_ai_diff=include_ai_difficulty)
-        review_slots = []
-
-        if include_reviews and items:
-            prefs = get_user_prefs(user["id"])
-            max_slots = min(2, int(prefs.get("interleave_per_page", 2)))
-            if max_slots > 0:
-                seen_set = _seen_review_set(seen_reviews, items)
-                rev_where = where_sql + " AND EXISTS (SELECT 1 FROM wrong_questions wq_i WHERE wq_i.user_id=? AND wq_i.qid=q.qid AND wq_i.archived=0 AND wq_i.next_review_at<=?)"
-                rev_params = [*params, user["id"], utcnow()]
-                # §4.1: same_kp_only restricts interleaved wrong items to KPs present on current page when kp_id filter is not set
-                if prefs.get("same_kp_only") and not kp_id:
-                    page_kp_ids = sorted({kp["kp_id"] for it in items for kp in it.get("knowledge_points", [])})
-                    if page_kp_ids:
-                        kp_marks = ",".join("?" for _ in page_kp_ids)
-                        rev_where += f" AND EXISTS (SELECT 1 FROM question_kp qk_s WHERE qk_s.qid=q.qid AND qk_s.kp_id IN ({kp_marks}))"
-                        rev_params.extend(page_kp_ids)
-                    else:
-                        rev_where += " AND 0=1"
-                if seen_set:
-                    rev_where += " AND q.qid NOT IN (" + ",".join("?" for _ in seen_set) + ")"
-                    rev_params.extend(sorted(seen_set))
-                due_rows = con.execute(
-                    f"SELECT q.*, wq_r.last_wrong_at, wq_r.added_at AS wrong_added_at, wq_r.failures, wq_r.error_tags_json, wq_r.next_review_at "
-                    f"FROM {questions} q {join_sql} "
-                    f"JOIN wrong_questions wq_r ON wq_r.qid=q.qid AND wq_r.user_id=? "
-                    f"WHERE {rev_where} ORDER BY wq_r.next_review_at ASC LIMIT ?",
-                    [user["id"], *rev_params, max_slots],
-                ).fetchall()
-                if due_rows:
-                    due_cards = _batch_summaries(con, due_rows, user["id"], include_ai_diff=include_ai_difficulty)
-                    insert_positions = [3, 8]
-                    for idx, (card, raw) in enumerate(zip(due_cards, due_rows)):
-                        days = _days_since(raw["last_wrong_at"] or raw["wrong_added_at"])
-                        card["slot"] = "review"
-                        card["days_since_wrong"] = days
-                        card["failures"] = raw["failures"]
-                        card["error_tags"] = _json(raw["error_tags_json"], [])
-                        card["review_label"] = f"上次错于 {days} 天前" if days > 0 else "今天答错待复习"
-                        pos = min(insert_positions[idx], len(items))
-                        items.insert(pos, card)
-                        review_slots.append({"index": pos, "qid": card["qid"], "days_since_wrong": days})
-
+        payload.update({"page": page, "page_size": page_size})
+        return payload
+    if source_key == "official":
+        page_payload = _official_questions_page(
+            user["id"], subject=subject, type=type, q=q,
+            offset=(page - 1) * page_size, page_size=page_size,
+        )
+        return {
+            "items": page_payload["items"],
+            "total": page_payload["total"],
+            "page": page,
+            "page_size": page_size,
+            "review_slots": [],
+            "source": "official",
+            "bank_total": 0,
+            "official_total": page_payload["total"],
+            "notice": "平台精选列表支持学科、题型与关键词筛选；年份/省份/难度等题库专属筛选不适用。",
+        }
+    # source=all：题库在前、精选在后，按合并总偏移严格分页，两类各自返回 total。
+    bank_payload = _bank_questions_page(
+        user["id"], include_reviews=False, page=page, page_size=page_size, **bank_kwargs,
+    )
+    bank_total = int(bank_payload["total"])
+    bank_items = list(bank_payload["items"])
+    offset = (page - 1) * page_size
+    remaining = page_size - len(bank_items)
+    official_offset = max(0, offset - bank_total)
+    official_items: list[dict] = []
+    if remaining > 0:
+        official_payload = _official_questions_page(
+            user["id"], subject=subject, type=type, q=q,
+            offset=official_offset, page_size=remaining,
+        )
+        official_items = official_payload["items"]
+        official_total = int(official_payload["total"])
+    else:
+        official_total = _official_questions_page(
+            user["id"], subject=subject, type=type, q=q, offset=0, page_size=0,
+        )["total"]
     return {
-        "items": items,
-        "total": total,
+        "items": [*bank_items, *official_items],
+        "total": bank_total + official_total,
         "page": page,
         "page_size": page_size,
-        "review_slots": review_slots,
+        "review_slots": [],
+        "source": "all",
+        "bank_total": bank_total,
+        "official_total": official_total,
+        "notice": "合并列表按「高考题库在前、平台精选在后」排序；二次复习槽位仅在 source=bank 时返回。",
     }
 
 
@@ -1860,13 +2413,18 @@ def _detail_blocked_message(question) -> str:
     return f"{message}（隔离原因：{reason}）" if reason else message
 
 
-@router.get("/questions/{qid:path}")
-def question_detail(qid: str, user=Depends(current_user)):
-    question = load_question(qid)
+def _question_detail_payload(question, user_id: int):
     if question["quarantined"]:
         raise HTTPException(409, _detail_blocked_message(question))
     # context 成员可读但不可作答（快照契约 §6.1），作答门禁在 POST /api/attempts。
-    return _public_question(question, user["id"])
+    return _public_question(question, user_id)
+
+
+@router.get("/questions/{qid:path}")
+def question_detail(qid: str, user=Depends(current_user)):
+    # bank:<qid> / 旧裸 qid 走只读题库；app:<id> 走 paperlab 归属校验（他人题目 404）。
+    question = load_question_ref(qid, user["id"])
+    return _question_detail_payload(question, user["id"])
 
 
 def _live_member_status(con, qids: list[str]) -> dict[str, dict]:
@@ -1956,7 +2514,7 @@ def _group_member_view(entry: dict) -> dict:
         "number_label": entry.get("number_label"),
         "sub_question_label": entry.get("sub_question_label"),
         "type": entry.get("type"), "group_role": entry.get("group_role"),
-        "order": entry.get("order"),
+        "order": _int_or_none(entry.get("order")),
         "practice_status": status, "grading_status": grading,
         # 是否可点开作答：由实时状态决定，前端据此禁用入口。
         "available": bool(entry.get("available", in_bank and status in ("practice", "review"))),
@@ -1985,31 +2543,51 @@ def _group_member_view_list(entries: list[dict]) -> list[dict]:
 
 def _group_members(con, group_id: str, stored: dict) -> list[dict]:
     """Member summaries in original paper order. Never carries answers or solutions."""
-    member_index = _dict_list(stored.get("member_index_json"))
+    member_index = _member_sort(_dict_list(stored.get("member_index_json")))
     if member_index:
         entries = _overlay_member_live_status(con, _redact_member_blocks(member_index))
         return [_group_member_view(entry) for entry in entries]
     # 旧题库没有 member_index：回到用 questions 表反查成员（旧接口行为兜底）。
+    # r5 的 order_in_paper 是 TEXT，必须按数值排序，否则 '10' 会排在 '2' 前面。
+    # group_id 有两种形态（R3 有 796 题已带 ``<doc>:`` 前缀）：拆成等值条件而不是 CASE
+    # 表达式，才能命中题库自带的 idx_q_group 索引，避免题详情页每开一题就全表扫描；
+    # 成员实时状态随同一条索引查询取回，不再按 qid 二次全表扫描（r5 的 qid 无索引）。
     questions = _bank_table(con, "questions")
+    order_expr = _int_sql(con, "q.order_in_paper")
+    bare_group_id = group_id.rsplit(":", 1)[-1] if ":" in group_id else group_id
+    columns = _bank_question_columns(con)
+    select = ["q.qid", "q.number_label", "q.group_role", "q.order_in_paper", "q.type"]
+    select.extend(
+        f"q.{column}" for column in ("practice_status", "grading_status") if column in columns
+    )
     rows = con.execute(
-        f"SELECT q.qid, q.number_label, q.group_role, q.order_in_paper, q.type FROM {questions} q "
-        "WHERE CASE WHEN q.group_id IS NULL THEN NULL "
-        "WHEN q.group_id LIKE q.doc_id || ':%' THEN q.group_id "
-        "ELSE q.doc_id || ':' || q.group_id END = ? "
-        "ORDER BY q.order_in_paper, q.qid",
-        (group_id,),
+        f"SELECT {', '.join(select)} FROM {questions} q "
+        "WHERE q.group_id = ? "
+        "OR (q.group_id = ? AND q.doc_id || ':' || q.group_id = ?) "
+        f"ORDER BY {order_expr}, q.qid",
+        (group_id, bare_group_id, group_id),
     ).fetchall()
+    isolated = _active_isolations()
     members = []
     for row in rows:
-        if row["qid"] in QUARANTINED_QUESTIONS:
+        qid = row["qid"]
+        if qid in QUARANTINED_QUESTIONS:
             continue
-        members.append({
-            "qid": row["qid"], "in_bank": True, "source_question_id": None,
+        practice_status = _text(_row_value(row, "practice_status")) or "practice"
+        grading_status = _text(_row_value(row, "grading_status")) or "auto"
+        member = {
+            "qid": qid, "in_bank": True, "source_question_id": None,
             "number_label": row["number_label"], "sub_question_label": None,
             "type": row["type"], "group_role": row["group_role"],
-            "order": row["order_in_paper"], "practice_status": "practice",
-            "grading_status": "auto",
-        })
+            "order": _int_or_none(row["order_in_paper"]),
+            "practice_status": practice_status, "grading_status": grading_status,
+        }
+        isolation = isolated.get(qid)
+        if isolation is not None:
+            member.update(practice_status="quarantined", grading_status="disabled", isolated=True)
+            member["isolation_reason"] = isolation.get("reason")
+        member["available"] = member["practice_status"] in ("practice", "review")
+        members.append(_group_member_view(member))
     return members
 
 
@@ -2088,7 +2666,7 @@ def group_detail(group_id: str, user=Depends(current_user)):
         "group_id": group_id,
         "bank_version": _text(stored.get("bank_version")),
         "subject": subject,
-        "year": stored.get("year"),
+        "year": _int_or_none(stored.get("year")),
         "group_kind": _text(stored.get("group_kind")),
         "parent_source_question_id": _text(stored.get("parent_source_question_id")),
         "parent_number_label": _parent_number_label(stored, members),
@@ -2122,16 +2700,19 @@ def _parent_number_label(stored: dict, members: list[dict]) -> str | None:
 
 @router.get("/reveal")
 def reveal(qid: str, user=Depends(current_user)):
-    ensure_unlocked(user["id"], qid)
-    return question_detail(qid, user)
+    question = load_question_ref(qid, user["id"])
+    if latest_attempt(user["id"], question["qid"]) is None:
+        raise HTTPException(403, "请先提交作答选项或自己的作答图片，再查看答案与解析")
+    return _question_detail_payload(question, user["id"])
 
 
 @router.get("/attempts/history")
 def attempt_history(qid: str, user=Depends(current_user)):
+    storage_qid = _assert_ref_owned(qid, user["id"])
     with connection() as con:
         rows = con.execute(
             "SELECT * FROM attempts WHERE user_id=? AND qid=? ORDER BY id DESC LIMIT 30",
-            (user["id"], qid),
+            (user["id"], storage_qid),
         ).fetchall()
     return {"items": [_attempt_public(dict(r)) for r in rows]}
 
@@ -2279,65 +2860,202 @@ def _choice_answer(text, options, multi):
     return "".join(sorted(selections))
 
 
-def _record_attempt(user_id, qid, submitted, image_name, verdict, can_grade, now):
-    """同步写入作答与复习调度；``async`` 端点经由 threadpool 调用，避免阻塞事件循环。"""
+def _record_attempt(user_id, qid, submitted, image_name, verdict, can_grade, now, submission_key=None):
+    """同步写入作答与复习调度；``async`` 端点经由 threadpool 调用，避免阻塞事件循环。
+
+    ``submission_key`` 非空时走幂等台账：同一用户同一次提交（客户端 ``submission_id``）
+    重试只入账一次，重复调用返回已有作答而不是新增行。台账占用与作答插入在同一事务，
+    唯一性由 ``submission_ledger`` 主键保证，并发重复提交同样只会成功入账一次。
+    """
     with connection() as con:
-        if db.postgres_enabled():
+        if submission_key or db.postgres_enabled():
+            # 幂等路径显式取写锁：并发同一提交在此串行化，落败方拿到已入账结果。
             db.write_lock(con, f"progress:{user_id}")
+        if submission_key and not _ledger_claim(
+            con, user_id, LEDGER_KIND_ATTEMPT, submission_key, qid, now=now,
+        ):
+            entry = _ledger_entry(con, user_id, LEDGER_KIND_ATTEMPT, submission_key)
+            row = _attempt_row_for_user(
+                con, user_id, entry["attempt_id"] if entry is not None else None,
+            )
+            return {
+                "attempt_id": int(row["id"]) if row is not None else None,
+                "attempt": dict(row) if row is not None else None,
+                "duplicate": True,
+            }
         cursor = con.execute(
             "INSERT INTO attempts(user_id,qid,answer_text,image_path,result,grade_source,created_at,graded_at) VALUES(?,?,?,?,?,?,?,?)",
             (user_id, qid, submitted, image_name, verdict, "reference" if can_grade else "pending", now, now if can_grade else None),
         )
         attempt_id = cursor.lastrowid
+        if submission_key:
+            _ledger_bind_attempt(
+                con, user_id, LEDGER_KIND_ATTEMPT, submission_key, int(attempt_id),
+            )
         _schedule_result(con, user_id, qid, verdict)
-    return attempt_id
+    return {"attempt_id": int(attempt_id), "attempt": None, "duplicate": False}
 
 
-def _attempt_submission_payload(user_id, qid, question, verdict, attempt_id):
+def _attempt_submission_payload(user_id, qid, question, verdict, attempt_id,
+                                *, attempt_row=None, duplicate=False):
+    attempt = _attempt_public(attempt_row) if attempt_row is not None else _attempt_public(latest_attempt(user_id, qid))
     return {
-        "attempt": _attempt_public(latest_attempt(user_id, qid)),
+        "attempt": attempt,
         "question": _public_question(question, user_id),
         "result": verdict,
         "attempt_id": attempt_id,
+        "duplicate": bool(duplicate),
     }
 
 
+def _app_graded_verdict(question, submitted_choice: str, submitted_text: str):
+    """个人题判分：客观题（单选/多选/填空）按规则判，主观题/混合题保留待核验。
+
+    返回 ``(can_grade, verdict)``；无参考答案或题型不参与自动判分时 ``can_grade=False``。
+    """
+    ftype = str(question.get("app_type") or "").upper()
+    content = question.get("app_content") or {}
+    answers = _app_content_answers(content if isinstance(content, dict) else {})
+    if not answers:
+        return False, "pending"
+    if ftype in ("SINGLE", "MULTIPLE"):
+        if not submitted_choice:
+            return False, "pending"
+        labels = {str(option.get("label") or "").upper() for option in question.get("options") or []}
+        reference = {label for answer in answers for label in str(answer).upper() if label in labels}
+        if not reference:
+            return False, "pending"
+        return True, ("correct" if set(submitted_choice) == reference else "incorrect")
+    if ftype == "BLANK":
+        text = (submitted_text or "").strip()
+        if not text:
+            return False, "pending"
+        return True, ("correct" if _app_blank_matches(text, answers) else "incorrect")
+    return False, "pending"
+
+
+_APP_ANSWER_SPLIT_RE = re.compile(r"[;；|]|(?:\s+或\s+)")
+_APP_ANSWER_TRANSLATE = str.maketrans({
+    "（": "(", "）": ")", "，": ",", "。": ".", "；": ";", "：": ":", "、": ",",
+})
+
+
+def _normalize_app_answer(value) -> str:
+    text = str(value if value is not None else "").strip().casefold()
+    text = text.replace("$", "").replace("　", " ")
+    return re.sub(r"\s+", "", text).translate(_APP_ANSWER_TRANSLATE)
+
+
+def _app_blank_matches(submitted: str, answers: list[str]) -> bool:
+    """填空题文本比对：支持「一个空多个可接受答案」与多空分号分隔。"""
+    groups: list[list[str]] = []
+    for answer in answers:
+        alternatives = [
+            normalized for normalized in
+            (_normalize_app_answer(part) for part in _APP_ANSWER_SPLIT_RE.split(str(answer)))
+            if normalized
+        ]
+        if alternatives:
+            groups.append(alternatives)
+    if not groups:
+        return False
+    values = [
+        normalized for normalized in
+        (_normalize_app_answer(part) for part in _APP_ANSWER_SPLIT_RE.split(str(submitted or "")))
+        if normalized
+    ]
+    if not values:
+        return False
+    if len(values) == len(groups):
+        return all(value in group for value, group in zip(values, groups))
+    # 多空被合写成一串（如两空写成「612」）时，与拼接后的参考答案比较。
+    joined_reference = {_normalize_app_answer("".join(group[0] for group in groups))}
+    return _normalize_app_answer("".join(values)) in joined_reference
+
+
 @router.post("/attempts")
-async def submit_attempt(qid: str = Form(...), answer: str | None = Form(None), file: UploadFile | None = File(None), user=Depends(current_user)):
+async def submit_attempt(
+    qid: str = Form(...),
+    answer: str | None = Form(None),
+    file: UploadFile | None = File(None),
+    submission_id: str | None = Form(None),
+    user=Depends(current_user),
+):
+    # 统一题目引用：bank:<qid> / 裸 qid（兼容旧客户端）/ app:<pl_questions.id>。
+    parsed_ref = _parse_ref(qid)
+    storage_qid = parsed_ref.storage_key
     # 题库/应用库读取都是同步 I/O：统一放 threadpool，别让单个作答把事件循环卡住。
-    question = await run_in_threadpool(load_question, qid)
+    question = await run_in_threadpool(load_question_ref, qid, user["id"])
     if question["quarantined"]:
         raise HTTPException(409, QUARANTINE_SUBMIT_MESSAGE)
     if not question["practice_allowed"]:
         raise HTTPException(409, CONTEXT_SUBMIT_MESSAGE)
     if answer and len(answer) > 12000:
         raise HTTPException(413, "作答文字过长")
+    # 幂等：带 submission_id 的提交重试直接回放已入账结果，不再新增作答行。
+    dedupe_key = None
+    if submission_id is not None and str(submission_id).strip():
+        try:
+            dedupe_key = question_ref.submission_key(storage_qid, submission_id)
+        except question_ref.QuestionRefError as exc:
+            raise HTTPException(422, str(exc)) from None
+        existing = await run_in_threadpool(_find_submission_attempt, user["id"], dedupe_key)
+        if existing is not None:
+            return await run_in_threadpool(
+                _attempt_submission_payload, user["id"], storage_qid, question,
+                existing["attempt"]["result"], existing["attempt_id"],
+                attempt_row=existing["attempt"], duplicate=True,
+            )
     content = await file.read(MAX_IMAGE_BYTES + 1) if file else None
     if file and not content:
         raise HTTPException(422, "作答图片不能为空")
     if not (answer and answer.strip()) and not content:
         raise HTTPException(422, "请提交作答选项或自己的作答图片")
-    choice = bool(question["objective"] and question["options"])
+    app_source = question.get("source") == question_ref.SOURCE_APP
+    official_source = question.get("source") == question_ref.SOURCE_OFFICIAL
+    # r5 的 objective 是 TEXT（'0'/'1'）：先正规化再判型。有选项的题按选项格式校验输入，
+    # 但只有 objective 为真且选项非空时才允许选择题判分；objective='0' 同时含选项的异常题
+    # 保留作答、判 pending（r5 有 184 条可练非客观题带选项，不能当选择题判分）。
+    objective = _flag(question.get("objective"))
+    options = [
+        option for option in (question.get("options") or [])
+        if isinstance(option, dict) and option.get("label") is not None
+    ]
+    choice_format = bool(options)
+    graded_choice = objective and choice_format
     submitted = (answer or "").strip()
-    if submitted and choice:
-        submitted = _choice_answer(submitted, question["options"], question["type"] == "multi_choice")
-    elif submitted and not content:
+    submitted_choice = ""
+    if submitted and choice_format:
+        submitted_choice = _choice_answer(submitted, options, question.get("type") == "multi_choice")
+        submitted = submitted_choice
+    elif submitted and not content and not app_source and not official_source:
         raise HTTPException(422, "主观题请上传自己的作答图片后提交")
     image_name = await run_in_threadpool(_save_image, content) if content else None
-    reference = question.get("answer_text", "").strip().upper()
-    reference_valid = bool(re.fullmatch(r"[A-H]+", reference)) and set(reference).issubset({o["label"] for o in question["options"]})
+    reference = (question.get("answer_text") or "").strip().upper()
+    reference_valid = bool(re.fullmatch(r"[A-H]+", reference)) and set(reference).issubset(
+        {str(option["label"]).upper() for option in options}
+    )
     # 快照契约 §6.3：只有 practice+auto 的题才自动判分；review/pending/disabled 保留作答判 pending。
     # 数据侧标记「答案解析公式无法渲染」时也不能自动判分（作答仍保存）。
     answer_flags = " ".join(question.get("data_quality_flags") or [])
     formula_gap = "公式无法渲染" in answer_flags or "公式缺失" in answer_flags
     auto_grade = (question["practice_status"] == "practice"
                   and question["grading_status"] == "auto" and not formula_gap)
-    can_grade = choice and submitted and reference_valid and auto_grade and not question["grading_flags"]
-    verdict = ("correct" if set(submitted) == set(reference) else "incorrect") if can_grade else "pending"
+    if app_source or official_source:
+        # 个人题/平台精选题：与题库题同一门槛（客观题判分、主观题 pending），
+        # 填空题按文本规则判分；平台精选题的参考答案来自不可变公开快照。
+        can_grade, verdict = _app_graded_verdict(question, submitted_choice, submitted)
+        can_grade = can_grade and auto_grade and not question["grading_flags"]
+        if not can_grade:
+            verdict = "pending"
+    else:
+        can_grade = graded_choice and submitted and reference_valid and auto_grade and not question["grading_flags"]
+        verdict = ("correct" if set(submitted) == set(reference) else "incorrect") if can_grade else "pending"
     now = utcnow()
     try:
-        attempt_id = await run_in_threadpool(
-            _record_attempt, user["id"], qid, submitted, image_name, verdict, can_grade, now,
+        recorded = await run_in_threadpool(
+            _record_attempt, user["id"], storage_qid, submitted, image_name, verdict, can_grade,
+            now, dedupe_key,
         )
     except sqlite3.IntegrityError:
         # 外键/唯一约束失败（用户或题库记录刚被清理）→ 客户端可重试的 422，而不是 500。
@@ -2348,8 +3066,19 @@ async def submit_attempt(qid: str = Form(...), answer: str | None = Form(None), 
         if image_name:
             await run_in_threadpool(storage.discard_file, "attempts", image_name)
         raise
+    if recorded.get("duplicate"):
+        # 并发下另一请求已先入账：丢弃本次新存图片，回放既有结果。
+        if image_name:
+            await run_in_threadpool(storage.discard_file, "attempts", image_name)
+        attempt_row = recorded.get("attempt")
+        replay_verdict = attempt_row["result"] if attempt_row else "pending"
+        return await run_in_threadpool(
+            _attempt_submission_payload, user["id"], storage_qid, question, replay_verdict,
+            recorded.get("attempt_id"), attempt_row=attempt_row, duplicate=True,
+        )
     return await run_in_threadpool(
-        _attempt_submission_payload, user["id"], qid, question, verdict, attempt_id,
+        _attempt_submission_payload, user["id"], storage_qid, question, verdict,
+        recorded.get("attempt_id"),
     )
 
 
@@ -2538,6 +3267,42 @@ def _asset_authorized(entry: dict, qid: str | None, user_id: int) -> None:
     raise HTTPException(403, "该素材需在对应小题作答后查看")
 
 
+def _app_question_image_response(parsed, file: str, asset_id: str | None, user_id: int):
+    """个人题配图读取：复用 paperlab 资产归属校验，不通过 ``/api/bank-image`` 越权。
+
+    同时校验：题目属于当前用户且未删除（``find_question``）、请求的资产确实被本题
+    content 引用、资产可读（``assets.resolve_asset_for_read``）。任何失败统一 404，
+    不泄露他人资产是否存在。
+    """
+    from .paperlab import assets as paperlab_assets
+    from .paperlab.db import ASSET_FOLDER
+
+    row = _find_app_question_row(user_id, int(parsed.key))
+    if not row:
+        raise HTTPException(404, "题图不存在")
+    db_module = _paperlab_modules()
+    content = db_module.json_load(row.get("content_json"), {})
+    content = content if isinstance(content, dict) else {}
+    known = {
+        _text(image.get("asset"))
+        for image in content.get("images") or []
+        if isinstance(image, dict) and _text(image.get("asset"))
+    }
+    wanted = [value for value in (asset_id, file) if value]
+    matched = next((value for value in wanted if value in known), None)
+    if matched is None:
+        raise HTTPException(404, "题图不存在")
+    asset = paperlab_assets.resolve_asset_for_read(matched, int(user_id))
+    if not asset:
+        raise HTTPException(404, "题图不存在")
+    return storage.file_response(
+        str(asset.get("folder") or ASSET_FOLDER),
+        str(asset.get("storage_ref") or ""),
+        media_type=str(asset.get("media_type") or "image/png"),
+        headers={"Cache-Control": "private, max-age=3600", "Vary": "Cookie"},
+    )
+
+
 @router.get("/bank-image")
 def bank_image(
     subject: str,
@@ -2548,6 +3313,10 @@ def bank_image(
     preview: bool = False,
     user=Depends(current_user),
 ):
+    parsed_qid = question_ref.try_parse(qid) if qid else None
+    if parsed_qid is not None and parsed_qid.source == question_ref.SOURCE_APP:
+        # 个人题配图走独立归属校验分支，不查只读题库目录。
+        return _app_question_image_response(parsed_qid, file, asset_id, user["id"])
     if bank_version:
         current = _current_bank_version()
         if current and bank_version != current:
@@ -2597,7 +3366,8 @@ class MasteryInput(BaseModel):
 
 @router.post("/mastery")
 def mark_mastery(data: MasteryInput, user=Depends(current_user)):
-    load_question(data.qid)
+    question = load_question_ref(data.qid, user["id"])
+    storage_qid = question["qid"]
     if data.level not in LEVELS:
         raise HTTPException(422, "掌握程度无效")
     now = utcnow()
@@ -2605,7 +3375,7 @@ def mark_mastery(data: MasteryInput, user=Depends(current_user)):
         db.write_lock(con, f"progress:{user['id']}")
         attempt = con.execute(
             "SELECT id, result FROM attempts WHERE user_id=? AND qid=? ORDER BY id DESC LIMIT 1",
-            (user["id"], data.qid),
+            (user["id"], storage_qid),
         ).fetchone()
         # §4.2: 「未掌握」随时可选；「初步掌握」至少作答过一次；「比较/熟练掌握」需最新作答判对
         if data.level != "未掌握" and not attempt:
@@ -2615,12 +3385,12 @@ def mark_mastery(data: MasteryInput, user=Depends(current_user)):
         con.execute(
             "INSERT INTO mastery(user_id,qid,level,updated_at) VALUES(?,?,?,?) "
             "ON CONFLICT(user_id,qid) DO UPDATE SET level=excluded.level,updated_at=excluded.updated_at",
-            (user["id"], data.qid, data.level, now),
+            (user["id"], storage_qid, data.level, now),
         )
         # Link mastery to wrongbook review schedule
         wrong = con.execute(
             "SELECT * FROM wrong_questions WHERE user_id=? AND qid=? AND archived=0",
-            (user["id"], data.qid),
+            (user["id"], storage_qid),
         ).fetchone()
         if wrong and not (wrong["last_review_at"] and fsrs_enabled(con)):
             pushed_attempt = _row_value(wrong, "last_mastery_push_attempt")
@@ -2645,9 +3415,9 @@ def mark_mastery(data: MasteryInput, user=Depends(current_user)):
                 con.execute(
                     "UPDATE wrong_questions SET interval_days=?, next_review_at=?, archived=?, "
                     "last_mastery_push_attempt=? WHERE user_id=? AND qid=?",
-                    (interval, due, archived, pushed_attempt, user["id"], data.qid),
+                    (interval, due, archived, pushed_attempt, user["id"], storage_qid),
                 )
-    return {"qid": data.qid, "level": data.level}
+    return {"qid": storage_qid, "level": data.level}
 
 
 class WrongInput(BaseModel):
@@ -2664,7 +3434,8 @@ class ErrorTagsInput(BaseModel):
 
 @router.post("/wrongbook")
 def add_wrong(data: WrongInput, user=Depends(current_user)):
-    question = load_question(data.qid)
+    question = load_question_ref(data.qid, user["id"])
+    storage_qid = question["qid"]
     if question["quarantined"]:
         raise HTTPException(409, "该题已隔离待复核")
     if not question["practice_allowed"]:
@@ -2681,29 +3452,30 @@ def add_wrong(data: WrongInput, user=Depends(current_user)):
             "streak=0, interval_days=1, next_review_at=excluded.next_review_at, "
             "last_mastery_push_attempt=NULL, "
             "error_tags_json=CASE WHEN excluded.error_tags_json!='[]' THEN excluded.error_tags_json ELSE wrong_questions.error_tags_json END",
-            (user["id"], data.qid, data.reason, now, now, json.dumps(tags, ensure_ascii=False), now),
+            (user["id"], storage_qid, data.reason, now, now, json.dumps(tags, ensure_ascii=False), now),
         )
-    return {"qid": data.qid, "added": True}
+    return {"qid": storage_qid, "added": True}
 
 
 @router.post("/wrongbook/tags")
 def update_wrong_tags(data: ErrorTagsInput, user=Depends(current_user)):
+    storage_qid = _assert_ref_owned(data.qid, user["id"])
     tags = list(dict.fromkeys(t.strip()[:40] for t in data.error_tags if t.strip()))
     with connection() as con:
-        row = con.execute("SELECT 1 FROM wrong_questions WHERE user_id=? AND qid=?", (user["id"], data.qid)).fetchone()
+        row = con.execute("SELECT 1 FROM wrong_questions WHERE user_id=? AND qid=?", (user["id"], storage_qid)).fetchone()
         if not row:
             raise HTTPException(404, "该题不在错题本中")
         if data.reason is not None:
             con.execute(
                 "UPDATE wrong_questions SET error_tags_json=?, reason=? WHERE user_id=? AND qid=?",
-                (json.dumps(tags, ensure_ascii=False), data.reason, user["id"], data.qid),
+                (json.dumps(tags, ensure_ascii=False), data.reason, user["id"], storage_qid),
             )
         else:
             con.execute(
                 "UPDATE wrong_questions SET error_tags_json=? WHERE user_id=? AND qid=?",
-                (json.dumps(tags, ensure_ascii=False), user["id"], data.qid),
+                (json.dumps(tags, ensure_ascii=False), user["id"], storage_qid),
             )
-    return {"qid": data.qid, "error_tags": tags}
+    return {"qid": storage_qid, "error_tags": tags}
 
 
 @router.delete("/wrongbook/uploads/{upload_id}")
@@ -2720,30 +3492,445 @@ def archive_upload_wrongbook(upload_id: int, user=Depends(current_user)):
 
 @router.delete("/wrongbook/{qid:path}")
 def archive_wrong(qid: str, permanent: bool = False, user=Depends(current_user)):
+    # 归档/删除只操作本人错题行：个人题即使已被删除，也允许清理历史错题记录。
+    storage_qid = _storage_qid(qid)
     with connection() as con:
-        row = con.execute("SELECT 1 FROM wrong_questions WHERE user_id=? AND qid=?", (user["id"], qid)).fetchone()
+        row = con.execute("SELECT 1 FROM wrong_questions WHERE user_id=? AND qid=?", (user["id"], storage_qid)).fetchone()
         if not row:
             raise HTTPException(404, "该题不在错题本中")
         if permanent:
-            con.execute("DELETE FROM wrong_questions WHERE user_id=? AND qid=?", (user["id"], qid))
+            con.execute("DELETE FROM wrong_questions WHERE user_id=? AND qid=?", (user["id"], storage_qid))
         else:
-            con.execute("UPDATE wrong_questions SET archived=1 WHERE user_id=? AND qid=?", (user["id"], qid))
-    return {"qid": qid, "archived": True, "permanent": permanent}
+            con.execute("UPDATE wrong_questions SET archived=1 WHERE user_id=? AND qid=?", (user["id"], storage_qid))
+    return {"qid": storage_qid, "archived": True, "permanent": permanent}
 
 
 @router.post("/wrongbook/restore")
 def restore_wrong(data: WrongInput, user=Depends(current_user)):
+    storage_qid = _assert_ref_owned(data.qid, user["id"])
     with connection() as con:
         # 恢复错题等于重新入本：重置连对计数与间隔，让调度从 1 天重新开始。
         con.execute(
             "UPDATE wrong_questions SET archived=0, streak=0, interval_days=1, "
             "last_mastery_push_attempt=NULL, next_review_at=? WHERE user_id=? AND qid=?",
-            (utcnow(), user["id"], data.qid),
+            (utcnow(), user["id"], storage_qid),
         )
-    return {"qid": data.qid, "restored": True}
+    return {"qid": storage_qid, "restored": True}
 
 
-def _wrong_items(
+APP_QID_PREFIX = f"{question_ref.SOURCE_APP}:"
+OFFICIAL_QID_PREFIX = f"{question_ref.SOURCE_OFFICIAL}:"
+
+
+def _is_app_qid(value) -> bool:
+    return str(value or "").startswith(APP_QID_PREFIX)
+
+
+def _is_official_qid(value) -> bool:
+    return str(value or "").startswith(OFFICIAL_QID_PREFIX)
+
+
+def _app_question_for_card(user_id: int, qid: str) -> dict | None:
+    """按 ``app:<id>`` 读取个人题练习投影；他人/已删除返回 None（错题卡降级显示）。"""
+    parsed = question_ref.try_parse(qid)
+    if parsed is None or parsed.source != question_ref.SOURCE_APP:
+        return None
+    row = _find_app_question_row(user_id, int(parsed.key))
+    return _app_question_dict(row) if row else None
+
+
+def _latest_attempt_map(user_id: int, qids: list[str]) -> dict[str, dict]:
+    out: dict[str, dict] = {}
+    if not qids:
+        return out
+    with connection() as con:
+        for chunk in _chunked(qids):
+            marks = ",".join("?" for _ in chunk)
+            rows = con.execute(
+                f"SELECT a.* FROM attempts a INNER JOIN ("
+                f" SELECT qid, MAX(id) AS max_id FROM attempts WHERE user_id=? AND qid IN ({marks}) GROUP BY qid"
+                f") t ON a.id=t.max_id",
+                [user_id, *chunk],
+            ).fetchall()
+            for row in rows:
+                out[row["qid"]] = dict(row)
+    return out
+
+
+def _mastery_map(user_id: int, qids: list[str]) -> dict[str, str]:
+    out: dict[str, str] = {}
+    if not qids:
+        return out
+    with connection() as con:
+        for chunk in _chunked(qids):
+            marks = ",".join("?" for _ in chunk)
+            for row in con.execute(
+                f"SELECT qid, level FROM mastery WHERE user_id=? AND qid IN ({marks})",
+                [user_id, *chunk],
+            ):
+                out[row["qid"]] = row["level"]
+    return out
+
+
+def _app_summary_card(question: dict, latest_row: dict | None, mastery_level: str | None) -> dict:
+    """个人题错题卡：与 ``_batch_summaries`` 的题库卡同形，前端无需分支。"""
+    qid = question["qid"]
+    return {
+        "qid": qid,
+        "ref": qid,
+        "source": question_ref.SOURCE_APP,
+        "source_label": question_ref.SOURCE_LABELS[question_ref.SOURCE_APP],
+        "subject": question.get("subject") or "",
+        "grade": question.get("grade") or "",
+        "year": None,
+        "province": "",
+        "paper_name": "",
+        "paper_type": "app",
+        "type": question.get("type") or "short_answer",
+        "type_label": question.get("type_label") or TYPE_LABELS.get(question.get("type") or "", "其他"),
+        "number_label": None,
+        "group_id": None,
+        "group_role": None,
+        "stem_plain": question.get("stem_plain") or "",
+        "stem_blocks": question.get("stem_blocks") or [],
+        "options": question.get("options") or [],
+        "images": question.get("images") or [],
+        "objective": bool(question.get("objective")),
+        "has_answer": bool(question.get("has_answer")),
+        "has_solution": bool(question.get("has_solution")),
+        "quality_flags": [],
+        "practice_allowed": True,
+        "isolated": False,
+        "bank_version": "",
+        "practice_status": question.get("practice_status") or "practice",
+        "grading_status": question.get("grading_status") or "pending",
+        "content_revision": question.get("content_revision"),
+        "answer_revision": question.get("answer_revision"),
+        "mastery": mastery_level or "未掌握",
+        "unlocked": latest_row is not None,
+        "latest_attempt": _attempt_public(latest_row) if latest_row else None,
+        "knowledge_points": [],
+        "methods": [],
+        "has_ai_explanation": False,
+        "knowledge_tags": list(question.get("knowledge_tags") or []),
+        "difficulty": "待标注",
+        "difficulty_source": "",
+        "ai_difficulty": None,
+        "ai_difficulty_score": None,
+        "stat_accuracy": None,
+        "stat_attempts": 0,
+        "unavailable": False,
+    }
+
+
+def _missing_app_card(qid: str) -> dict:
+    """个人题已被删除/不可读时的占位卡：保留错题记录与引用，不 500、不丢历史。"""
+    return {
+        "qid": qid,
+        "ref": qid,
+        "source": question_ref.SOURCE_APP,
+        "source_label": question_ref.SOURCE_LABELS[question_ref.SOURCE_APP],
+        "subject": "",
+        "year": None,
+        "province": "",
+        "paper_name": "",
+        "type": "unknown",
+        "type_label": TYPE_LABELS["unknown"],
+        "number_label": None,
+        "group_id": None,
+        "stem_plain": "",
+        "options": [],
+        "images": [],
+        "objective": False,
+        "has_answer": False,
+        "has_solution": False,
+        "quality_flags": [],
+        "practice_allowed": False,
+        "isolated": False,
+        "bank_version": "",
+        "practice_status": "practice",
+        "grading_status": "pending",
+        "mastery": "未掌握",
+        "unlocked": False,
+        "latest_attempt": None,
+        "knowledge_points": [],
+        "methods": [],
+        "has_ai_explanation": False,
+        "difficulty": "待标注",
+        "difficulty_source": "",
+        "unavailable": True,
+    }
+
+
+def _official_question_for_card(user_id: int, qid: str) -> dict | None:
+    """按 ``official:<public_id>`` 读取平台精选题投影；撤回/争议/不存在返回 None。
+
+    ``user_id`` 仅为与个人题读取保持同签名（公开题人人可读，与用户无关）。
+    """
+    parsed = question_ref.try_parse(qid)
+    if parsed is None or parsed.source != question_ref.SOURCE_OFFICIAL:
+        return None
+    try:
+        return _official_module().load_official_question(parsed.key)
+    except HTTPException:
+        return None
+
+
+def _official_summary_card(question: dict, latest_row: dict | None,
+                           mastery_level: str | None) -> dict:
+    """平台精选题卡片：与题库卡/个人题卡同形，前端无需为新来源再加分支。"""
+    source_meta = {
+        "public_id": question.get("public_id") or "",
+        "official_status": question.get("official_status") or "",
+        "status_label": question.get("status_label") or "",
+        "review_status": question.get("review_status") or "",
+        "review_status_label": question.get("review_status_label") or "",
+        "published_version": question.get("published_version"),
+        "featured": bool(question.get("featured")),
+        "community_pending": bool(question.get("community_pending")),
+        "notice": question.get("notice") or "",
+        "source_declaration": question.get("source_declaration") or {},
+        "figure_notice": question.get("figure_notice") or "",
+    }
+    return {
+        "qid": question["qid"],
+        "ref": question["qid"],
+        "source": question_ref.SOURCE_OFFICIAL,
+        "source_label": question_ref.SOURCE_LABELS[question_ref.SOURCE_OFFICIAL],
+        **source_meta,
+        "subject": question.get("subject") or "",
+        "grade": question.get("grade") or "",
+        "year": None,
+        "province": "",
+        "paper_name": "",
+        "paper_type": "official",
+        "type": question.get("type") or "short_answer",
+        "type_label": question.get("type_label") or TYPE_LABELS.get(
+            question.get("type") or "", "其他"),
+        "number_label": None,
+        "group_id": None,
+        "group_role": None,
+        "stem_plain": question.get("stem_plain") or "",
+        "stem_blocks": question.get("stem_blocks") or [],
+        "options": question.get("options") or [],
+        "images": question.get("images") or [],
+        "objective": bool(question.get("objective")),
+        "has_answer": bool(question.get("has_answer")),
+        "has_solution": bool(question.get("has_solution")),
+        "quality_flags": [],
+        "practice_allowed": True,
+        "isolated": False,
+        "bank_version": "",
+        "practice_status": question.get("practice_status") or "practice",
+        "grading_status": question.get("grading_status") or "pending",
+        "content_revision": question.get("content_revision"),
+        "answer_revision": question.get("answer_revision"),
+        "mastery": mastery_level or "未掌握",
+        "unlocked": latest_row is not None,
+        "latest_attempt": _attempt_public(latest_row) if latest_row else None,
+        "knowledge_points": [],
+        "methods": [],
+        "has_ai_explanation": False,
+        "knowledge_tags": list(question.get("knowledge_tags") or []),
+        "difficulty": "待标注",
+        "difficulty_source": "",
+        "ai_difficulty": None,
+        "ai_difficulty_score": None,
+        "stat_accuracy": None,
+        "stat_attempts": 0,
+        "unavailable": False,
+        "withdrawn": False,
+    }
+
+
+def _missing_official_card(qid: str) -> dict:
+    """平台精选题当前不可见（撤回/争议/未发布）时的占位卡。
+
+    历史作答、错题与成绩保留；只显示「内容已撤回/暂停展示」，不回显受限正文与配图。
+    """
+    parsed = question_ref.try_parse(qid)
+    public_id = parsed.key if parsed is not None else str(qid or "").split(":", 1)[-1]
+    try:
+        info = _official_module().inspect_official(public_id)
+    except Exception:  # noqa: BLE001 - 广场表不可读时按不可见占位，不阻断错题/复习列表
+        info = {}
+    status = str(info.get("status") or "")
+    return {
+        "qid": qid,
+        "ref": qid,
+        "source": question_ref.SOURCE_OFFICIAL,
+        "source_label": question_ref.SOURCE_LABELS[question_ref.SOURCE_OFFICIAL],
+        "public_id": public_id,
+        "official_status": status,
+        "status_label": info.get("status_label") or "",
+        "review_status": info.get("review_status") or "",
+        "review_status_label": info.get("review_status_label") or "",
+        "published_version": None,
+        "featured": False,
+        "community_pending": False,
+        "notice": info.get("notice") or "",
+        "subject": "",
+        "year": None,
+        "province": "",
+        "paper_name": "",
+        "type": "unknown",
+        "type_label": TYPE_LABELS["unknown"],
+        "number_label": None,
+        "group_id": None,
+        "stem_plain": "",
+        "options": [],
+        "images": [],
+        "objective": False,
+        "has_answer": False,
+        "has_solution": False,
+        "quality_flags": [],
+        "practice_allowed": False,
+        "isolated": False,
+        "bank_version": "",
+        "practice_status": "practice",
+        "grading_status": "pending",
+        "mastery": "未掌握",
+        "unlocked": False,
+        "latest_attempt": None,
+        "knowledge_points": [],
+        "methods": [],
+        "has_ai_explanation": False,
+        "difficulty": "待标注",
+        "difficulty_source": "",
+        "ai_difficulty": None,
+        "ai_difficulty_score": None,
+        "stat_accuracy": None,
+        "stat_attempts": 0,
+        "unavailable": True,
+        "withdrawn": status == "withdrawn",
+    }
+
+
+def _app_wrong_rows(user_id, *, due_only=False, include_archived=False, error_tag=None):
+    """应用库里的个人题错题行（与题库错题同一张 wrong_questions 表）。"""
+    clauses = ["wq.user_id = ?", "wq.qid LIKE 'app:%'"]
+    params: list = [user_id]
+    if not include_archived:
+        clauses.append("wq.archived = 0")
+    if due_only:
+        clauses.append("wq.next_review_at <= ?")
+        params.append(utcnow())
+    if error_tag:
+        clauses.append("wq.error_tags_json LIKE ? ESCAPE '\\'")
+        params.append(_contains_pattern(f'"{error_tag}"'))
+    with connection() as con:
+        rows = con.execute(
+            "SELECT wq.* FROM wrong_questions wq WHERE " + " AND ".join(clauses)
+            + " ORDER BY wq.next_review_at ASC, wq.qid ASC",
+            params,
+        ).fetchall()
+    return [dict(row) for row in rows]
+
+
+def _app_wrong_cards(user_id, rows: list[dict]) -> list[dict]:
+    qids = [row["qid"] for row in rows]
+    latest_map = _latest_attempt_map(user_id, qids)
+    mastery_map = _mastery_map(user_id, qids)
+    now_iso = utcnow()
+    cards = []
+    for row in rows:
+        qid = row["qid"]
+        question = _app_question_for_card(user_id, qid)
+        card = _app_summary_card(question, latest_map.get(qid), mastery_map.get(qid)) \
+            if question else _missing_app_card(qid)
+        card.update({
+            "reason": row.get("reason"),
+            "failures": row.get("failures"),
+            "streak": row.get("streak"),
+            "next_review_at": row.get("next_review_at"),
+            "added_at": row.get("added_at"),
+            "last_result": row.get("last_result"),
+            "interval_days": row.get("interval_days"),
+            "review_count": row.get("review_count"),
+            "archived": bool(row.get("archived")),
+            "error_tags": _json(row.get("error_tags_json"), []),
+            "days_since_wrong": _days_since(row.get("last_wrong_at") or row.get("added_at")),
+            "due": bool(row.get("next_review_at")) and row["next_review_at"] <= now_iso,
+        })
+        cards.append(card)
+    return cards
+
+
+def _official_wrong_rows(user_id, *, due_only=False, include_archived=False, error_tag=None):
+    """应用库里的平台精选题错题行（与题库/个人题同一张 ``wrong_questions`` 表）。"""
+    clauses = ["wq.user_id = ?", f"wq.qid LIKE '{OFFICIAL_QID_PREFIX}%'"]
+    params: list = [user_id]
+    if not include_archived:
+        clauses.append("wq.archived = 0")
+    if due_only:
+        clauses.append("wq.next_review_at <= ?")
+        params.append(utcnow())
+    if error_tag:
+        clauses.append("wq.error_tags_json LIKE ? ESCAPE '\\'")
+        params.append(_contains_pattern(f'"{error_tag}"'))
+    with connection() as con:
+        rows = con.execute(
+            "SELECT wq.* FROM wrong_questions wq WHERE " + " AND ".join(clauses)
+            + " ORDER BY wq.next_review_at ASC, wq.qid ASC",
+            params,
+        ).fetchall()
+    return [dict(row) for row in rows]
+
+
+def _official_wrong_cards(user_id, rows: list[dict]) -> list[dict]:
+    """平台精选题错题卡：题目可见时给正文，撤回/争议后降级为「内容已撤回」占位卡。"""
+    qids = [row["qid"] for row in rows]
+    latest_map = _latest_attempt_map(user_id, qids)
+    mastery_map = _mastery_map(user_id, qids)
+    now_iso = utcnow()
+    cards = []
+    for row in rows:
+        qid = row["qid"]
+        question = _official_question_for_card(user_id, qid)
+        if question:
+            card = _official_summary_card(
+                question, latest_map.get(qid), mastery_map.get(qid),
+            )
+        else:
+            card = _missing_official_card(qid)
+        card.update({
+            "reason": row.get("reason"),
+            "failures": row.get("failures"),
+            "streak": row.get("streak"),
+            "next_review_at": row.get("next_review_at"),
+            "added_at": row.get("added_at"),
+            "last_result": row.get("last_result"),
+            "interval_days": row.get("interval_days"),
+            "review_count": row.get("review_count"),
+            "archived": bool(row.get("archived")),
+            "error_tags": _json(row.get("error_tags_json"), []),
+            "days_since_wrong": _days_since(row.get("last_wrong_at") or row.get("added_at")),
+            "due": bool(row.get("next_review_at")) and row["next_review_at"] <= now_iso,
+        })
+        cards.append(card)
+    return cards
+
+
+def _app_card_matches(card, *, subject=None, type=None, province=None, year=None,
+                      difficulty=None, q=None, kp_id=None, method_id=None) -> bool:
+    """把题库侧筛选套到个人题卡：只支持学科/题型/关键词，其余高级筛选直接排除。"""
+    if subject:
+        if card.get("subject") not in _split_csv(subject):
+            return False
+    if type:
+        if card.get("type") not in _split_csv(type):
+            return False
+    if province or year or difficulty or kp_id or method_id:
+        return False
+    if q and q.strip():
+        haystack = str(card.get("stem_plain") or "").casefold()
+        terms = [term for term in re.split(r"\s+", q.strip()) if term]
+        if not all(term.casefold() in haystack for term in terms):
+            return False
+    return True
+
+
+def _wrong_items_bank(
     user_id,
     subject=None,
     due_only=False,
@@ -2758,6 +3945,7 @@ def _wrong_items(
     page=1,
     page_size=200,
 ):
+    """题库错题（旧路径保持原语义与 SQL 分页）。"""
     with _app_with_bank() as con:
         join_sql, where_sql, params = _build_search_sql(
             con, user_id, subject=subject, type=type, province=province,
@@ -2792,6 +3980,9 @@ def _wrong_items(
         cards = _batch_summaries(con, rows, user_id)
         now_iso = utcnow()
         for card, raw in zip(cards, rows):
+            card["ref"] = card.get("ref") or question_ref.build(question_ref.SOURCE_BANK, card["qid"])
+            card["source"] = question_ref.SOURCE_BANK
+            card["source_label"] = question_ref.SOURCE_LABELS[question_ref.SOURCE_BANK]
             card.update({
                 "reason": raw["reason"],
                 "failures": raw["failures"],
@@ -2807,6 +3998,67 @@ def _wrong_items(
                 "due": raw["next_review_at"] <= now_iso,
             })
         return cards, total
+
+
+def _wrong_items(
+    user_id,
+    subject=None,
+    due_only=False,
+    type=None,
+    province=None,
+    year=None,
+    difficulty=None,
+    q=None,
+    kp_id=None,
+    error_tag=None,
+    include_archived=False,
+    page=1,
+    page_size=200,
+):
+    """错题列表：题库题 + 个人题（app）+ 平台精选（official）统一结构，按复习时间合并排序。
+
+    没有 app/official 错题时走原题库 SQL 分页（行为/性能不变）；存在其它来源错题时，
+    取到 ``page*page_size`` 条题库卡与全部应用侧错题卡合并后再切页，保证三种来源同队列。
+    平台精选题被撤回/争议后降级为「内容已撤回」占位卡（历史成绩保留）。
+    """
+    app_rows = _app_wrong_rows(
+        user_id, due_only=due_only, include_archived=include_archived, error_tag=error_tag,
+    )
+    official_rows = _official_wrong_rows(
+        user_id, due_only=due_only, include_archived=include_archived, error_tag=error_tag,
+    )
+    app_cards = [
+        card for card in _app_wrong_cards(user_id, app_rows)
+        if _app_card_matches(
+            card, subject=subject, type=type, province=province, year=year,
+            difficulty=difficulty, q=q, kp_id=kp_id,
+        )
+    ] if app_rows else []
+    official_cards = [
+        card for card in _official_wrong_cards(user_id, official_rows)
+        if _app_card_matches(
+            card, subject=subject, type=type, province=province, year=year,
+            difficulty=difficulty, q=q, kp_id=kp_id,
+        )
+    ] if official_rows else []
+    if not app_cards and not official_cards:
+        return _wrong_items_bank(
+            user_id, subject=subject, due_only=due_only, type=type, province=province,
+            year=year, difficulty=difficulty, q=q, kp_id=kp_id, error_tag=error_tag,
+            include_archived=include_archived, page=page, page_size=page_size,
+        )
+    window = max(int(page) * int(page_size), int(page_size))
+    bank_cards, bank_total = _wrong_items_bank(
+        user_id, subject=subject, due_only=due_only, type=type, province=province,
+        year=year, difficulty=difficulty, q=q, kp_id=kp_id, error_tag=error_tag,
+        include_archived=include_archived, page=1, page_size=window,
+    )
+    merged = sorted(
+        [*bank_cards, *app_cards, *official_cards],
+        key=lambda card: (str(card.get("next_review_at") or ""), str(card.get("qid") or "")),
+    )
+    start = (max(int(page), 1) - 1) * int(page_size)
+    return merged[start:start + int(page_size)], bank_total + len(app_cards) + len(official_cards)
 
 
 @router.get("/wrongbook")
@@ -2825,6 +4077,53 @@ def wrongbook(
         error_tag=error_tag, include_archived=include_archived, page=page, page_size=page_size,
     )
     return {"items": items, "total": total, "page": page, "page_size": page_size}
+
+
+@router.get("/wrongbook/export")
+def export_wrongbook(
+    format: str = Query("apkg", pattern="^(apkg|csv)$"),
+    subject: str | None = None,
+    include_archived: bool = False,
+    limit: int = Query(200, ge=1, le=200),
+    user=Depends(current_user),
+):
+    """错题本导出：`apkg`（Anki 牌组，按学科分组，正面题干+选项，背面答案+解析+错因）
+    或 `csv`（Front/Back/Tags 三列，可直接导入 Anki）。"""
+    from . import anki_export
+
+    groups = anki_export.wrongbook_cards(
+        user["id"], subject=subject, include_archived=include_archived, limit=limit,
+    )
+    total = sum(len(cards) for _deck, cards in groups)
+    if not total:
+        raise HTTPException(404, "错题本里还没有可导出的题目")
+    if format == "csv":
+        buf = StringIO()
+        writer = csv.writer(buf)
+        writer.writerow(["Front", "Back", "Tags"])
+        for _deck, cards in groups:
+            for card in cards:
+                writer.writerow([
+                    anki_export.html_to_text(card["front"]),
+                    anki_export.html_to_text(card["back"]),
+                    " ".join(card["tags"]),
+                ])
+        return Response(
+            content="\ufeff" + buf.getvalue(),
+            media_type="text/csv; charset=utf-8",
+            headers=anki_export.attachment_headers("知序错题.csv"),
+        )
+    try:
+        data = anki_export.build_apkg(groups)
+    except ImportError:
+        raise HTTPException(503, "Anki 导出组件未安装：请执行 pip install genanki==0.13.1")
+    if not data:
+        raise HTTPException(500, "Anki 牌组生成失败，请稍后重试")
+    return Response(
+        content=data,
+        media_type="application/vnd.anki",
+        headers=anki_export.attachment_headers(f"知序错题-{datetime.now().strftime('%Y%m%d')}.apkg"),
+    )
 
 
 @router.get("/wrongbook/by-kp")
@@ -2872,6 +4171,125 @@ def reviews(
     return {"items": items, "total": total, "message": "到期错题推荐，不改变检索结果与总数"}
 
 
+def _pending_attempt_cards(user_id, *, subject=None, exclude=None, limit=50) -> list[dict]:
+    """未判分题目：最近一次作答为 pending 的题（题库题 + 个人题统一结构）。
+
+    未判分题不写入 ``wrong_questions`` 的错题调度，单列在复习队列，等判分/自评后再入队。
+    """
+    exclude = set(exclude or ())
+    with connection() as con:
+        rows = con.execute(
+            "SELECT a.* FROM attempts a INNER JOIN ("
+            " SELECT qid, MAX(id) AS max_id FROM attempts WHERE user_id=? GROUP BY qid"
+            ") t ON a.id=t.max_id WHERE a.result='pending' ORDER BY a.id DESC LIMIT ?",
+            (int(user_id), int(limit) * 4),
+        ).fetchall()
+        in_wrongbook = {
+            row[0] for row in con.execute(
+                "SELECT qid FROM wrong_questions WHERE user_id=? AND archived=0", (int(user_id),)
+            )
+        }
+    attempts = [dict(row) for row in rows if row["qid"] not in exclude]
+    cards: list[dict] = []
+    bank_attempts = [
+        row for row in attempts
+        if not _is_app_qid(row["qid"]) and not _is_official_qid(row["qid"])
+    ]
+    if bank_attempts:
+        qids = [row["qid"] for row in bank_attempts]
+        by_qid = {row["qid"]: row for row in bank_attempts}
+        with _app_with_bank() as con:
+            bank_rows = _fetch_bank_rows(con, qids)
+            bank_cards = _batch_summaries(con, bank_rows, user_id)
+        for card in bank_cards:
+            qid = card["qid"]
+            card.setdefault("ref", question_ref.build(question_ref.SOURCE_BANK, qid))
+            card.setdefault("source", question_ref.SOURCE_BANK)
+            card.setdefault("source_label", question_ref.SOURCE_LABELS[question_ref.SOURCE_BANK])
+            card.update({
+                "graded": False,
+                "pending": True,
+                "status": "pending",
+                "in_wrongbook": qid in in_wrongbook,
+                "latest_attempt": _attempt_public(by_qid.get(qid)),
+            })
+            cards.append(card)
+    for row in attempts:
+        if not _is_app_qid(row["qid"]):
+            continue
+        qid = row["qid"]
+        question = _app_question_for_card(user_id, qid)
+        card = _app_summary_card(question, row, None) if question else _missing_app_card(qid)
+        card.update({
+            "graded": False,
+            "pending": True,
+            "status": "pending",
+            "in_wrongbook": qid in in_wrongbook,
+            "latest_attempt": _attempt_public(row),
+        })
+        cards.append(card)
+    for row in attempts:
+        if not _is_official_qid(row["qid"]):
+            continue
+        qid = row["qid"]
+        question = _official_question_for_card(user_id, qid)
+        card = _official_summary_card(question, row, None) if question else _missing_official_card(qid)
+        card.update({
+            "graded": False,
+            "pending": True,
+            "status": "pending",
+            "in_wrongbook": qid in in_wrongbook,
+            "latest_attempt": _attempt_public(row),
+        })
+        cards.append(card)
+    if subject:
+        subjects = _split_csv(subject)
+        cards = [card for card in cards if card.get("subject") in subjects]
+    return cards[:int(limit)]
+
+
+@router.get("/review/queue")
+def review_queue(
+    subject: str | None = None,
+    limit: int = Query(50, ge=1, le=200),
+    user=Depends(current_user),
+):
+    """统一复习队列：题库题、个人题（app 引用）与平台精选（official）同一结构；未判分题单列。
+
+    ``items`` 为已判分的到期/历史错题（含 ``ref``、``source``、``source_label``、
+    ``graded``）；``pending_items`` 为最近一次作答仍未判分的题（``graded=false``），
+    单列且不参与错题调度。平台精选题被撤回/争议后降级为「内容已撤回」占位卡。
+    """
+    cards, _total = _wrong_items(
+        user["id"], subject=subject, include_archived=False, page=1, page_size=limit,
+    )
+    graded: list[dict] = []
+    pending: list[dict] = []
+    pending_qids: set[str] = set()
+    for card in cards:
+        latest = card.get("latest_attempt") or {}
+        if card.get("last_result") == "pending" or latest.get("result") == "pending":
+            pending_qids.add(card["qid"])
+            pending.append({
+                **card, "graded": False, "pending": True,
+                "status": "pending", "in_wrongbook": True,
+            })
+        else:
+            graded.append({**card, "graded": True, "pending": False, "status": "graded"})
+    pending.extend(
+        _pending_attempt_cards(user["id"], subject=subject, exclude=pending_qids, limit=limit)
+    )
+    return {
+        "items": graded,
+        "pending_items": pending,
+        "total": len(graded) + len(pending),
+        "graded_count": len(graded),
+        "pending_count": len(pending),
+        "limit": limit,
+        "message": "题库题、个人题与平台精选题在同一复习队列；未判分题单独列出，不计入错题复习安排",
+    }
+
+
 @router.get("/stats")
 def stats(user=Depends(current_user)):
     with connection() as con:
@@ -2887,6 +4305,30 @@ def stats(user=Depends(current_user)):
         counts = {row[0]: row[1] for row in con.execute("SELECT level,COUNT(*) FROM mastery WHERE user_id=? GROUP BY level", (user["id"],))}
         recent = [dict(row) for row in con.execute("SELECT * FROM attempts WHERE user_id=? ORDER BY id DESC LIMIT 6", (user["id"],))]
         qids = [row[0] for row in con.execute("SELECT DISTINCT qid FROM attempts WHERE user_id=?", (user["id"],))]
+        # 个人题（app:<id>）与题库题同一口径单独计数：不改变既有 total/practiced 语义。
+        app_attempts = con.execute(
+            "SELECT COUNT(*) FROM attempts WHERE user_id=? AND qid LIKE 'app:%'", (user["id"],)
+        ).fetchone()[0]
+        app_practiced = con.execute(
+            "SELECT COUNT(DISTINCT qid) FROM attempts WHERE user_id=? AND qid LIKE 'app:%'", (user["id"],)
+        ).fetchone()[0]
+        app_wrong_count = con.execute(
+            "SELECT COUNT(*) FROM wrong_questions WHERE user_id=? AND archived=0 AND qid LIKE 'app:%'",
+            (user["id"],),
+        ).fetchone()[0]
+        # 平台精选（official:<public_id>）同样单独计数：既有字段语义保持不变。
+        official_attempts = con.execute(
+            "SELECT COUNT(*) FROM attempts WHERE user_id=? AND qid LIKE 'official:%'", (user["id"],)
+        ).fetchone()[0]
+        official_practiced = con.execute(
+            "SELECT COUNT(DISTINCT qid) FROM attempts WHERE user_id=? AND qid LIKE 'official:%'",
+            (user["id"],),
+        ).fetchone()[0]
+        official_wrong_count = con.execute(
+            "SELECT COUNT(*) FROM wrong_questions WHERE user_id=? AND archived=0 "
+            "AND qid LIKE 'official:%'",
+            (user["id"],),
+        ).fetchone()[0]
     progress = {}
     with _bank() as con:
         questions = _bank_table(con, "questions")
@@ -2909,6 +4351,9 @@ def stats(user=Depends(current_user)):
         "total_questions": total_questions, "attempts": attempts, "practiced": practiced, "correct": correct,
         "graded_attempts": graded, "accuracy": round(100 * correct / graded, 1) if graded else 0,
         "wrong_count": wrong_count, "due_count": due_count,
+        "app_attempts": app_attempts, "app_practiced": app_practiced, "app_wrong_count": app_wrong_count,
+        "official_attempts": official_attempts, "official_practiced": official_practiced,
+        "official_wrong_count": official_wrong_count,
         "mastered": counts.get("熟练掌握", 0), "mastery_counts": {level: counts.get(level, 0) for level in LEVELS},
         "subject_progress": list(progress.values()), "recent_attempts": [_attempt_public(row) for row in recent],
     }
@@ -3088,6 +4533,8 @@ def _issue_question_info(qids: list[str]) -> dict[str, dict]:
                 group_id = record.pop("group_id", None)
                 doc_id = record.pop("doc_id", None)
                 record["group_id"] = _group_key({"group_id": group_id, "doc_id": doc_id}) if group_id else None
+                # r5 的 year 是 TEXT：后台报错工单展示与详情页保持同一数字类型。
+                record["year"] = _int_or_none(record.get("year"))
                 info[row["qid"]] = record
     return info
 

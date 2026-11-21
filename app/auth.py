@@ -180,6 +180,28 @@ def require_admin(user=Depends(current_user)):
     return user
 
 
+def optional_user(request: Request):
+    """可选登录依赖：没有有效会话时返回 ``None``，不抛 401。
+
+    仅供匿名可读的公开接口（如广场公开页）使用。``current_user`` 的 401 语义
+    保持不变；会话过期、Cookie 伪造或会话表暂不可读一律按匿名处理，避免公开
+    只读接口因会话异常而整体不可用。
+    """
+    raw = request.cookies.get(COOKIE)
+    if not raw:
+        return None
+    digest = hashlib.sha256(raw.encode()).hexdigest()
+    try:
+        with connection() as con:
+            row = con.execute(
+                "SELECT u.id,u.username,u.role FROM sessions s JOIN users u ON u.id=s.user_id "
+                "WHERE s.token_hash=? AND s.expires_at>?", (digest, utcnow())
+            ).fetchone()
+    except Exception:  # 公开读接口不能因会话存储异常而 500 / 401
+        return None
+    return _public(row) if row else None
+
+
 def _session(user, response, request):
     raw = secrets.token_urlsafe(40)
     now = datetime.now(timezone.utc)

@@ -21,6 +21,7 @@ from .auth import current_user
 router = APIRouter(prefix="/api/admission", tags=["admission"])
 
 DB_FILENAME = "admission.sqlite3"
+OFFICIAL_DB_FILENAME = "admission-official.sqlite3"
 IMPORT_HINT = (
     "志愿数据尚未导入。请在 study-platform 目录运行 "
     "`python scripts/import_admission.py` 生成 data/admission.sqlite3 后重试。"
@@ -48,12 +49,78 @@ PROVINCE_NAMES = {
 
 # 导入统计（行数、年份、省份）缓存：键包含路径与文件 mtime/size，热替换数据库后自动失效。
 _info_cache: tuple[tuple[str, int, int], dict[str, Any]] | None = None
+# 官方补采批次线库（可选，缺失时自动忽略）的元信息缓存。
+_official_info_cache: tuple[tuple[str, int, int], dict[str, Any]] | None = None
 
 MAX_PAGE_SIZE = 50
 
 
 def _db_path():
     return db.DATA_DIR / DB_FILENAME
+
+
+def _official_db_path():
+    return db.DATA_DIR / OFFICIAL_DB_FILENAME
+
+
+@contextmanager
+def _official_connect():
+    """打开官方补采库；文件缺失时 yield None，由调用方降级。"""
+    path = _official_db_path()
+    if not path.exists():
+        yield None
+        return
+    connection = sqlite3.connect(path.as_uri() + "?mode=ro", uri=True, timeout=10)
+    connection.row_factory = sqlite3.Row
+    try:
+        connection.execute("PRAGMA query_only=ON")
+        yield connection
+    finally:
+        connection.close()
+
+
+def _official_info() -> dict[str, Any]:
+    global _official_info_cache
+    path = _official_db_path()
+    if not path.exists():
+        return {"available": False}
+    stat = path.stat()
+    cache_key = (str(path), stat.st_mtime_ns, stat.st_size)
+    if _official_info_cache and _official_info_cache[0] == cache_key:
+        return _official_info_cache[1]
+    with _official_connect() as connection:
+        if connection is None:
+            return {"available": False}
+        rows = {row["key"]: row["value"] for row in connection.execute("SELECT key, value FROM official_meta")}
+    info = {
+        "available": True,
+        "source": rows.get("source", ""),
+        "source_url": rows.get("source_url", ""),
+        "imported_at": rows.get("imported_at", ""),
+        "rows": int(rows.get("rows") or 0),
+        "years": _json_list(rows.get("years")),
+        "license_note": rows.get("license_note", ""),
+    }
+    _official_info_cache = (cache_key, info)
+    return info
+
+
+def _official_lines(province: str, year: int, category: str = "") -> list[dict[str, Any]]:
+    """官方补采批次线；category 为空或未匹配时返回该省年全部记录。"""
+    with _official_connect() as connection:
+        if connection is None:
+            return []
+        rows = connection.execute(
+            "SELECT category, batch, score, source_url FROM control_line"
+            " WHERE province_slug=? AND year=? ORDER BY category, batch",
+            (province, year),
+        ).fetchall()
+    items = [dict(row) for row in rows]
+    if category:
+        exact = [item for item in items if item["category"] == category]
+        if exact:
+            return exact
+    return items
 
 
 @contextmanager
@@ -192,8 +259,11 @@ def _resolve_names(connection: sqlite3.Connection, table: str, column: str, keyw
 
 @router.get("/meta")
 def admission_meta(user=Depends(current_user)):
-    """数据集元信息：版本、省份、年份、各表行数与覆盖情况。"""
-    return _dataset_info()
+    """数据集元信息：版本、省份、年份、各表行数与官方补采批次线情况。"""
+    info = _dataset_info()
+    if info.get("ready"):
+        info = {**info, "official": _official_info()}
+    return info
 
 
 @router.get("/overview")
@@ -294,10 +364,60 @@ def admission_filters(
         "categories": categories,
         "batches": batches,
         "rank_supported": bool(stats and stats["total"] and stats["with_rank"]),
-        "control_score_supported": bool(score_stats and score_stats["with_control"]),
+        "control_score_supported": bool(score_stats and score_stats["with_control"])
+        or bool(_official_lines(province, year)),
+        "official_control_supported": bool(_official_lines(province, year)),
         "plan_supported": bool(plan_stats and plan_stats["with_plan"]),
         "category_available": bool(category_stats and category_stats["with_category"]),
         "counts": counts,
+    }
+
+
+# 数据缺失声明（由 scripts/report_data_gaps.py 生成）的读取缓存。
+_gaps_cache: tuple[tuple[str, int, int], dict[str, Any]] | None = None
+
+
+def _gaps_path():
+    return db.DATA_DIR / "admission-gaps.json"
+
+
+@router.get("/gaps")
+def admission_gaps(user=Depends(current_user)):
+    """数据缺失声明：按省年列出位次、批次线、计划数、科类与缺表情况。"""
+    global _gaps_cache
+    path = _gaps_path()
+    if not path.exists():
+        return {
+            "available": False,
+            "detail": "尚未生成数据缺失声明。请运行 `python scripts/report_data_gaps.py` 后刷新。",
+        }
+    stat = path.stat()
+    cache_key = (str(path), stat.st_mtime_ns, stat.st_size)
+    if _gaps_cache and _gaps_cache[0] == cache_key:
+        payload = _gaps_cache[1]
+    else:
+        payload = json.loads(path.read_text(encoding="utf-8"))
+        _gaps_cache = (cache_key, payload)
+    return {"available": True, **payload}
+
+
+@router.get("/control-lines")
+def admission_control_lines(
+    province: str = Query(...),
+    year: int = Query(..., ge=2017, le=2100),
+    category: str = Query(""),
+    user=Depends(current_user),
+):
+    """官方渠道补采的批次控制线（2020 年起，含来源 URL）。"""
+    _require_ready()
+    items = _official_lines(province, year, category)
+    return {
+        "province": province,
+        "province_name": PROVINCE_NAMES.get(province, province),
+        "year": year,
+        "category": category,
+        "items": items,
+        "official": _official_info(),
     }
 
 
@@ -348,6 +468,29 @@ def admission_score_rank(
         ]
         distribution.sort(key=lambda item: item["score"])
         sampled = _sample_series(distribution, 60)
+
+    # 主数据源没有批次线时，用官方补采库补齐并标注来源：
+    # 1) 一分一段表带批次名 → 按批次精确匹配；
+    # 2) 一分一段表整表没有批次（2017–2021 常见）→ 按分数匹配「该分数能过线的最严批次」，
+    #    来源标记为 official-inferred，界面需说明是推导，不是原表批次。
+    official_lines = _official_lines(province, year, used_category)
+    official_match = next(
+        (line for line in official_lines if line["batch"] == primary["batch"]), None)
+    control_score = primary["control_score"]
+    control_source = "score-range" if control_score is not None else None
+    control_batch = primary["batch"]
+    if control_score is None and official_match is not None:
+        control_score = official_match["score"]
+        control_batch = official_match["batch"]
+        control_source = "official"
+    elif control_score is None and not primary["batch"] and official_lines:
+        cleared = [line for line in official_lines if line["score"] <= score]
+        best = max(cleared, key=lambda line: line["score"], default=None)
+        if best is None:
+            best = min(official_lines, key=lambda line: line["score"])
+        control_score = best["score"]
+        control_batch = best["batch"]
+        control_source = "official-inferred"
     return {
         "province": province,
         "province_name": PROVINCE_NAMES.get(province, province),
@@ -358,7 +501,13 @@ def admission_score_rank(
         "exact": bool(exact),
         "nearest_score": nearest["score"],
         "batch": primary["batch"],
-        "control_score": primary["control_score"],
+        "control_score": control_score,
+        "control_batch": control_batch,
+        "control_source": control_source,
+        "official_batches": [
+            {"category": line["category"], "batch": line["batch"], "score": line["score"]}
+            for line in official_lines
+        ],
         "segment_count": primary["segment_count"],
         "cumulative_count": primary["cumulative_count"],
         "rank_range": primary["rank_range"],

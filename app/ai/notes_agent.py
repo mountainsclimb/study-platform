@@ -16,7 +16,7 @@ import unicodedata
 import zipfile
 
 from fastapi import APIRouter, Depends, File, HTTPException, Query, UploadFile
-from fastapi.responses import PlainTextResponse
+from fastapi.responses import PlainTextResponse, Response
 from pydantic import BaseModel, ConfigDict, Field, StringConstraints
 from starlette.concurrency import run_in_threadpool
 import yaml
@@ -206,6 +206,8 @@ def _structured_chunks(pages: list[tuple[int, list[tuple[int | None, str]]]], ta
 # reviewed=人工校对，failed=识别失败（带 error）。
 OCR_PAGE_STATES = ("text", "pending", "recognized", "reviewed", "failed")
 OCR_COVERED_STATES = frozenset({"text", "recognized", "reviewed"})
+# 逐页识别来源：ocr=视觉模型转写，local_ocr=视觉不可用时保留的本地 OCR 文本（需人工核对）。
+OCR_RESULT_SOURCES = frozenset({"ocr", "local_ocr"})
 COVERAGE_PAGE_LIMIT = 200
 
 
@@ -704,8 +706,64 @@ def _render_pdf_pages_to_images(
     return rendered
 
 
-async def _ocr_recognize_page(call_model, provider, model, image_part, user_id, *, job_id=None):
-    """单页视觉识别：保留既有提示词/L0 体系提示词，并用 wait_for 给单页调用加超时。"""
+LOCAL_OCR_HINT_LIMIT = 6000   # 本地 OCR 文本注入视觉提示的最大字符数
+
+
+def _ocr_prompt_with_hint(ocr_hint: str | None = None) -> str:
+    """视觉识别提示词；本地 OCR 文本只作校对参考，要求以图片为准，避免照抄错误。"""
+    hint = str(ocr_hint or "").strip()
+    if not hint:
+        return OCR_PAGE_PROMPT
+    return (
+        OCR_PAGE_PROMPT
+        + "\n\n【本地 OCR 初步识别（机器初稿，可能有错字、漏字或公式误差；仅供校对参考，"
+        "请以图片内容为准逐字核对后输出最终转写，不要照抄错误）】\n"
+        + hint[:LOCAL_OCR_HINT_LIMIT]
+    )
+
+
+async def _local_ocr_page_text(image_part) -> tuple[str, str | None]:
+    """逐页先跑本地 OCR；不可用/失败返回空文本，不阻断视觉识别，也不伪造结果。"""
+    data = image_part.get("data") if isinstance(image_part, dict) else None
+    if not isinstance(data, str) or not data:
+        return "", None
+    try:
+        from . import ocr as local_ocr
+    except Exception:  # 本地 OCR 模块导入失败按不可用处理，视觉识别照常进行
+        return "", "本地 OCR 模块不可用"
+    try:
+        result = await local_ocr.recognize_image(image_part)
+    except local_ocr.OcrUnavailable as error:
+        return "", str(error)
+    except local_ocr.OcrTimeout as error:
+        return "", str(error)
+    except Exception:  # 页图损坏/引擎异常：当没有本地提示处理，不影响视觉识别
+        return "", None
+    text = str(result.get("text") or "").strip() if isinstance(result, dict) else ""
+    return text[:LOCAL_OCR_HINT_LIMIT], None
+
+
+def _ocr_fallback_entry(page_no: int, local_text: str, *, timeout: bool = False, error=None,
+                        local_note: str | None = None) -> dict:
+    """视觉模型超时/失败时的页结果：有本地 OCR 文本则保留并标注来源，否则记该页失败。"""
+    text = str(local_text or "").strip()
+    if text:
+        # 本地 OCR 确实识别出文字：保留文本但标注 source=local_ocr，提示用户核对，不冒充视觉识别。
+        return {"page": page_no, "text": text, "state": "recognized", "source": "local_ocr"}
+    message = _ocr_timeout_message(page_no) if timeout else _ocr_error(error)
+    note = str(local_note or "").strip()
+    if note:
+        message = f"{message}（本地 OCR 也不可用：{note}）"
+    return {"page": page_no, "text": "", "state": "failed", "source": "ocr", "error": message}
+
+
+async def _ocr_recognize_page(call_model, provider, model, image_part, user_id, *, job_id=None,
+                              ocr_hint: str | None = None):
+    """单页视觉识别：保留既有提示词/L0 体系提示词，并用 wait_for 给单页调用加超时。
+
+    ``ocr_hint`` 为本地 OCR 初稿（可选）：有值时作为校对参考注入提示词，让视觉模型以图片为准
+    逐字纠错；无值时提示词与原来完全一致。
+    """
     kwargs = {
         "user_id": user_id,
         "system_prompt": load_prompt_grid()["l0_system"].strip(),
@@ -713,7 +771,10 @@ async def _ocr_recognize_page(call_model, provider, model, image_part, user_id, 
     if job_id is not None:
         kwargs["job_id"] = job_id
     return await asyncio.wait_for(
-        call_model(provider, model, OCR_PAGE_PROMPT, [image_part], token_limit=3500, **kwargs),
+        call_model(
+            provider, model, _ocr_prompt_with_hint(ocr_hint), [image_part],
+            token_limit=3500, **kwargs,
+        ),
         timeout=_ocr_page_timeout(),
     )
 
@@ -1163,7 +1224,11 @@ async def _save_ocr_pages(document_id: int, user_id: int, pages: list[dict], *, 
                 page_map[key] = _page_entry(previous_text, "failed", "ocr", now, "视觉模型返回空文本")
                 failed_pages.append(page_no)
                 continue
-            page_map[key] = _page_entry(text, "recognized", "ocr", now)
+            # 识别来源由执行器给出（视觉模型 ocr / 视觉不可用时保留的本地 OCR local_ocr）。
+            source = str(raw.get("source") or "ocr")
+            if source not in OCR_RESULT_SOURCES:
+                source = "ocr"
+            page_map[key] = _page_entry(text, "recognized", source, now)
             saved_pages.append(page_no)
         if not saved_pages and not failed_pages and not preserved:
             raise HTTPException(422, "页码超出资料范围，未保存任何页")
@@ -1268,11 +1333,15 @@ async def _save_ocr_pages(document_id: int, user_id: int, pages: list[dict], *, 
 async def _ocr_job(job_id: int, user_id: int, data, provider):
     """批量 PDF OCR 异步执行器（task="ocr"）。
 
+    - 每页先把本地 OCR（RapidOCR）跑出的文本作为视觉提示注入，让视觉模型以图片为准校对；
+    - 视觉模型不可用/失败/超时但本地 OCR 有文本时，保留本地文本并标注 ``source="local_ocr"``，
+      明确提示需人工核对（不伪造视觉识别成功）；
     - 每页识别完立即 `_save_ocr_pages` 落库，并把 ``{"done_pages", "failed_pages"}``
       写入任务检查点，Worker 中断/任务取消后已完成页不丢；
     - 支持断点续跑：跳过检查点里已完成（含人工校对保留）的页，只重试未完成/失败页；
     - 单页失败/超时只记录该页，不中断整批；取消时先落定已完成页再标记任务已取消；
-    - 返回结构与同步路径一致（document/ocr_pages/preserved_pages/failed_pages/notices）。
+    - 返回结构与同步路径一致（document/ocr_pages/preserved_pages/failed_pages/notices），
+      另带 local_ocr_pages / local_ocr_hint_pages 说明本地 OCR 的使用情况。
     """
     from . import _call_model as call_model
 
@@ -1312,6 +1381,8 @@ async def _ocr_job(job_id: int, user_id: int, data, provider):
     ocr_pages: list[dict] = []
     preserved: set[int] = set()
     saved: set[int] = set()
+    local_ocr_pages: set[int] = set()   # 视觉不可用/失败、保留本地 OCR 文本的页
+    local_ocr_hint_pages: set[int] = set()  # 本地 OCR 文本作为视觉提示参与识别的页
     notices: list[str] = []
     document = None
     done_count = len(scoped_done)
@@ -1329,6 +1400,8 @@ async def _ocr_job(job_id: int, user_id: int, data, provider):
             "preserved_pages": sorted(preserved),
             "failed_pages": sorted(scoped_failed),
             "saved_pages": sorted(saved),
+            "local_ocr_pages": sorted(local_ocr_pages),
+            "local_ocr_hint_pages": sorted(local_ocr_hint_pages),
             "notices": notices + [message],
             "notice": "\n".join(notices + [message]),
             "doc_version": current.get("doc_version"),
@@ -1369,20 +1442,27 @@ async def _ocr_job(job_id: int, user_id: int, data, provider):
             continue
 
         _ocr_update_job(job_id, "running", f"ocr-{len(scoped_done)}/{page_count}")
+        local_text = ""
+        local_ocr_note = None
         try:
             rendered = await asyncio.to_thread(_render_pdf_pages_to_images, pdf, page_no, page_no)
             if not rendered:
                 raise ValueError("未渲染出页面图片")
+            # 先跑本地 OCR：有文本时注入视觉提示让模型校对；视觉不可用/失败时保留本地文本。
+            local_text, local_ocr_note = await _local_ocr_page_text(rendered[0][1])
             call = await _ocr_recognize_page(
-                call_model, provider, model, rendered[0][1], user_id, job_id=job_id,
+                call_model, provider, model, rendered[0][1], user_id,
+                job_id=job_id, ocr_hint=local_text,
             )
             entry = {"page": page_no, "text": call["content"], "state": "recognized", "source": "ocr"}
+            if local_text:
+                local_ocr_hint_pages.add(page_no)
         except asyncio.TimeoutError:
-            entry = {"page": page_no, "text": "", "state": "failed", "source": "ocr",
-                     "error": _ocr_timeout_message(page_no)}
+            entry = _ocr_fallback_entry(page_no, local_text, timeout=True, local_note=local_ocr_note)
         except Exception as error:  # 单页失败只记录该页，整批继续
-            entry = {"page": page_no, "text": "", "state": "failed", "source": "ocr",
-                     "error": _ocr_error(error)}
+            entry = _ocr_fallback_entry(page_no, local_text, error=error, local_note=local_ocr_note)
+        if entry.get("source") == "local_ocr":
+            local_ocr_pages.add(page_no)
 
         # 每页识别完立即落库（人工校对页保留规则由 _save_ocr_pages 统一处理）。
         saved_document = await _save_ocr_pages(document_id, user_id, [entry])
@@ -1409,7 +1489,7 @@ async def _ocr_job(job_id: int, user_id: int, data, provider):
         _ocr_publish_event(job_id, "stage", {
             "status": "running", "stage": f"ocr-{done_count}/{page_count}",
             "done": done_count, "total": page_count,
-            "page": page_no, "state": entry.get("state"),
+            "page": page_no, "state": entry.get("state"), "source": entry.get("source"),
         })
 
     if document is None:
@@ -1419,6 +1499,12 @@ async def _ocr_job(job_id: int, user_id: int, data, provider):
     if preserved:
         notices.append(
             f"第 {_page_span_text(sorted(preserved))} 页已人工校对，保留人工校对内容，未用本次识别结果改写，请审阅。"
+        )
+    if local_ocr_pages:
+        # 不伪造「视觉模型识别成功」：明确告知这些页只有本地 OCR 文本，需人工核对。
+        notices.append(
+            f"第 {_page_span_text(sorted(local_ocr_pages))} 页视觉模型没有给出结果，"
+            "已保留本地 OCR 文本（source=local_ocr），请逐字核对后再使用。"
         )
     if scoped_failed:
         failed_errors = {
@@ -1434,6 +1520,8 @@ async def _ocr_job(job_id: int, user_id: int, data, provider):
         "preserved_pages": sorted(preserved),
         "failed_pages": sorted(scoped_failed),
         "saved_pages": sorted(saved),
+        "local_ocr_pages": sorted(local_ocr_pages),
+        "local_ocr_hint_pages": sorted(local_ocr_hint_pages),
         "notices": notices,
         "notice": "\n".join(notices),
         "doc_version": document.get("doc_version"),
@@ -2302,11 +2390,31 @@ def rollback_note(note_id: int, version_id: int, user=Depends(current_user)):
 
 
 @router.get("/notes/{note_id}/export")
-def export_note(note_id: int, format: str = Query("md", pattern="^(md|anki|mindmap)$"), user=Depends(current_user)):
+def export_note(note_id: int, format: str = Query("md", pattern="^(md|anki|apkg|mindmap)$"), user=Depends(current_user)):
     note = _read_note(note_id, user["id"])
     content = note["content"] or ""
     if format == "md":
         return PlainTextResponse(content, media_type="text/markdown; charset=utf-8")
+    if format == "apkg":
+        # 直接生成 Anki 牌组（双击导入），切卡规则与下面的 CSV 完全一致；
+        # 见 app/anki_export.py 的 note_cards()。
+        from .. import anki_export
+
+        groups = anki_export.note_deck(note)
+        if not groups or not sum(len(cards) for _deck, cards in groups):
+            raise HTTPException(400, "这篇笔记里没有可切分成卡片的 Q/A 或标题段落")
+        try:
+            data = anki_export.build_apkg(groups)
+        except ImportError:
+            raise HTTPException(503, "Anki 导出组件未安装：请执行 pip install genanki==0.13.1")
+        if not data:
+            raise HTTPException(500, "Anki 牌组生成失败，请稍后重试")
+        safe_title = re.sub(r'[\\/:*?"<>|\s]+', "-", (note.get("title") or "笔记"))[:24]
+        return Response(
+            content=data,
+            media_type="application/vnd.anki",
+            headers=anki_export.attachment_headers(f"知序笔记-{safe_title}.apkg"),
+        )
     if format == "anki":
         buf = StringIO()
         writer = csv.writer(buf)

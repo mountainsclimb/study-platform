@@ -43,6 +43,7 @@ from .providers import (
     infer_capabilities,
     router as providers_router,
 )
+from .search import router as search_router
 from .upload_pipeline import _recognize_job, _tagging_job, router as upload_router
 from .verify import (
     MAX_FILE,
@@ -57,14 +58,19 @@ from .verify import (
     compare_answers,
     load_explain_modes,
 )
+from .ocr import router as ocr_router
+from .usage import init_usage
+from .usage import router as usage_router
 
 PROMPT_VERSION = "study-2026-11-20-v2"
 
 router = APIRouter()
 router.include_router(providers_router)
+router.include_router(search_router)
 router.include_router(upload_router)
 router.include_router(notes_router)
 router.include_router(jobs_router)
+router.include_router(ocr_router)
 
 
 def init_ai():
@@ -143,6 +149,9 @@ def init_ai():
         )
         con.execute("CREATE UNIQUE INDEX IF NOT EXISTS idx_ai_notes_job ON ai_notes(job_id)")
         con.execute("CREATE UNIQUE INDEX IF NOT EXISTS idx_ai_explanations_job ON ai_explanations(job_id)")
+    # AI 用量账本与配额/并发（ai_job_usage、ai_quotas）以及 ai_jobs 的耗时/重试列：
+    # 必须在 reap_stale_jobs 之前建表，回收中断任务时才能同步入账。
+    init_usage()
     # 启动恢复：宁可靠租约判定，也不能跳过 dispatch_token 非空的任务（否则旧任务永久占满账户配额）。
     reap_stale_jobs()
     (db.DATA_DIR / "ai-files").mkdir(parents=True, exist_ok=True)
@@ -164,5 +173,5 @@ __all__ = [
     "_bank_evidence", "_grade_job", "_explain_job", "_notes_job", "_recognize_job",
     "_tagging_job", "_run_job", "compare_answers", "assemble_prompt_layers",
     "load_prompt_grid", "load_explain_modes", "infer_capabilities",
-    "embedding_status", "netguard", "httpx", "socket",
+    "embedding_status", "netguard", "httpx", "socket", "usage_router", "init_usage",
 ]

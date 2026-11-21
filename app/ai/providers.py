@@ -16,7 +16,7 @@ from urllib.parse import parse_qsl, urlsplit
 
 from cryptography.fernet import Fernet, InvalidToken
 from fastapi import APIRouter, Depends, HTTPException
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, Field, field_validator
 
 from .. import db
 from ..auth import current_user, require_admin
@@ -124,7 +124,7 @@ _TOKEN_PATTERNS = {
     for token in _BOUNDARY_TOKENS
 }
 _VISION_MARKERS = ("vision", "-vl", "vl-", "4v", "omni", "multimodal", "image")
-_REASONING_MARKERS = ("reasoner", "-r1", "thinking", "qwq", "deepseek-r1")
+_REASONING_MARKERS = ("reasoner", "-r1", "thinking", "qwq", "deepseek-r1", "mimo-v2.6", "mimo-v2.5")
 
 
 def _rule_hit(low: str, pattern: str) -> bool:
@@ -149,10 +149,16 @@ def infer_capabilities(model_id: str) -> dict:
     ):
         caps["reasoning"] = True
     # flash 系列的通用兜底：gemini-*-flash / glm-*-flash 不按推理模型处理。
+    # 例外：小米 MiMo 的 flash 仍会输出 reasoning_content（小 token 上限会被思考耗尽），
+    # 因此保留 reasoning 标记，让适配层自动放宽输出预算。
     if caps.get("reasoning") and "flash" in low and not any(
-        marker in low for marker in ("thinking", "reasoner")
+        marker in low for marker in ("thinking", "reasoner", "mimo")
     ):
         caps["reasoning"] = False
+    # 语音模型（TTS/ASR）不参与文本推理/视觉能力推断。
+    if any(marker in low for marker in ("-tts", "-asr")) or low.startswith(("asr-", "asr")):
+        caps["reasoning"] = False
+        caps["vision"] = False
     return caps
 
 
@@ -999,7 +1005,9 @@ class ModelMetaPatch(BaseModel):
 
 
 class TaskDefaultInput(BaseModel):
-    task: str = Field(pattern="^(explain|grade|ocr|notes|tagging|judge|upload)$")
+    # 任务默认模型对所有任务类型开放（内置任务 + 整合模块注册的扩展任务 + judge/upload 两个
+    # 非队列任务的默认模型）。任务名在校验器里对照注册表校验，避免接受随便写的任务名。
+    task: str = Field(pattern="^[a-z][a-z0-9-]{1,39}$")
     primary_provider_id: int | None = None
     primary_model: str | None = Field(default=None, max_length=160)
     verify_provider_id: int | None = None
@@ -1007,6 +1015,16 @@ class TaskDefaultInput(BaseModel):
     judge_provider_id: int | None = None
     judge_model: str | None = Field(default=None, max_length=160)
     mode: str = Field(default="fast", pattern="^(fast|accurate)$")
+
+    @field_validator("task")
+    @classmethod
+    def _known_task(cls, value: str) -> str:
+        # 延迟导入：providers 被 jobs 导入，模块级互导会成环。
+        from .jobs import EXTRA_TASKS, STANDARD_TASKS
+
+        if value not in STANDARD_TASKS and value not in EXTRA_TASKS and value not in ("judge", "upload"):
+            raise ValueError("未知任务类型")
+        return value
 
 
 class AllowedHostInput(BaseModel):

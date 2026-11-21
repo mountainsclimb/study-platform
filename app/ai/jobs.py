@@ -10,10 +10,11 @@ from uuid import uuid4
 
 from fastapi import APIRouter, Depends, HTTPException, Query
 from fastapi.responses import StreamingResponse
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, Field, field_validator
 
 from .. import db
 from ..auth import current_user, require_admin
+from . import usage as ai_usage
 from .notes_agent import TEMPLATES, _notes_job
 from .providers import _identity, _json, _owned, _selected_provider
 from .upload_pipeline import _recognize_job, _tagging_job
@@ -40,6 +41,35 @@ STREAM_CONTROL_EVENTS = frozenset({"snapshot", "stage", "done"})
 REDIS_PUBLISH_TIMEOUT_SECONDS = 1.0
 REDIS_SOCKET_TIMEOUT_SECONDS = 3.0
 REDIS_PUBLISH_RETRY_SECONDS = 5.0
+
+# ---------------------------------------------------------------------------
+# 任务类型注册表：核心任务（讲解/评分/笔记/OCR/识别/打标）在下方固定分支；
+# 后续整合的功能模块（AI 课堂、试卷工坊、AI 助手、学情报告……）通过
+# ``register_task_handler()`` 注册自己的 JobInput 准入校验与执行器，
+# 不必改动本文件的派发主流程。校验失败抛 HTTPException，错误会直接回给用户。
+# ---------------------------------------------------------------------------
+STANDARD_TASKS = frozenset({"explain", "grade", "question-analysis", "notes", "recognize", "tagging", "ocr"})
+EXTRA_TASKS: dict[str, dict] = {}
+
+
+def register_task_handler(name: str, handler, validate=None, *, label: str = "") -> None:
+    """注册一个扩展任务类型。
+
+    - ``handler(job_id, user_id, data, provider, verifier)``：async 执行器，返回结果 dict；
+      可通过 ``publish_event`` 推送阶段与增量，通过 ``is_job_cancelled`` 响应取消。
+    - ``validate(data, user)``：同步准入校验，负责所有权与参数检查，失败抛 HTTPException。
+    重复注册同一任务名会覆盖旧处理器（便于测试替换），但不会被普通业务代码调用多次。
+    """
+    if not name or name in STANDARD_TASKS:
+        raise ValueError("扩展任务名不能为空且不能与内置任务重名：%r" % (name,))
+    if not callable(handler):
+        raise ValueError("任务执行器必须可调用")
+    EXTRA_TASKS[name] = {"handler": handler, "validate": validate, "label": label or name}
+
+
+def extra_task(name: str) -> dict | None:
+    return EXTRA_TASKS.get(name)
+
 
 _tasks: set[asyncio.Task] = set()
 _running_by_id: dict[int, asyncio.Task] = {}
@@ -298,8 +328,17 @@ def reap_stale_jobs(*, lease_seconds=None, redis_mode=None) -> dict:
     now = db.utcnow()
     redis_mode = bool(redis_url()) if redis_mode is None else bool(redis_mode)
     message = "执行进程心跳超时，任务已中断，可点击续跑或重新发起"
+    stale_ids: list[int] = []
+    queued_ids: list[int] = []
     with db.connection() as con:
         db.write_lock(con, "job-reap")
+        stale_ids = [
+            row[0] for row in con.execute(
+                "SELECT id FROM ai_jobs WHERE status IN ('running','cancel_requested') "
+                "AND (heartbeat_at IS NULL OR heartbeat_at < ?)",
+                (cutoff,),
+            ).fetchall()
+        ]
         running = con.execute(
             "UPDATE ai_jobs SET status='interrupted',stage='interrupted',error=?,updated_at=?,finished_at=? "
             "WHERE status IN ('running','cancel_requested') AND (heartbeat_at IS NULL OR heartbeat_at < ?)",
@@ -308,17 +347,28 @@ def reap_stale_jobs(*, lease_seconds=None, redis_mode=None) -> dict:
         queued = 0
         if redis_mode:
             # 从未写入 dispatch_token 的排队任务不会有 Worker 认领，只能标记中断。
+            queued_ids = [
+                row[0] for row in con.execute(
+                    "SELECT id FROM ai_jobs WHERE status='queued' AND dispatch_token IS NULL"
+                ).fetchall()
+            ]
             queued = con.execute(
                 "UPDATE ai_jobs SET status='interrupted',stage='interrupted',error=?,updated_at=?,finished_at=? "
                 "WHERE status='queued' AND dispatch_token IS NULL",
                 (message, now, now),
             ).rowcount
         else:
+            queued_ids = [
+                row[0] for row in con.execute("SELECT id FROM ai_jobs WHERE status='queued'").fetchall()
+            ]
             queued = con.execute(
                 "UPDATE ai_jobs SET status='interrupted',stage='interrupted',error=?,updated_at=?,finished_at=? "
                 "WHERE status='queued'",
                 (message, now, now),
             ).rowcount
+    # 回收的中断任务同样入账（可观测），失败/中断不消耗配额。
+    for job_id in (*stale_ids, *queued_ids):
+        ai_usage.record_job_usage(job_id)
     return {"running": running, "queued": queued}
 
 
@@ -412,6 +462,7 @@ async def _dispatch(job_id, token, runner):
                 ("任务队列暂不可用，请在任务列表重试", db.utcnow(), job_id, token),
             ).rowcount
         if changed:
+            ai_usage.record_job_usage(job_id)
             raise HTTPException(503, "任务队列暂不可用，请在任务列表重试") from None
 
 
@@ -425,9 +476,9 @@ async def execute_dispatched_job(job_id, token, runner, *, retry=False, monitor=
                 ("执行进程中断，请从检查点续跑", db.utcnow(), job_id, token),
             )
         changed = con.execute(
-            "UPDATE ai_jobs SET status='running',stage='preparing',heartbeat_at=?,updated_at=? "
-            "WHERE id=? AND dispatch_token=? AND cancelled=0 AND status='queued'",
-            (db.utcnow(), db.utcnow(), job_id, token),
+            "UPDATE ai_jobs SET status='running',stage='preparing',heartbeat_at=?,started_at=COALESCE(started_at,?),"
+            "updated_at=? WHERE id=? AND dispatch_token=? AND cancelled=0 AND status='queued'",
+            (db.utcnow(), db.utcnow(), db.utcnow(), job_id, token),
         ).rowcount
         if not changed:
             return
@@ -485,12 +536,20 @@ def _job_update(job_id, status, stage, result=None, error=None):
     with db.connection() as con:
         changed = con.execute(
             "UPDATE ai_jobs SET status=?,stage=?,result_json=COALESCE(?,result_json),error=?,updated_at=?,"
+            "started_at=COALESCE(started_at,?),"
             "finished_at=CASE WHEN ? IN ('completed','failed','interrupted','cancelled') THEN ? ELSE finished_at END "
             "WHERE id=?" + where,
-            (status, stage, _json(result) if result is not None else None, error, now, status, now, job_id, *params),
+            (
+                status, stage, _json(result) if result is not None else None, error, now,
+                now if status == "running" else None,
+                status, now, job_id, *params,
+            ),
         )
     if changed.rowcount:
         _emit_stream(job_id, "stage", {"status": status, "stage": stage, "error": error})
+        if status in ai_usage.TERMINAL_STATUSES:
+            # 终态统一入账（幂等；失败只记日志，不影响任务状态机与 SSE）。
+            ai_usage.record_job_usage(job_id)
 
 
 def update_job(job_id: int, status: str, stage: str = "") -> None:
@@ -512,11 +571,22 @@ def _finalize_cancel(job_id, message="用户已取消任务"):
         ).rowcount
     if changed:
         _emit_stream(job_id, "stage", {"status": "cancelled", "stage": "cancelled", "error": message})
+        ai_usage.record_job_usage(job_id)
     return bool(changed)
 
 
 class JobInput(BaseModel):
-    task: str = Field(pattern="^(explain|grade|question-analysis|notes|recognize|tagging|ocr)$")
+    # 任务名形态 + 已知任务校验：内置任务与扩展注册表在解析阶段就拦住未知任务，
+    # 避免任意字符串进入任务表；扩展任务在 init_<module>() 注册后自动有效。
+    task: str = Field(pattern="^[a-z][a-z0-9-]{1,39}$")
+
+    @field_validator("task")
+    @classmethod
+    def _known_task(cls, value: str) -> str:
+        if value not in STANDARD_TASKS and value not in EXTRA_TASKS:
+            raise ValueError("未知任务类型")
+        return value
+
     qid: str | None = Field(default=None, max_length=300)
     attempt_id: int | None = None
     document_id: int | None = None
@@ -545,6 +615,9 @@ class JobInput(BaseModel):
     map_extract: bool = False
     tagging_limit: int = Field(default=50, ge=1, le=1000)
     requirements: str = Field(default="", max_length=4000)
+    # 扩展任务参数：由注册的任务校验器解释（例如 AI 课堂的 scene 类型、试卷工坊的操作目标）。
+    # 只允许 JSON 对象并限制体积，避免把大文件或二进制塞进任务请求。
+    params: dict | None = None
 
 
 class OutlineConfirmInput(BaseModel):
@@ -732,7 +805,18 @@ async def submit_job(user: dict, data: JobInput) -> dict:
         if _identity(judge, data.judge_model) == _identity(provider, data.model):
             raise HTTPException(422, "主模型不能担任同一任务的裁判，请选择独立的裁判模型")
 
-    if data.task == "notes":
+    extra = EXTRA_TASKS.get(data.task)
+    if extra is None and data.task not in STANDARD_TASKS:
+        raise HTTPException(422, "未知任务类型")
+    if data.params is not None:
+        if len(_json(data.params).encode("utf-8")) > 16384:
+            raise HTTPException(422, "任务参数过大")
+    if extra is not None:
+        # 扩展模块自行校验所有权与参数；校验器抛出的 HTTPException 原样返回。
+        validator = extra.get("validate")
+        if validator is not None:
+            validator(data, user)
+    elif data.task == "notes":
         doc_ids = list(dict.fromkeys([d for d in (data.document_ids or []) if d]))
         if data.document_id and data.document_id not in doc_ids:
             doc_ids.insert(0, data.document_id)
@@ -798,6 +882,8 @@ async def submit_job(user: dict, data: JobInput) -> dict:
                 429,
                 f"每人最多同时运行 {per_user} 个任务、24 小时内 {DAILY_JOB_LIMIT} 个任务，请稍后重试",
             )
+        # 按任务类型的每人每日配额与全站并发：都在 INSERT 之前校验，被拒绝的请求不落库、不消耗配额。
+        ai_usage.check_new_job(con, user_id=user["id"], kind=data.task)
         if data.task == "grade":
             running = con.execute(
                 "SELECT request_json FROM ai_jobs WHERE user_id=? AND task='grade' AND status IN ('queued','running','cancel_requested')",
@@ -812,6 +898,7 @@ async def submit_job(user: dict, data: JobInput) -> dict:
             (user["id"], data.task, "queued", "queued", _json(data.model_dump()), now, now, token),
         ).lastrowid
 
+    ai_usage.note_job_active(job_id, data.task)
     await _dispatch(job_id, token, run_job)
     return _job_public(_owned("ai_jobs", job_id, user["id"]))
 
@@ -888,6 +975,8 @@ async def cancel_job(job_id: int, user=Depends(current_user)):
         _finalize_cancel(job_id)
     latest = _owned("ai_jobs", job_id, user["id"])
     if latest["status"] == "cancelled":
+        # 落定为已取消：同步写用量账本（幂等；非终态时该方法直接返回）。
+        ai_usage.record_job_usage(job_id)
         _emit_stream(job_id, "done", {"status": "cancelled"})
     else:
         _emit_stream(job_id, "stage", {"status": "cancel_requested", "stage": "cancel_requested"})
@@ -943,15 +1032,21 @@ def _requeue_job(row, data, *, checkpoint=None):
         ).fetchone()[0]
         if active >= per_user or global_active >= global_limit:
             raise HTTPException(429, "同时运行的任务已达上限，请稍后重试")
+        # 续跑不新增任务行（不重复消耗每日配额），但仍受该任务类型的全站并发上限约束。
+        ai_usage.check_resume(con, kind=row["task"], job_id=row["id"])
         changed = con.execute(
             "UPDATE ai_jobs SET status='queued',stage='resuming',cancelled=0,error=NULL,"
             "request_json=?,checkpoint_json=COALESCE(?,checkpoint_json),partial_content='',"
+            "retry_count=COALESCE(retry_count,0)+1,"
             "updated_at=?,dispatch_token=? WHERE id=? AND status=? AND updated_at=?",
             (_json(data.model_dump()), _json(checkpoint) if checkpoint is not None else None,
              db.utcnow(), token, row["id"], row["status"], row["updated_at"]),
         ).rowcount
         if not changed:
             raise HTTPException(409, "任务状态已变化，请刷新后重试")
+    # 旧终态账本先清掉：下一次终态写入时重建唯一行，并把重试次数记到新账本里。
+    ai_usage.clear_job_usage(row["id"])
+    ai_usage.note_job_active(row["id"], row["task"])
     return token
 
 
@@ -1318,6 +1413,16 @@ async def _run_job(job_id, user_id, data: JobInput):
                 result = await _recognize_job(user_id, data, provider, verifier, job_id=job_id)
             elif data.task == "tagging":
                 result = await _tagging_job(job_id, user_id, data, provider)
+            elif data.task in EXTRA_TASKS:
+                # 整合模块注册的扩展任务（AI 课堂、试卷工坊、AI 助手、学情报告等）。
+                result = await EXTRA_TASKS[data.task]["handler"](
+                    job_id, user_id, data, provider, verifier,
+                )
+                # 与 notes 的人工确认语义一致：执行器已把状态写成 awaiting_outline，
+                # 这里直接结束本轮，等待 POST /api/ai/jobs/{id}/confirm-outline 续跑。
+                if isinstance(result, dict) and result.get("__paused__"):
+                    _emit_stream(job_id, "done", {"status": "awaiting_outline"})
+                    return
             else:
                 result = await _explain_job(
                     user_id, data, provider, verifier,

@@ -56,6 +56,12 @@ _ID_TABLES = frozenset({
     "note_versions", "prompt_templates", "recovery_codes", "eval_runs", "attempts",
     "ai_providers", "ai_uploads", "ai_documents", "ai_notes", "ai_jobs", "ai_audit",
     "content_issues",
+    # 整合模块（PostgreSQL 模式下 INSERT 需要 RETURNING id 才能拿到 lastrowid）。
+    "cls_courses", "cls_scenes", "cls_assets", "cls_sessions", "cls_turns", "cls_quiz_attempts",
+    "pl_questions", "pl_imports", "pl_import_items", "pl_pages", "pl_papers", "pl_paper_items",
+    "pl_cards", "pl_page_edits", "pl_paper_attempts", "pl_paper_answers",
+    "asst_conversations", "asst_messages", "asst_skills",
+    "focus_sessions",
 })
 _INSERT_TABLE = re.compile(r"^\s*INSERT\s+INTO\s+([a-z_][a-z_0-9]*)\b", re.IGNORECASE)
 _QMARK = re.compile(r"""'(?:[^']|'')*'|"(?:[^"]|"")*"|--[^\n]*|/\*[\s\S]*?\*/|\?""")
@@ -401,8 +407,40 @@ def _bank_signature(path):
 
 
 PG_BANK_INDEX_KEY = "pg_bank_search_v3_sha256"
+# r5 发布包把 questions/groups 的所有列都建成 TEXT。PG 镜像按语义把「数字/标志」列落成
+# INTEGER（Python 侧显式转型，见 _mirror_int），这样年份区间、题序排序和客观题判断在 PG
+# 下仍是数值语义，镜像上的过滤索引也继续可用；其余列保持源类型。
+PG_BANK_MIRROR_VERSION = "bank-types-v1"
+PG_BANK_INTEGER_COLUMNS = frozenset({
+    "year", "order_in_paper", "objective", "has_figure", "has_formula",
+    "pua_remaining", "n_children_total", "n_children_strict", "n_members", "n_practice",
+})
 # 进程内已验证的题库摘要：题库未变化时 O(1) 返回，不再每个 attach_bank 连接都查 meta。
 _pg_bank_verified_digest: str | None = None
+
+
+def _pg_mirror_digest(digest: str) -> str:
+    """镜像结构版本 + 题库摘要：列类型等镜像结构变化时，旧镜像必须重建。
+
+    ``PG_BANK_INDEX_KEY`` 保持原值（对外/旧库兼容）；结构版本写进 bank_meta 的值里，
+    旧版本落成的纯 TEXT 镜像会因摘要不一致被识别为过期，下一次 attach 自动重建。
+    """
+    return hashlib.sha256(f"{PG_BANK_MIRROR_VERSION}:{digest}".encode()).hexdigest()
+
+
+def _mirror_int(value):
+    """PG 镜像 INTEGER 列的安全取值：'0'/'10' → 0/10，''/None/非数字 → NULL。"""
+    if value is None or isinstance(value, bool):
+        return None if value is None else int(value)
+    if isinstance(value, int):
+        return value
+    text = str(value).strip()
+    if not text:
+        return None
+    try:
+        return int(text)
+    except ValueError:
+        return None
 
 
 def _sqlite_group_materials(source) -> dict[str, str]:
@@ -435,6 +473,7 @@ def _ensure_postgres_bank(con):
     if not path.is_file():
         raise FileNotFoundError("未找到题库，请检查 STUDY_BANK_DIR 配置")
     digest = _bank_digest(_bank_signature(path))
+    mirror_digest = _pg_mirror_digest(digest)
     if _pg_bank_verified_digest == digest:
         return
     index_key = PG_BANK_INDEX_KEY
@@ -443,15 +482,15 @@ def _ensure_postgres_bank(con):
         "AND to_regclass('bank.questions') IS NOT NULL AND to_regclass('bank.groups') IS NOT NULL"
     )
     meta = con.execute(lookup, (index_key,)).fetchone()
-    if meta and meta[0] == digest:
-        # 题库未变化，但泄密标记是独立应用表：旧库可能还没有，同样按摘要补齐。
+    if meta and meta[0] == mirror_digest:
+        # 题库与镜像结构都未变化，但泄密标记是独立应用表：旧库可能还没有，同样按摘要补齐。
         from .practice import _install_bank_leak_flags
         _pg_bank_verified_digest = digest
         _install_bank_leak_flags(con, digest)
         return
     write_lock(con, "bank-mirror")
     meta = con.execute(lookup, (index_key,)).fetchone()
-    if meta and meta[0] == digest:
+    if meta and meta[0] == mirror_digest:
         from .practice import _install_bank_leak_flags
         _pg_bank_verified_digest = digest
         _install_bank_leak_flags(con, digest)
@@ -473,6 +512,19 @@ def _ensure_postgres_bank(con):
             if not columns or any(col[2] not in {"TEXT", "INTEGER"} for col in columns):
                 raise ValueError(f"题库表 {table} 的结构无法同步")
             names = [col[1] for col in columns]
+            # r5 的列全是 TEXT：按语义把数字/标志列在镜像里落成 INTEGER，COPY 前显式转型。
+            integer_indexes = tuple(
+                index for index, name in enumerate(names) if name in PG_BANK_INTEGER_COLUMNS
+            )
+
+            def _mirror_row(row, indexes=integer_indexes):
+                if not indexes:
+                    return tuple(row)
+                values = list(row)
+                for index in indexes:
+                    values[index] = _mirror_int(values[index])
+                return tuple(values)
+
             if table == "questions":
                 question_columns = set(names)
                 derived = ["stem_compact", "search_material_text"]
@@ -482,7 +534,8 @@ def _ensure_postgres_bank(con):
             relation = sql.Identifier("bank", table)
             definitions = [
                 sql.SQL("{} {}{}").format(
-                    sql.Identifier(name), sql.SQL(kind),
+                    sql.Identifier(name),
+                    sql.SQL("INTEGER" if name in PG_BANK_INTEGER_COLUMNS else kind),
                     sql.SQL(" PRIMARY KEY" if primary_key else " NOT NULL" if required else ""),
                 )
                 for _, name, kind, required, _, primary_key in columns
@@ -498,7 +551,7 @@ def _ensure_postgres_bank(con):
             if table != "questions":
                 with con.raw.cursor().copy(copy_statement) as copy:
                     for row in source.execute(f"SELECT * FROM {table}"):
-                        copy.write_row(row)
+                        copy.write_row(_mirror_row(row))
                 continue
             stem_index = names.index("stem_plain") if "stem_plain" in names else None
             doc_index = names.index("doc_id") if "doc_id" in names else None
@@ -511,11 +564,11 @@ def _ensure_postgres_bank(con):
                         "group_id": group_id,
                         "doc_id": row[doc_index] if doc_index is not None else None,
                     })
-                    copy.write_row((
+                    copy.write_row(_mirror_row((
                         *row,
                         _compact_search_text(stem),
                         group_materials.get(key) or "",
-                    ))
+                    )))
 
     # 快照契约 §5 新增列索引；旧题库没有这些列时保持原样。
     snapshot_indexes = ""
@@ -538,7 +591,7 @@ def _ensure_postgres_bank(con):
     con.execute(
         "INSERT INTO bank_meta(key,value) VALUES (?,?) "
         "ON CONFLICT(key) DO UPDATE SET value=excluded.value",
-        (index_key, digest),
+        (index_key, mirror_digest),
     )
     _pg_bank_verified_digest = digest
     # 与 FTS 同一条「题库摘要」刷新路径：批量重算检索期泄密标记。

@@ -18,7 +18,7 @@ from fastapi.responses import FileResponse, JSONResponse, Response
 from fastapi.staticfiles import StaticFiles
 from starlette.middleware.trustedhost import TrustedHostMiddleware
 
-from . import admission, auth, db
+from . import admission, assistant, auth, classroom, config_guard, db, focus, insight, paperlab, plaza
 
 WEB_DIR = Path(__file__).resolve().parents[1] / "web"
 health_log = logging.getLogger("zhixu.health")
@@ -60,6 +60,15 @@ def _compute_build_id() -> str:
 
 BUILD_ID = _compute_build_id()
 BUILD_LABEL = "%s+%s" % (VERSION, BUILD_ID)
+
+# 主应用默认 CSP：AI 课堂交互场景需要同源 iframe（frame-src 'self'），
+# 语音/视频讲解需要 media-src，其余仍保持最小权限。
+DEFAULT_CSP = (
+    "default-src 'self'; img-src 'self' data: blob:; font-src 'self' data:; "
+    "style-src 'self' 'unsafe-inline'; script-src 'self'; connect-src 'self'; "
+    "media-src 'self' blob: data:; frame-src 'self'; form-action 'self'; "
+    "object-src 'none'; base-uri 'none'; frame-ancestors 'none'"
+)
 
 # 上游错误体/诊断信息里可能夹带密钥：统一脱敏后再返回，避免未鉴权回显。
 _SECRET_PATTERNS = (
@@ -157,8 +166,19 @@ def _ready_detail_allowed(request: Request) -> bool:
 async def lifespan(app):
     from . import ai, practice
     db.init_db()
+    # WS6 / P0：公网模式启动自检（fail-closed）。本地模式不触发，开发与测试默认值不受影响。
+    # 显式危险配置（任意转发来源、示例密钥、仅本地 Host、local_open AI 策略、
+    # 无管理员初始化路径）会直接拒绝启动；缺失的生产依赖在启动日志中强告警。
+    config_guard.enforce_public_config(admin_exists=auth._admin_exists)
     practice.init_practice()
     ai.init_ai()
+    # 整合模块：AI 课堂 / 试卷工坊 / 学情分析 / AI 助手（各自幂等建表并注册扩展任务）。
+    classroom.init_classroom()
+    paperlab.init_paperlab()
+    insight.init_insight()
+    assistant.init_assistant()
+    # 顶栏专注计时（番茄钟）的会话表；纯应用自有数据，不依赖题库与模型。
+    focus.init_focus()
     dispatcher = asyncio.create_task(ai.recover_queued_jobs()) if ai.redis_url() else None
     try:
         yield
@@ -205,16 +225,14 @@ async def security_headers(request: Request, call_next):
             return JSONResponse({"detail": "不接受跨站提交"}, status_code=403)
     response = await call_next(request)
     response.headers["X-Content-Type-Options"] = "nosniff"
-    response.headers["X-Frame-Options"] = "DENY"
-    response.headers["Referrer-Policy"] = "same-origin"
+    # 用 setdefault：AI 课堂的交互场景 HTML 需要允许被同源 iframe 嵌入并自带 CSP，
+    # 由该端点覆盖这两个头；其他响应保持默认的拒绝嵌入。
+    response.headers.setdefault("X-Frame-Options", "DENY")
+    response.headers.setdefault("Referrer-Policy", "same-origin")
     # 构建号随每个响应下发：旧标签页发现构建号变化时提示刷新，避免用旧资源提交新数据。
     response.headers["X-Zhixu-Build"] = BUILD_ID
     response.headers["X-Zhixu-Bank"] = db.bank_version_hint() or ""
-    response.headers["Content-Security-Policy"] = (
-        "default-src 'self'; img-src 'self' data: blob:; font-src 'self' data:; "
-        "style-src 'self' 'unsafe-inline'; script-src 'self'; connect-src 'self'; "
-        "object-src 'none'; base-uri 'none'; frame-ancestors 'none'"
-    )
+    response.headers.setdefault("Content-Security-Policy", DEFAULT_CSP)
     if request.url.path.startswith("/api/"):
         # 端点自己声明的缓存策略优先（如 bank-image 的 private, max-age=3600）。
         response.headers.setdefault("Cache-Control", "no-store")
@@ -646,7 +664,16 @@ def bank_image_with_etag(
 
 app.include_router(practice.router)
 app.include_router(ai.router)
+app.include_router(ai.usage_router)
 app.include_router(admission.router)
+# 整合模块（OpenMAIC / Oh My Paper 原生化）。
+app.include_router(classroom.router)
+app.include_router(paperlab.router)
+app.include_router(insight.router)
+app.include_router(assistant.router)
+app.include_router(focus.router)
+# 广场（Phase 2）：公开只读、投稿、评审与发布；本轮只接后端，前端下一轮接入。
+app.include_router(plaza.router)
 
 app.mount("/static", StaticFiles(directory=str(WEB_DIR)), name="static")
 
