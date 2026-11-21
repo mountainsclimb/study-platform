@@ -1,0 +1,67 @@
+{
+  "name": "zhixu-canvas-editor",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "description": "知序 P6b 自由画布幻灯片编辑器（React 19 + Vite，vendored @openmaic/editor）",
+  "license": "MIT",
+  "scripts": {
+    "dev": "vite",
+    "build": "vite build",
+    "preview": "vite preview",
+    "typecheck": "tsc --noEmit",
+    "vendor": "node scripts/vendor-openmaic.mjs"
+  },
+  "browserslist": [
+    "Chrome >= 93",
+    "Edge >= 93",
+    "Firefox >= 92",
+    "Safari >= 15.4",
+    "iOS >= 15.4"
+  ],
+  "dependencies": {
+    "clsx": "^2.1.1",
+    "echarts": "^6.0.0",
+    "entities": "^6.0.0",
+    "html-to-image": "^1.11.13",
+    "html2canvas-pro": "^2.0.4",
+    "immer": "^11.1.3",
+    "katex": "0.16.38",
+    "lucide-react": "^0.562.0",
+    "motion": "^12.27.5",
+    "prosemirror-commands": "^1.7.1",
+    "prosemirror-dropcursor": "^1.8.2",
+    "prosemirror-gapcursor": "^1.4.0",
+    "prosemirror-history": "^1.5.0",
+    "prosemirror-inputrules": "^1.5.1",
+    "prosemirror-keymap": "^1.2.3",
+    "prosemirror-model": "^1.25.4",
+    "prosemirror-schema-basic": "^1.2.4",
+    "prosemirror-schema-list": "^1.5.1",
+    "prosemirror-state": "^1.4.4",
+    "prosemirror-view": "^1.41.5",
+    "react": "19.2.3",
+    "react-colorful": "^5.7.0",
+    "react-dom": "19.2.3",
+    "shiki": "^3.21.0",
+    "svg-pathdata": "^8.0.0",
+    "tailwind-merge": "^3.4.0",
+    "tinycolor2": "^1.6.0"
+  },
+  "devDependencies": {
+    "@tailwindcss/vite": "^4.1.7",
+    "@types/katex": "^0.16.8",
+    "@types/react": "^19.1.0",
+    "@types/react-dom": "^19.1.0",
+    "@types/tinycolor2": "^1.4.6",
+    "@vitejs/plugin-react": "^4.4.1",
+    "tailwindcss": "^4.1.7",
+    "typescript": "^5.8.3",
+    "vite": "^6.3.5"
+  },
+  "pnpm": {
+    "onlyBuiltDependencies": [
+      "esbuild"
+    ]
+  }
+}

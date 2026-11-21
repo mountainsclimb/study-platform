@@ -1,0 +1,26 @@
+{
+  "source": "https://github.com/THU-MAIC/OpenMAIC",
+  "commit": "18b68aea3a87d7626e805b136d9b908eb277b00a",
+  "license": "MIT",
+  "copyright": "Copyright (c) 2026 THU-MAIC",
+  "packages": {
+    "dsl": {
+      "files": 20,
+      "rewritten": 14
+    },
+    "geometry": {
+      "files": 2,
+      "rewritten": 1
+    },
+    "renderer": {
+      "files": 53,
+      "rewritten": 0
+    },
+    "editor": {
+      "files": 117,
+      "rewritten": 0
+    }
+  },
+  "bytes": 1388295,
+  "note": "只允许改 import 路径 / 构建配置；运行语义与上游一致。"
+}

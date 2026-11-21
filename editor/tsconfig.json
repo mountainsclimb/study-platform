@@ -1,0 +1,33 @@
+{
+  "compilerOptions": {
+    "target": "ES2020",
+    "useDefineForClassFields": true,
+    "lib": ["ES2022", "DOM", "DOM.Iterable"],
+    "forceConsistentCasingInFileNames": true,
+    "module": "ESNext",
+    "moduleResolution": "Bundler",
+    "skipLibCheck": true,
+    "allowJs": false,
+    "resolveJsonModule": true,
+    "isolatedModules": true,
+    "noEmit": true,
+    "jsx": "react-jsx",
+    "strict": true,
+    "noUnusedLocals": false,
+    "noUnusedParameters": false,
+    "noFallthroughCasesInSwitch": true,
+    "baseUrl": ".",
+    "paths": {
+      "@openmaic/dsl": ["vendor/openmaic/dsl/src/index.ts"],
+      "@openmaic/geometry": ["vendor/openmaic/geometry/src/index.ts"],
+      "@openmaic/renderer": ["vendor/openmaic/renderer/src/index.ts"],
+      "@openmaic/renderer/elements": ["vendor/openmaic/renderer/src/elements/index.ts"],
+      "@openmaic/renderer/geometry": ["vendor/openmaic/renderer/src/utils/element.ts"],
+      "@openmaic/editor": ["vendor/openmaic/editor/src/core/index.ts"],
+      "@openmaic/editor/core": ["vendor/openmaic/editor/src/core/index.ts"],
+      "@openmaic/editor/react": ["vendor/openmaic/editor/src/react/index.ts"],
+      "@openmaic/editor/ui": ["vendor/openmaic/editor/src/ui/index.ts"]
+    }
+  },
+  "include": ["src"]
+}
