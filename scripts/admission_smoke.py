@@ -75,6 +75,19 @@ def _prepare_isolated_data_dir(data_dir: Path, db_path: Path, keep: bool, allow_
         shutil.copyfile(db_path, target)
         kind = "复制"
     print(f"隔离数据目录: {temp_dir}（录取库：{kind}，{target.stat().st_size / 1073741824:.2f}GB）")
+    official_source = data_dir / "admission-official.sqlite3"
+    if official_source.is_file():
+        official_target = temp_dir / official_source.name
+        try:
+            os.link(official_source, official_target)
+            print(f"官方补采批次线库：硬链接 {official_target.stat().st_size / 1048576:.1f}MB")
+        except OSError:
+            shutil.copyfile(official_source, official_target)
+            print("官方补采批次线库：复制（无法硬链接）")
+    gaps_source = data_dir / "admission-gaps.json"
+    if gaps_source.is_file():
+        shutil.copyfile(gaps_source, temp_dir / gaps_source.name)
+        print("数据缺失声明：已复制 admission-gaps.json")
     if keep:
         print("[提示] --keep 已开启，跑完后保留该目录方便排查。")
     return temp_dir
@@ -158,6 +171,47 @@ def run_smoke(args) -> dict:
             check("MIT" in str(meta.get("license") or ""), "元信息缺少 MIT 许可声明")
             print(f"数据集: {meta.get('dataset')}  导入时间: {meta.get('imported_at')}  "
                   f"总行数: {int(meta.get('total_rows') or 0):,}")
+
+            # 官方补采批次线（可选）：存在时验证 2020/2021 补齐与来源标注。
+            official = meta.get("official") or {}
+            if official.get("available"):
+                check(official.get("rows", 0) > 0, "官方补采库行数为 0")
+                check(2021 in (official.get("years") or []), "官方补采库未覆盖 2021 年")
+                lines = client.get("/api/admission/control-lines", params={
+                    "province": "anhui", "year": 2021, "category": "理科",
+                }).json()
+                check(len(lines.get("items") or []) >= 3,
+                      f"安徽 2021 理科官方批次线不足 3 条：{len(lines.get('items') or [])}")
+                scores = {item["batch"]: item["score"] for item in lines.get("items") or []}
+                check(scores.get("本科一批") == 488,
+                      f"安徽 2021 理科本科一批应为 488，实际 {scores.get('本科一批')}")
+                fallback = client.get("/api/admission/score-rank", params={
+                    "province": "anhui", "year": 2021, "category": "理科", "score": 600,
+                }).json()
+                check(fallback.get("control_score") == 488,
+                      f"安徽 2021 理科 600 分批次线应补齐为 488，实际 {fallback.get('control_score')}")
+                check(fallback.get("control_source") == "official-inferred",
+                      f"补齐来源标记应为 official-inferred，实际 {fallback.get('control_source')}")
+                check(bool(fallback.get("official_batches")), "score-rank 未返回官方批次线明细")
+                filters = client.get("/api/admission/filters", params={
+                    "province": "anhui", "year": 2021,
+                }).json()
+                check(filters.get("official_control_supported") is True,
+                      "安徽 2021 filters 未标记官方批次线可用")
+            else:
+                print("[提示] 未发现官方补采批次线库，跳过补齐相关断言。")
+
+            # 数据缺失声明（可选）：存在时校验逐省年缺口与接口。
+            gaps = client.get("/api/admission/gaps").json()
+            if gaps.get("available"):
+                check(gaps.get("summary", {}).get("province_years") == 232,
+                      "缺失声明的省年数应为 232")
+                check(gaps.get("summary", {}).get("rank", {}).get("missing", 0) > 0,
+                      "缺失声明未统计到位次缺失")
+                check(len(gaps.get("province_years") or []) == 232,
+                      "缺失声明逐省年明细条数不足")
+            else:
+                print("[提示] 未发现 admission-gaps.json，跳过缺失声明断言。")
 
             # 2) 代表性省年的筛选器与完整度标记（含已知缺失场景）。
             representative = [
