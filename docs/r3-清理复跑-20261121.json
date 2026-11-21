@@ -1,0 +1,450 @@
+{
+  "schema": "zhixu.r3_cleanup_report.v1",
+  "generated_at": "2026-11-21T07:49:48+00:00",
+  "mode": "apply",
+  "dry_run": false,
+  "status": "applied_noop",
+  "class_labels": {
+    "r5": "r5 可解析（保留）",
+    "r5_ref": "r5 来源引用（保留）",
+    "r3_referenced_in_r5": "r3 但 r5 有对应引用（保留，复核）",
+    "r3_only": "仅 r3 可解析（学习记录可清理）",
+    "unknown": "未知来源（保留，复核）"
+  },
+  "policy": {
+    "learning_record_tables": [
+      "attempts",
+      "mastery",
+      "wrong_questions",
+      "question_metadata",
+      "question_kp",
+      "question_method"
+    ],
+    "keep_review_tables": [
+      "ai_explanations",
+      "content_issues",
+      "content_isolations"
+    ],
+    "private_tables_never_deleted": [
+      "users",
+      "sessions",
+      "pl_questions",
+      "pl_imports",
+      "pl_import_items",
+      "pl_pages",
+      "pl_page_edits",
+      "pl_papers",
+      "pl_paper_items",
+      "pl_paper_attempts",
+      "pl_paper_answers",
+      "pl_cards",
+      "pl_card_scans",
+      "ai_uploads",
+      "ai_documents",
+      "ai_notes",
+      "note_versions",
+      "upload_wrong_questions",
+      "asst_conversations",
+      "asst_messages",
+      "cls_courses",
+      "cls_scenes",
+      "cls_assets",
+      "cls_sessions",
+      "cls_turns",
+      "cls_quiz_attempts",
+      "focus_sessions",
+      "user_preferences",
+      "recovery_codes"
+    ],
+    "derived_tables_skipped": [
+      "bank_leak_flags",
+      "bank_meta",
+      "bank_search_meta",
+      "bank_fts*"
+    ],
+    "rule": "只删除「qid 仅在 r3 且 r5 无对应引用」的学习记录；未知来源与私人内容保留"
+  },
+  "banks": {
+    "bank_root": "E:\\responsibility\\高考题库_按学科",
+    "current_pointer": "bank-20261121-r5",
+    "r3": {
+      "path": "E:\\responsibility\\高考题库_按学科\\releases\\bank-20261120-r3",
+      "db_path": "E:\\responsibility\\高考题库_按学科\\releases\\bank-20261120-r3\\题库.db",
+      "version": "bank-20261120-r3",
+      "questions": 7659,
+      "distinct_qids": 7659,
+      "distinct_source_ids": 98
+    },
+    "r5": {
+      "path": "E:\\responsibility\\高考题库_按学科\\releases\\bank-20261121-r5",
+      "db_path": "E:\\responsibility\\高考题库_按学科\\releases\\bank-20261121-r5\\题库.db",
+      "version": "bank-20261121-r5",
+      "questions": 26374,
+      "distinct_qids": 26374,
+      "distinct_source_ids": 26374
+    }
+  },
+  "app_db": {
+    "path": "E:\\responsibility\\study-platform\\data\\app.sqlite3",
+    "size_bytes": 92790784,
+    "mtime_ns": 1795247384134813700,
+    "mtime_utc": "2026-11-21T07:49:44+00:00",
+    "journal_mode": "wal",
+    "unchanged_by_apply": true
+  },
+  "classification": {
+    "tables": [
+      {
+        "table": "attempts",
+        "policy": "learning_record",
+        "policy_reason": "学习记录/题库派生映射：仅清理分类为 r3_only 的行",
+        "rows": 0,
+        "classes": {
+          "r5": 0,
+          "r5_ref": 0,
+          "r3_referenced_in_r5": 0,
+          "r3_only": 0,
+          "unknown": 0
+        },
+        "deletable_rows": 0,
+        "primary_key": [
+          "id"
+        ],
+        "sample_keys": {}
+      },
+      {
+        "table": "mastery",
+        "policy": "learning_record",
+        "policy_reason": "学习记录/题库派生映射：仅清理分类为 r3_only 的行",
+        "rows": 0,
+        "classes": {
+          "r5": 0,
+          "r5_ref": 0,
+          "r3_referenced_in_r5": 0,
+          "r3_only": 0,
+          "unknown": 0
+        },
+        "deletable_rows": 0,
+        "primary_key": [
+          "user_id",
+          "qid"
+        ],
+        "sample_keys": {}
+      },
+      {
+        "table": "wrong_questions",
+        "policy": "learning_record",
+        "policy_reason": "学习记录/题库派生映射：仅清理分类为 r3_only 的行",
+        "rows": 0,
+        "classes": {
+          "r5": 0,
+          "r5_ref": 0,
+          "r3_referenced_in_r5": 0,
+          "r3_only": 0,
+          "unknown": 0
+        },
+        "deletable_rows": 0,
+        "primary_key": [
+          "user_id",
+          "qid"
+        ],
+        "sample_keys": {}
+      },
+      {
+        "table": "question_metadata",
+        "policy": "learning_record",
+        "policy_reason": "学习记录/题库派生映射：仅清理分类为 r3_only 的行",
+        "rows": 0,
+        "classes": {
+          "r5": 0,
+          "r5_ref": 0,
+          "r3_referenced_in_r5": 0,
+          "r3_only": 0,
+          "unknown": 0
+        },
+        "deletable_rows": 0,
+        "primary_key": [
+          "qid"
+        ],
+        "sample_keys": {}
+      },
+      {
+        "table": "question_kp",
+        "policy": "learning_record",
+        "policy_reason": "学习记录/题库派生映射：仅清理分类为 r3_only 的行",
+        "rows": 0,
+        "classes": {
+          "r5": 0,
+          "r5_ref": 0,
+          "r3_referenced_in_r5": 0,
+          "r3_only": 0,
+          "unknown": 0
+        },
+        "deletable_rows": 0,
+        "primary_key": [
+          "qid",
+          "kp_id"
+        ],
+        "sample_keys": {}
+      },
+      {
+        "table": "question_method",
+        "policy": "learning_record",
+        "policy_reason": "学习记录/题库派生映射：仅清理分类为 r3_only 的行",
+        "rows": 0,
+        "classes": {
+          "r5": 0,
+          "r5_ref": 0,
+          "r3_referenced_in_r5": 0,
+          "r3_only": 0,
+          "unknown": 0
+        },
+        "deletable_rows": 0,
+        "primary_key": [
+          "qid",
+          "method_id"
+        ],
+        "sample_keys": {}
+      },
+      {
+        "table": "ai_explanations",
+        "policy": "keep_for_review",
+        "policy_reason": "用户/AI 产物或内容反馈：只分类，不删除，交人工复核",
+        "rows": 0,
+        "classes": {
+          "r5": 0,
+          "r5_ref": 0,
+          "r3_referenced_in_r5": 0,
+          "r3_only": 0,
+          "unknown": 0
+        },
+        "deletable_rows": 0,
+        "primary_key": [
+          "id"
+        ],
+        "sample_keys": {}
+      },
+      {
+        "table": "content_issues",
+        "policy": "keep_for_review",
+        "policy_reason": "用户/AI 产物或内容反馈：只分类，不删除，交人工复核",
+        "rows": 0,
+        "classes": {
+          "r5": 0,
+          "r5_ref": 0,
+          "r3_referenced_in_r5": 0,
+          "r3_only": 0,
+          "unknown": 0
+        },
+        "deletable_rows": 0,
+        "primary_key": [
+          "id"
+        ],
+        "sample_keys": {}
+      },
+      {
+        "table": "content_isolations",
+        "policy": "keep_for_review",
+        "policy_reason": "用户/AI 产物或内容反馈：只分类，不删除，交人工复核",
+        "rows": 0,
+        "classes": {
+          "r5": 0,
+          "r5_ref": 0,
+          "r3_referenced_in_r5": 0,
+          "r3_only": 0,
+          "unknown": 0
+        },
+        "deletable_rows": 0,
+        "primary_key": [
+          "qid"
+        ],
+        "sample_keys": {}
+      }
+    ],
+    "totals": {
+      "r5": 0,
+      "r5_ref": 0,
+      "r3_referenced_in_r5": 0,
+      "r3_only": 0,
+      "unknown": 0,
+      "rows_scanned": 0,
+      "scanned_tables": 9,
+      "deletable_total": 0,
+      "kept_r3_only_review": 0,
+      "unknown_total": 0,
+      "r5_related_total": 0
+    },
+    "deletable_by_table": {},
+    "review_queue": []
+  },
+  "private_preserved": [
+    {
+      "table": "users",
+      "rows": 3,
+      "preserved": true
+    },
+    {
+      "table": "sessions",
+      "rows": 4,
+      "preserved": true
+    },
+    {
+      "table": "pl_questions",
+      "rows": 0,
+      "preserved": true
+    },
+    {
+      "table": "pl_imports",
+      "rows": 0,
+      "preserved": true
+    },
+    {
+      "table": "pl_import_items",
+      "rows": 0,
+      "preserved": true
+    },
+    {
+      "table": "pl_pages",
+      "rows": 0,
+      "preserved": true
+    },
+    {
+      "table": "pl_page_edits",
+      "rows": 0,
+      "preserved": true
+    },
+    {
+      "table": "pl_papers",
+      "rows": 0,
+      "preserved": true
+    },
+    {
+      "table": "pl_paper_items",
+      "rows": 0,
+      "preserved": true
+    },
+    {
+      "table": "pl_paper_attempts",
+      "rows": 0,
+      "preserved": true
+    },
+    {
+      "table": "pl_paper_answers",
+      "rows": 0,
+      "preserved": true
+    },
+    {
+      "table": "pl_cards",
+      "rows": 0,
+      "preserved": true
+    },
+    {
+      "table": "pl_card_scans",
+      "rows": 0,
+      "preserved": true
+    },
+    {
+      "table": "ai_uploads",
+      "rows": 0,
+      "preserved": true
+    },
+    {
+      "table": "ai_documents",
+      "rows": 0,
+      "preserved": true
+    },
+    {
+      "table": "ai_notes",
+      "rows": 0,
+      "preserved": true
+    },
+    {
+      "table": "note_versions",
+      "rows": 0,
+      "preserved": true
+    },
+    {
+      "table": "upload_wrong_questions",
+      "rows": 0,
+      "preserved": true
+    },
+    {
+      "table": "asst_conversations",
+      "rows": 0,
+      "preserved": true
+    },
+    {
+      "table": "asst_messages",
+      "rows": 0,
+      "preserved": true
+    },
+    {
+      "table": "cls_courses",
+      "rows": 0,
+      "preserved": true
+    },
+    {
+      "table": "cls_scenes",
+      "rows": 0,
+      "preserved": true
+    },
+    {
+      "table": "cls_assets",
+      "rows": 0,
+      "preserved": true
+    },
+    {
+      "table": "cls_sessions",
+      "rows": 0,
+      "preserved": true
+    },
+    {
+      "table": "cls_turns",
+      "rows": 0,
+      "preserved": true
+    },
+    {
+      "table": "cls_quiz_attempts",
+      "rows": 0,
+      "preserved": true
+    },
+    {
+      "table": "focus_sessions",
+      "rows": 0,
+      "preserved": true
+    },
+    {
+      "table": "user_preferences",
+      "rows": 0,
+      "preserved": true
+    },
+    {
+      "table": "recovery_codes",
+      "rows": 0,
+      "preserved": true
+    }
+  ],
+  "retention_evidence": {},
+  "apply": {
+    "performed": true,
+    "deleted_by_table": {},
+    "deleted_total": 0,
+    "backup": null,
+    "note": "没有可清理的 r3 学习记录，未创建备份、未写库（幂等）",
+    "preservation": {
+      "unchanged": true,
+      "reason": "未执行删除"
+    }
+  },
+  "recommendation": {
+    "safe_to_apply": false,
+    "requires_operator_review": true,
+    "deletable_total": 0,
+    "unknown_total": 0,
+    "kept_r3_only_review": 0,
+    "notes": [
+      "当前没有可清理的 r3 学习记录，无需 apply"
+    ]
+  },
+  "warnings": []
+}

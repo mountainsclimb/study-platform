@@ -51,6 +51,7 @@ python -m uvicorn app.main:app --host 127.0.0.1 --port 8765
 4. **拍题双步流水线**：
    - 支持多图、相机调起、`Ctrl+V` 粘贴截图、90° 旋转与交互式 Canvas **框选裁剪**。
    - 先由视觉模型识别题干（支持双模型差异提示）→ 用户核对确认 → FTS5 + 向量混合检索题库相似真题 → 多模式求解，并支持将自传拍题加入错题本。
+   - **图片试题转 LaTeX（Surya 预置适配层）**：`app/ai/surya_latex.py` 整合开源 [Surya](https://github.com/datalab-to/surya) OCR，把题目图片识别为内容块（text/math/image/table）与整题 LaTeX（公式 KaTeX 兼容），供后续「上传图片题目转 LaTeX」功能调用；本轮只整合能力不接业务接口。可选依赖 `pip install -r requirements-surya.txt`（`surya-ocr`，推理后端 vllm/llama-server 或 `SURYA_INFERENCE_URL`），未安装时自动降级不影响现有功能。
 5. **知识清单受控工作流 Agent 与方格提示词**：
    - 标题层级感知结构化分块（保留 `heading_path` 与 DOCX 表格顺序）；扫描 PDF 支持 `pypdfium2` 渲染 + 用户确认页数后视觉 OCR 与人工校对。
    - L0–L5 分层提示词与 6 维度「方格选择」组合器、最终要求预览、「我的模板」存取与公开分享。管理员可推荐已公开模板。
@@ -103,6 +104,9 @@ python -m uvicorn app.main:app --host 127.0.0.1 --port 8765
     - 页面「志愿查询」提供一分一段（分数 → 位次与分布图）、按分数/位次找学校（冲 / 稳 / 保）、院校详情（投档线、专业录取线、招生计划、历年趋势）与招生计划检索；SVG 折线图与筛选器均为原生实现，不引入新依赖。
     - 数据边界：2017–2021 多省缺少位次与批次线（按位次匹配时提示改用分数）；2023–2025 部分省份缺少招生计划人数（2023、2024 各约一半省年、2025 有 6 个省年完全没有计划数），界面显示「未提供」而非补零；个别省年科类整列为空时自动忽略科类筛选并说明。页面顶部按当前省份年份显示「位次/批次线/科类/计划人数」四项完整度，并固定标注数据来源、MIT 许可与非官方免责说明。
     - 未导入数据时页面与接口给出明确操作指引（`GET /api/admission/meta` 返回 `ready:false`，数据接口 503），不伪造空结果。
+    - **官方渠道补采批次线**：`scripts/collect_official_data.py` 从教育在线（eol.cn）公开页面采集 2020–2026 年各省批次控制线（1,170 条，31 省全覆盖），保留来源 URL、抓取时间与 SHA-256，经 `scripts/import_official_data.py` 写入独立的 `data/admission-official.sqlite3`；主数据缺少批次线的年份（如 2020、2021）由它补齐，页面标注「官方补采」或「官方补采，按分数匹配批次」，接口新增 `GET /api/admission/control-lines`。
+    - 2017–2019 年批次线与 2017–2020 年一分一段仍未补齐：公开页面多为图片/PDF，阳光高考有 WAF（412），部分省考试院栏目为 JS/ASP 动态列表，需逐省适配与 OCR 视觉识别，详见验收记录。
+    - **数据缺失声明**：`scripts/report_data_gaps.py` 逐省年统计位次 / 批次线 / 计划数 / 科类 / 缺表情况，生成 `数据缺失声明.md` 与机器可读的 `data/admission-gaps.json`；接口 `GET /api/admission/gaps`，页面「志愿查询」底部可展开查看总览与当前省年状态（随筛选实时更新），缺失处一律如实标注、不推断。
 
 12. **异步任务与真流式（本轮）**：
    - 讲解、笔记、拍题、判分与 OCR 任务共用任务卡：流式输出采用固定壳 + 150ms 节流局部更新，流式过程中「取消任务」按钮保持可用；显示阶段进度百分比与已耗时；断线自动重连（2 次）后回退轮询；顶栏显示后台任务胶囊。
@@ -111,6 +115,88 @@ python -m uvicorn app.main:app --host 127.0.0.1 --port 8765
    - 后台管理页三个分区按需加载，操作后只局部刷新；错题/笔记/管理列表的筛选请求带防竞态取消。
    - 数学比对使用常驻 SymPy 子进程池（冷启动 2.3s → 0.7s，热态约 4ms/次；池不可用时自动回退）；离线评测接通裁判模型、剔除字面猜测、支持逐题断点续评。
 
+13. **物理演示（physics-in-motion 内核接入，方案 B）**：
+    - 只引入上游 `physics/`（求解器 + 守恒校验）与 `sim/`（场景构建器 + `SimResult`）纯 TS 物理层，用 esbuild 打成 **38KB 浏览器 ESM**（`web/vendor/physics-in-motion/physics-core.js`），不引入 React/Next 构建链；页面、SVG 渲染、播放器、图表与公式面板均为原生实现。
+    - 10 个自研教学案例（斜面、刹车、平抛、单摆、碰撞、传送带、圆轨道、波、折射、带电粒子）由前端按 `visualization` 参数即时计算动画，动画/图表/物理量/公式读取同一份 `SimResult`；每个演示展示自动验证结果（守恒律、事件顺序、答案一致性，全部 3/3–5/5 通过）。
+    - 题目详情页对物理题增加「物理演示」入口；演示页支持播放/暂停/单步/倍速/时间轴/事件标记、速度/加速度/受力/合力/轨迹/坐标/标注开关、v-t/s-t/a-t 图表与能量柱状图、分步解析（点击步骤跳转动画）。
+    - 来源与许可：physics-in-motion（MIT，Copyright (c) 2026 xuxuezhou）已登记到 `THIRD_PARTY_NOTICES.md`，vendored 目录保留上游 LICENSE 与构建说明；上游题库内容未导入，仅使用其自研教学案例。
+
+14. **AI 课堂 / 试卷工坊 / 学情分析 / AI 助手（整合 OpenMAIC、Oh My Paper、小鹿老师）**：
+    - **AI 课堂**（`#/classroom`）：主题/资料/学段/模式 → 大纲（可编辑确认）→ 逐场景生成
+      （幻灯片 / 测验 / 交互 HTML / PBL）。播放器支持 1000×562.5 舞台、KaTeX 公式、动作时间轴
+      （聚光灯 / 激光 / 高亮 / 白板 SVG / 切场 / 语音旁白字幕）、浏览器 TTS、测验判分、交互场景
+      沙箱 iframe（独立 CSP、`allow-scripts` 且无 same-origin）、PBL 项目结构、AI 老师对话与多智能体
+      课堂（角色名册、讨论/自由问答/讲授、白板）。支持 PPTX / 离线单文件 HTML / 课程 ZIP / 教学资源包
+      （PPTX + 交互场景独立网页）导出与 ZIP 导入、可选 TTS 音频与可选配图生成；无模型时所有 AI 操作禁用
+      并给出引导，不伪造内容。另提供 `docs/skills/zhixu-{classroom,paperlab}/SKILL.md` 供外部 Agent 工作台
+      按 SOP 调用（本机同源会话）。
+    - **试卷工坊**（`#/paperlab`）与**我的题库**（`#/mybank`）：图片/PDF/DOCX 试卷识别导入
+      （视觉模型逐页结构化提取 → 逐题草稿核验 → 入库，进度/取消/续跑/失败隔离）、切题与答题区标注
+      （页图框选、页级 edit.json 版本 CAS、按框重切、发布前校验）、可写题库（编辑/核验/AI 补全/
+      统计/JSON·CSV 导入导出）、组卷（手工/AI 智能/知识点/错题/分层，硬校验不缩水）、试卷详情与发布、
+      Word 导出 / A4·A3 分栏打印、答题卡模板与 SVG、整卷练习（自测判分、错题进错题本）、错题复现卷与
+      AI 巩固卷。AI 组卷/补全/巩固需要用户自己的模型连接。
+    - **学情分析**（`#/insight`）：个人维度的正确率、掌握分布、知识点强弱、错因/题型分布、趋势与
+      规则建议；AI 学习建议只基于真实统计并明确标注 AI 生成。按用户要求不含班级/学校维度。
+    - **AI 助手**（`#/assistant`，整合小纸）：会话 + JSON 工具协议（检索真题、读题（未作答不返回答案）、
+      错题、统计、笔记、知识点、我的题库；建讲解任务/巩固卷/AI 组卷等写操作需二次确认）+ 技能库
+      （内置方法论技能 + 自定义技能）+ 引用与停止/续跑。
+    - **讲错题 / 大屏讲解**：错题与题目页可全屏分步讲解、深色/大字、Canvas 批注、可选录制与保存
+      「原卷留痕」PNG。
+    - **任务中心 / 设置**：全部 AI 任务统一查看（中文名/状态/阶段/进度/取消/续跑/结果/费用估算）；
+      设置页支持 14 个任务默认模型与 AI 用量估算（只展示不扣减）。
+    - **排除项**：按用户要求不引入作业系统、学校管理、三角色工作台，以及小鹿老师的作业管理/班级管理/
+      我的学校等基础模块；组卷与整卷练习均为**个人自测**，不涉及班级收交。
+    - **支持的真实厂商（已实测）**：小米 MiMo（`mimo-v2.6-flash` 视觉+文本、`mimo-v2.5-tts` 音色合成、
+      `mimo-v2.5-asr` 语音识别）、DeepSeek（`deepseek-flash`，视觉+文本，适合做交叉核验）、
+      MiniMax（`MiniMax-M3.1-Flash` 文本、`speech-2.8-turbo` 音色、`asr-1.0` 语音识别、
+      `image-01` 图片生成）；课堂 TTS/ASR/配图会按连接自动选择对应协议。
+    - 新增运行依赖：`python-pptx==1.0.2`（PPTX 导出；本机环境已安装，`requirements.txt` 已登记）。
+      契约与接口：`INTEGRATION-CONTRACT.md`、各模块目录下的 `API.md` / `*API.md`。
+    - 文档示例数据：`python scripts/seed_demo.py`（可选，无需 AI Key，见 `scripts/README-demo.md`）。
+
+15. **本轮（2026-11-21）新增能力**：
+    - **本地 OCR（离线 CPU）**：RapidOCR(PP-OCRv4) 集成（`app/ai/ocr.py`，图片/PDF，≤5 页同步），扫描件与拍照
+      识别先跑本地 OCR 再作视觉模型提示；无视觉连接时可按 OCR 生成「无答案草稿」供人工整理（不伪造结构）；
+      接口 `POST /api/ai/ocr`、`GET /api/ai/ocr/info`。
+    - **试卷识别双模型交叉核验**：主模型（如小米 `mimo-v2.6-flash`）+ 核验模型（如 `deepseek-flash`）逐题比对
+      题干/选项/答案，差异题目标红待人工确认；同一连接+模型不允许自核验。
+    - **联网搜索**：DeepSeek 官方 `/v1/tools/search` 接入（`GET /api/ai/web-search`、助手工具 `web_search`），
+      课堂生成可开启「联网查找资料」，来源带链接落库并在 PPTX/离线 HTML/ZIP 导出中附「参考来源」页。
+    - **课堂媒体**：图片参考图编辑（MiniMax `image-01` subject_reference / OpenAI edits）、按连接聚合的音色
+      （MiniMax `/get_voice`、MiMo 固定音色）、批量旁白任务（`course-narration`，幂等/取消/续跑）、服务端
+      ASR 兜底（浏览器不支持语音识别时 MediaRecorder 录音上传）。
+    - **课堂产出**：服务端 PDF、MP4 教学视频（`course-video` 任务：静态场景 + 旁白音轨，H.264/AAC，
+      场景≤12/时长≤10 分钟）、幻灯片结构化编辑器（拖拽/缩放/属性/撤销/版本 CAS）。
+    - **3D 交互场景**：three.js（MIT）由服务端按 sha256 白名单内联注入自包含 HTML，沙箱 CSP 与
+      `allow-scripts` 不放宽，仍禁 eval/fetch/父窗口访问。
+    - **试卷 / 答题卡 PDF**：`format=pdf` 服务端渲染（失败 503 提示改用浏览器打印）。
+    - **答题卡扫描（OMR）**：定位点透视矫正 + 46 位页面码 + 气泡/学号识别 + 人工纠错确认判分
+      （opencv，无新依赖）。
+    - **暗色主题**：全站令牌与组件覆盖、顶栏「跟随系统/浅/深」三态、打印强制浅色。
+    - **中英双语**：`web/locales/{zh-CN,en-US}.json`（2,200+ 键）+ `web/js/core/i18n.js`，主要页面与任务中心
+      可切换英文（题目、AI 生成内容、数据不翻译）。
+    - 验收：`scripts/ci_accept.ps1`（compileall + node --check + 全量 pytest，`-Ui` 追加浏览器验收）。
+
+15. **专注计时、每日一签与 Anki 牌组导出（本轮）**：
+    - **顶栏番茄钟**：`.topbar-right` 的专注胶囊，支持专注/短休/长休、25/45/60 分钟与自定义 1–180 分钟、
+      任务标签、暂停/继续/结束、结束提示音（WebAudio 合成，无音频文件），剩余时间同步到页面标题；
+      面板里直接显示今日/本周分钟数与连续天数。计时内核 vendored 自 shigure
+      （MIT，`web/vendor/shigure/timer.js`，提交固定），用绝对时间戳推算剩余，刷新/切标签页不漂移。
+      会话落库 `focus_sessions`（`app/focus.py`，`client_id` 幂等、按用户隔离、日期按用户本地时区分桶），
+      接口：`POST/GET /api/focus/sessions`、`GET /api/focus/summary`、`DELETE /api/focus/sessions/{id}`。
+    - **每日一签**：每天首次进入工作台弹出古诗词/论语/幽梦影一句（可换一句、收藏、开始学习），
+      侧栏底部同一句可点击再看。数据为构建期从 chinese-poetry（MIT）抽取的 365 条
+      （`web/vendor/quotes/`，来源与 SHA-256 见同目录 README；生成脚本 `scripts/build_daily_quotes.py`，
+      只取原文、丢弃现代译文），完全离线，取不到数据就静默不弹。浏览器不允许「关闭页面时弹自定义卡片」，
+      因此只在打开时弹；关闭侧由「结束学习」场景负责。
+    - **Anki 牌组导出（`.apkg`）**：错题本页新增「导出 Anki 牌组」——按学科分牌组，正面＝来源+题干+选项，
+      背面＝参考答案+解析+我的错因/知识点/复习状态；笔记页在原有 Anki CSV 之外新增「Anki 牌组」。
+      由 `app/anki_export.py`（genanki，MIT）生成，双击即可导入 Anki / AnkiDroid；含图题不打包题图并明确提示，
+      不伪造内容。新增运行依赖 `genanki==0.13.1`（纯 Python）。
+    - 许可登记：`THIRD_PARTY_NOTICES.md` 新增第 8–10 节（shigure / chinese-poetry 子集 / genanki），
+      并补登记既有的 KaTeX、markdown-it、DOMPurify（第 11 节）。
+
 ## 验证
 
 ```powershell
@@ -118,9 +204,24 @@ $env:PYTEST_DISABLE_PLUGIN_AUTOLOAD="1"; python -m pytest -v
 python -m compileall -q app
 Get-ChildItem web/js -Recurse -Filter *.js | ForEach-Object { node --check $_.FullName }
 
+# 本轮新增：专注计时 / 每日一签数据 / Anki 牌组导出
+python -m pytest tests/test_focus.py tests/test_anki_export.py tests/test_daily_quotes.py -v
+python scripts/build_daily_quotes.py   # 重建每日一句数据（需要网络，可复用缓存；产物条数/SHA-256 随 README 刷新）
+
 # 志愿数据导入（约 1.35GB 源数据；--skip-download 复用缓存，--prune-cache 建库后清理）
 python scripts/import_admission.py
 python -m pytest tests/test_admission.py -v
+
+# 官方渠道补采批次线（2020–2026，31 省；需要网络）并导入独立小库
+python scripts/collect_official_data.py batch-lines
+python scripts/import_official_data.py
+
+# 数据缺失声明（逐省年 JSON + Markdown）
+python scripts/report_data_gaps.py
+
+# 物理演示：vendored 物理内核验证（10 个演示全部构建 + 自动校验通过）
+node scripts/verify_physics_assets.mjs
+python -m pytest tests/test_physics_assets.py -v
 
 # 真实录取库冒烟：隔离实例 + 硬链接 2.6GB 库，61 项断言（--sweep 遍历全部 232 个省年）
 python scripts/admission_smoke.py
@@ -134,8 +235,52 @@ python -m uvicorn app.main:app --host 127.0.0.1 --port 8813
 python scripts/ui_check.py --base-url http://127.0.0.1:8813 --out screenshots/ui-audit
 python scripts/ui_check_pages.py --base-url http://127.0.0.1:8813 --out screenshots/ui-audit
 python scripts/ui_check_flows.py --base-url http://127.0.0.1:8813 --out screenshots/ui-audit
+
+# 整合模块（AI 课堂 / 试卷工坊 / 学情 / AI 助手 / 任务中心）
+# 题库默认跟随 releases/CURRENT（当前 r5）；r3 已退役，只有审计对照时才显式 STUDY_BANK_DIR。
+$env:PYTEST_DISABLE_PLUGIN_AUTOLOAD="1"; python -m pytest -q
+python scripts/ui_check_integration.py --base-url http://127.0.0.1:8813 --routes home,classroom,mybank,paperlab,insight,assistant,tasks
+# 拍题入库页（#/upload）桌面/手机视口核对（本轮新增，需隔离实例与 Playwright）
+python scripts/ui_check_upload.py --base-url http://127.0.0.1:8813
+# 课堂全链路验收（本机假模型，无需真实 Key；详见 scripts/integration/README.md）
+python scripts/integration/fake_model_server.py --port 8899
+python scripts/integration/classroom_accept.py --base-url http://127.0.0.1:8813 --fake-model-base-url http://127.0.0.1:8899
+# 演示数据（可选，无需 AI Key，标题均带「示例」，--reset 可清理）
+python scripts/seed_demo.py --register
+```
+
+### 一键验收（本轮重写，默认 r5 基线）
+
+```powershell
+.\scripts\ci_accept.ps1                              # 题库基线 + compileall + node --check + 编辑器类型检查 + 全量 pytest
+.\scripts\ci_accept.ps1 -Ui -BaseUrl http://127.0.0.1:8840   # 追加 UI 路由/广场全链路/精选接入/AI 用量/拍题入库/整合模块端到端
+# 广场全链路（匿名浏览→投稿→初审→评审阈值→发布→撤回→抽检/互动/回滚）也可单独跑：
+#   python scripts/integration/plaza_accept.py --base-url http://127.0.0.1:8840
+#   （已播种实例需加 --admin-username/--admin-password；公网模式可用 --admin-token）
+# 精选接入学习链路 / AI 用量与配额（本地假模型，无真实费用）：
+#   python scripts/integration/official_accept.py --base-url http://127.0.0.1:8840
+#   python scripts/integration/ai_usage_accept.py --base-url http://127.0.0.1:8840
+.\scripts\ci_accept.ps1 -EditorBuild                 # 追加「编辑器净构建 vs web/editor 入库产物」一致性检查
+```
+
+判定语义：任一阶段失败/UI 不可达 → exit 1；存在跳过（工具缺失、`-SkipPytest`、`-Stages` 过滤）或零阶段执行 → exit 3
+`ACCEPT INCOMPLETE`；只有全部选中阶段执行且全过才 exit 0 并落盘 `build_id`/`bank_version` 报告（默认 `screenshots/accept-report.json`）。
+本轮实施与验收明细见 [`docs/知序优化实施记录-20261121.md`](docs/知序优化实施记录-20261121.md)。
+
+### 数据维护（本轮新增）
+
+```powershell
+# r3 退役记录：只读预检 → 备份+单事务清理 → 幂等复跑（PG 模式 fail-closed）
+python scripts/cleanup_r3_records.py --dry-run --json docs/r3-清理预检.json
+python scripts/cleanup_r3_records.py --apply  --json docs/r3-清理执行.json
+
+# 个人题库配图资产迁移（旧文件名 → 服务端 asset_id；默认只预检）
+python scripts/migrate_paperlab_assets.py --dry-run
+python scripts/migrate_paperlab_assets.py --apply
 ```
 
 开发与验收依赖（pytest、playwright）在 `requirements-dev.txt`；生产镜像只安装 `requirements.txt`。
+可选的图片试题转 LaTeX 依赖（`surya-ocr`）在 `requirements-surya.txt`，不装不影响现有功能，
+详见 `app/ai/surya_latex.py` 模块说明与上级 `docs/平台设计.md`「图片试题转 LaTeX」章节。
 首次检索会构建题库索引（约 0.5s）与 FTS（首次 ≥3 字检索约 1.5s），之后检索稳定在 50ms 内。
 生成找回密码恢复码需要输入当前密码（二次校验）。

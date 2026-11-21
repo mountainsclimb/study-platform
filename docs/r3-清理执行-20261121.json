@@ -1,0 +1,927 @@
+{
+  "schema": "zhixu.r3_cleanup_report.v1",
+  "generated_at": "2026-11-21T07:49:38+00:00",
+  "mode": "apply",
+  "dry_run": false,
+  "status": "applied",
+  "class_labels": {
+    "r5": "r5 可解析（保留）",
+    "r5_ref": "r5 来源引用（保留）",
+    "r3_referenced_in_r5": "r3 但 r5 有对应引用（保留，复核）",
+    "r3_only": "仅 r3 可解析（学习记录可清理）",
+    "unknown": "未知来源（保留，复核）"
+  },
+  "policy": {
+    "learning_record_tables": [
+      "attempts",
+      "mastery",
+      "wrong_questions",
+      "question_metadata",
+      "question_kp",
+      "question_method"
+    ],
+    "keep_review_tables": [
+      "ai_explanations",
+      "content_issues",
+      "content_isolations"
+    ],
+    "private_tables_never_deleted": [
+      "users",
+      "sessions",
+      "pl_questions",
+      "pl_imports",
+      "pl_import_items",
+      "pl_pages",
+      "pl_page_edits",
+      "pl_papers",
+      "pl_paper_items",
+      "pl_paper_attempts",
+      "pl_paper_answers",
+      "pl_cards",
+      "pl_card_scans",
+      "ai_uploads",
+      "ai_documents",
+      "ai_notes",
+      "note_versions",
+      "upload_wrong_questions",
+      "asst_conversations",
+      "asst_messages",
+      "cls_courses",
+      "cls_scenes",
+      "cls_assets",
+      "cls_sessions",
+      "cls_turns",
+      "cls_quiz_attempts",
+      "focus_sessions",
+      "user_preferences",
+      "recovery_codes"
+    ],
+    "derived_tables_skipped": [
+      "bank_leak_flags",
+      "bank_meta",
+      "bank_search_meta",
+      "bank_fts*"
+    ],
+    "rule": "只删除「qid 仅在 r3 且 r5 无对应引用」的学习记录；未知来源与私人内容保留"
+  },
+  "banks": {
+    "bank_root": "E:\\responsibility\\高考题库_按学科",
+    "current_pointer": "bank-20261121-r5",
+    "r3": {
+      "path": "E:\\responsibility\\高考题库_按学科\\releases\\bank-20261120-r3",
+      "db_path": "E:\\responsibility\\高考题库_按学科\\releases\\bank-20261120-r3\\题库.db",
+      "version": "bank-20261120-r3",
+      "questions": 7659,
+      "distinct_qids": 7659,
+      "distinct_source_ids": 98
+    },
+    "r5": {
+      "path": "E:\\responsibility\\高考题库_按学科\\releases\\bank-20261121-r5",
+      "db_path": "E:\\responsibility\\高考题库_按学科\\releases\\bank-20261121-r5\\题库.db",
+      "version": "bank-20261121-r5",
+      "questions": 26374,
+      "distinct_qids": 26374,
+      "distinct_source_ids": 26374
+    }
+  },
+  "app_db": {
+    "path": "E:\\responsibility\\study-platform\\data\\app.sqlite3",
+    "size_bytes": 92790784,
+    "mtime_ns": 1795247384134813700,
+    "mtime_utc": "2026-11-21T07:49:44+00:00",
+    "unchanged_by_apply": false
+  },
+  "classification": {
+    "tables": [
+      {
+        "table": "attempts",
+        "policy": "learning_record",
+        "policy_reason": "学习记录/题库派生映射：仅清理分类为 r3_only 的行",
+        "rows": 1,
+        "classes": {
+          "r5": 0,
+          "r5_ref": 0,
+          "r3_referenced_in_r5": 0,
+          "r3_only": 1,
+          "unknown": 0
+        },
+        "deletable_rows": 1,
+        "primary_key": [
+          "id"
+        ],
+        "sample_keys": {
+          "r3_only": [
+            {
+              "keys": {
+                "id": 1
+              },
+              "qid": "5b43a6b1a78f4236:2"
+            }
+          ]
+        }
+      },
+      {
+        "table": "mastery",
+        "policy": "learning_record",
+        "policy_reason": "学习记录/题库派生映射：仅清理分类为 r3_only 的行",
+        "rows": 1,
+        "classes": {
+          "r5": 0,
+          "r5_ref": 0,
+          "r3_referenced_in_r5": 0,
+          "r3_only": 1,
+          "unknown": 0
+        },
+        "deletable_rows": 1,
+        "primary_key": [
+          "user_id",
+          "qid"
+        ],
+        "sample_keys": {
+          "r3_only": [
+            {
+              "keys": {
+                "user_id": 1,
+                "qid": "5b43a6b1a78f4236:2"
+              },
+              "qid": "5b43a6b1a78f4236:2"
+            }
+          ]
+        }
+      },
+      {
+        "table": "wrong_questions",
+        "policy": "learning_record",
+        "policy_reason": "学习记录/题库派生映射：仅清理分类为 r3_only 的行",
+        "rows": 1,
+        "classes": {
+          "r5": 0,
+          "r5_ref": 0,
+          "r3_referenced_in_r5": 0,
+          "r3_only": 1,
+          "unknown": 0
+        },
+        "deletable_rows": 1,
+        "primary_key": [
+          "user_id",
+          "qid"
+        ],
+        "sample_keys": {
+          "r3_only": [
+            {
+              "keys": {
+                "user_id": 1,
+                "qid": "5b43a6b1a78f4236:2"
+              },
+              "qid": "5b43a6b1a78f4236:2"
+            }
+          ]
+        }
+      },
+      {
+        "table": "question_metadata",
+        "policy": "learning_record",
+        "policy_reason": "学习记录/题库派生映射：仅清理分类为 r3_only 的行",
+        "rows": 0,
+        "classes": {
+          "r5": 0,
+          "r5_ref": 0,
+          "r3_referenced_in_r5": 0,
+          "r3_only": 0,
+          "unknown": 0
+        },
+        "deletable_rows": 0,
+        "primary_key": [
+          "qid"
+        ],
+        "sample_keys": {}
+      },
+      {
+        "table": "question_kp",
+        "policy": "learning_record",
+        "policy_reason": "学习记录/题库派生映射：仅清理分类为 r3_only 的行",
+        "rows": 0,
+        "classes": {
+          "r5": 0,
+          "r5_ref": 0,
+          "r3_referenced_in_r5": 0,
+          "r3_only": 0,
+          "unknown": 0
+        },
+        "deletable_rows": 0,
+        "primary_key": [
+          "qid",
+          "kp_id"
+        ],
+        "sample_keys": {}
+      },
+      {
+        "table": "question_method",
+        "policy": "learning_record",
+        "policy_reason": "学习记录/题库派生映射：仅清理分类为 r3_only 的行",
+        "rows": 0,
+        "classes": {
+          "r5": 0,
+          "r5_ref": 0,
+          "r3_referenced_in_r5": 0,
+          "r3_only": 0,
+          "unknown": 0
+        },
+        "deletable_rows": 0,
+        "primary_key": [
+          "qid",
+          "method_id"
+        ],
+        "sample_keys": {}
+      },
+      {
+        "table": "ai_explanations",
+        "policy": "keep_for_review",
+        "policy_reason": "用户/AI 产物或内容反馈：只分类，不删除，交人工复核",
+        "rows": 0,
+        "classes": {
+          "r5": 0,
+          "r5_ref": 0,
+          "r3_referenced_in_r5": 0,
+          "r3_only": 0,
+          "unknown": 0
+        },
+        "deletable_rows": 0,
+        "primary_key": [
+          "id"
+        ],
+        "sample_keys": {}
+      },
+      {
+        "table": "content_issues",
+        "policy": "keep_for_review",
+        "policy_reason": "用户/AI 产物或内容反馈：只分类，不删除，交人工复核",
+        "rows": 0,
+        "classes": {
+          "r5": 0,
+          "r5_ref": 0,
+          "r3_referenced_in_r5": 0,
+          "r3_only": 0,
+          "unknown": 0
+        },
+        "deletable_rows": 0,
+        "primary_key": [
+          "id"
+        ],
+        "sample_keys": {}
+      },
+      {
+        "table": "content_isolations",
+        "policy": "keep_for_review",
+        "policy_reason": "用户/AI 产物或内容反馈：只分类，不删除，交人工复核",
+        "rows": 0,
+        "classes": {
+          "r5": 0,
+          "r5_ref": 0,
+          "r3_referenced_in_r5": 0,
+          "r3_only": 0,
+          "unknown": 0
+        },
+        "deletable_rows": 0,
+        "primary_key": [
+          "qid"
+        ],
+        "sample_keys": {}
+      }
+    ],
+    "totals": {
+      "r5": 0,
+      "r5_ref": 0,
+      "r3_referenced_in_r5": 0,
+      "r3_only": 3,
+      "unknown": 0,
+      "rows_scanned": 3,
+      "scanned_tables": 9,
+      "deletable_total": 3,
+      "kept_r3_only_review": 0,
+      "unknown_total": 0,
+      "r5_related_total": 0
+    },
+    "deletable_by_table": {
+      "attempts": 1,
+      "mastery": 1,
+      "wrong_questions": 1
+    },
+    "review_queue": []
+  },
+  "private_preserved": [
+    {
+      "table": "users",
+      "rows": 3,
+      "preserved": true
+    },
+    {
+      "table": "sessions",
+      "rows": 4,
+      "preserved": true
+    },
+    {
+      "table": "pl_questions",
+      "rows": 0,
+      "preserved": true
+    },
+    {
+      "table": "pl_imports",
+      "rows": 0,
+      "preserved": true
+    },
+    {
+      "table": "pl_import_items",
+      "rows": 0,
+      "preserved": true
+    },
+    {
+      "table": "pl_pages",
+      "rows": 0,
+      "preserved": true
+    },
+    {
+      "table": "pl_page_edits",
+      "rows": 0,
+      "preserved": true
+    },
+    {
+      "table": "pl_papers",
+      "rows": 0,
+      "preserved": true
+    },
+    {
+      "table": "pl_paper_items",
+      "rows": 0,
+      "preserved": true
+    },
+    {
+      "table": "pl_paper_attempts",
+      "rows": 0,
+      "preserved": true
+    },
+    {
+      "table": "pl_paper_answers",
+      "rows": 0,
+      "preserved": true
+    },
+    {
+      "table": "pl_cards",
+      "rows": 0,
+      "preserved": true
+    },
+    {
+      "table": "pl_card_scans",
+      "rows": 0,
+      "preserved": true
+    },
+    {
+      "table": "ai_uploads",
+      "rows": 0,
+      "preserved": true
+    },
+    {
+      "table": "ai_documents",
+      "rows": 0,
+      "preserved": true
+    },
+    {
+      "table": "ai_notes",
+      "rows": 0,
+      "preserved": true
+    },
+    {
+      "table": "note_versions",
+      "rows": 0,
+      "preserved": true
+    },
+    {
+      "table": "upload_wrong_questions",
+      "rows": 0,
+      "preserved": true
+    },
+    {
+      "table": "asst_conversations",
+      "rows": 0,
+      "preserved": true
+    },
+    {
+      "table": "asst_messages",
+      "rows": 0,
+      "preserved": true
+    },
+    {
+      "table": "cls_courses",
+      "rows": 0,
+      "preserved": true
+    },
+    {
+      "table": "cls_scenes",
+      "rows": 0,
+      "preserved": true
+    },
+    {
+      "table": "cls_assets",
+      "rows": 0,
+      "preserved": true
+    },
+    {
+      "table": "cls_sessions",
+      "rows": 0,
+      "preserved": true
+    },
+    {
+      "table": "cls_turns",
+      "rows": 0,
+      "preserved": true
+    },
+    {
+      "table": "cls_quiz_attempts",
+      "rows": 0,
+      "preserved": true
+    },
+    {
+      "table": "focus_sessions",
+      "rows": 0,
+      "preserved": true
+    },
+    {
+      "table": "user_preferences",
+      "rows": 0,
+      "preserved": true
+    },
+    {
+      "table": "recovery_codes",
+      "rows": 0,
+      "preserved": true
+    }
+  ],
+  "retention_evidence": {},
+  "apply": {
+    "performed": true,
+    "deleted_by_table": {
+      "attempts": 1,
+      "mastery": 1,
+      "wrong_questions": 1
+    },
+    "deleted_total": 3,
+    "kept_rows_by_table": {
+      "attempts": 0,
+      "mastery": 0,
+      "wrong_questions": 0,
+      "question_metadata": 0,
+      "question_kp": 0,
+      "question_method": 0
+    },
+    "backup": {
+      "path": "E:\\responsibility\\study-platform\\data\\backups\\zhixu-backup-20261121-074938-670829.zip",
+      "size_bytes": 41360944,
+      "file_count": 2,
+      "created_at": "2026-11-21T07:49:44.033048+00:00",
+      "key_included": false,
+      "key_present": true,
+      "bank_version": "bank-20261121-r5",
+      "bank_source": "pointer:bank-20261121-r5",
+      "directories": {
+        "attempts": {
+          "file_count": 0,
+          "bytes": 0
+        },
+        "ai-files": {
+          "file_count": 0,
+          "bytes": 0
+        },
+        "paperlab": {
+          "file_count": 0,
+          "bytes": 0
+        },
+        "classroom": {
+          "file_count": 1,
+          "bytes": 92
+        }
+      },
+      "excluded_entries": [
+        ".admission-cache",
+        "admission-gaps.json",
+        "admission-official.sqlite3",
+        "admission.sqlite3",
+        "backups",
+        "official-sources"
+      ],
+      "mode": "auto"
+    },
+    "db_sha256_before": "ddeb65cc8317adf5fdb492eefd390a9e7361769021d93472ba83372ad406ca7a",
+    "db_sha256_after": "23923be9e1490bac7a13db5bee7fcbf739cf4f4c4cfb17b7d418d944ba9e5335",
+    "preservation": {
+      "unchanged": true,
+      "before": {
+        "non_target_tables": {
+          "ai_allowed_hosts": {
+            "rows": 0,
+            "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+          },
+          "ai_audit": {
+            "rows": 0,
+            "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+          },
+          "ai_documents": {
+            "rows": 0,
+            "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+          },
+          "ai_embeddings_config": {
+            "rows": 0,
+            "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+          },
+          "ai_jobs": {
+            "rows": 0,
+            "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+          },
+          "ai_models": {
+            "rows": 0,
+            "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+          },
+          "ai_notes": {
+            "rows": 0,
+            "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+          },
+          "ai_providers": {
+            "rows": 0,
+            "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+          },
+          "ai_task_defaults": {
+            "rows": 0,
+            "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+          },
+          "ai_uploads": {
+            "rows": 0,
+            "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+          },
+          "ai_usage": {
+            "rows": 0,
+            "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+          },
+          "app_settings": {
+            "rows": 0,
+            "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+          },
+          "asst_conversations": {
+            "rows": 0,
+            "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+          },
+          "asst_messages": {
+            "rows": 0,
+            "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+          },
+          "asst_skills": {
+            "rows": 0,
+            "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+          },
+          "auth_rate_events": {
+            "rows": 1,
+            "sha256": "774e7154ee4b950263c9766e2e287e46717af7066c72564d8c5ece51b74cfd31"
+          },
+          "chunk_embeddings": {
+            "rows": 0,
+            "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+          },
+          "cls_assets": {
+            "rows": 0,
+            "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+          },
+          "cls_courses": {
+            "rows": 0,
+            "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+          },
+          "cls_quiz_attempts": {
+            "rows": 0,
+            "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+          },
+          "cls_scenes": {
+            "rows": 0,
+            "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+          },
+          "cls_sessions": {
+            "rows": 0,
+            "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+          },
+          "cls_turns": {
+            "rows": 0,
+            "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+          },
+          "eval_runs": {
+            "rows": 1,
+            "sha256": "1fac9bcbcd5f14c8454386c82d847f3929738bbe69389fd3837f123d330f37af"
+          },
+          "focus_sessions": {
+            "rows": 0,
+            "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+          },
+          "knowledge_points": {
+            "rows": 245,
+            "sha256": "fcc72e2f8a338a48690b28bfae0fb56d417b2af9fc5e64d3bbee667e244441c8"
+          },
+          "methods": {
+            "rows": 0,
+            "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+          },
+          "note_versions": {
+            "rows": 0,
+            "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+          },
+          "pl_card_scans": {
+            "rows": 0,
+            "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+          },
+          "pl_cards": {
+            "rows": 0,
+            "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+          },
+          "pl_import_items": {
+            "rows": 0,
+            "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+          },
+          "pl_imports": {
+            "rows": 0,
+            "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+          },
+          "pl_page_edits": {
+            "rows": 0,
+            "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+          },
+          "pl_pages": {
+            "rows": 0,
+            "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+          },
+          "pl_paper_answers": {
+            "rows": 0,
+            "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+          },
+          "pl_paper_attempts": {
+            "rows": 0,
+            "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+          },
+          "pl_paper_items": {
+            "rows": 0,
+            "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+          },
+          "pl_papers": {
+            "rows": 0,
+            "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+          },
+          "pl_questions": {
+            "rows": 0,
+            "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+          },
+          "prompt_templates": {
+            "rows": 0,
+            "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+          },
+          "recovery_codes": {
+            "rows": 0,
+            "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+          },
+          "schema_version": {
+            "rows": 6,
+            "sha256": "63c115e7e7714727953abaff131ccef6db843315d06ceea5f70f8cf7ae55eecb"
+          },
+          "service_heartbeat": {
+            "rows": 0,
+            "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+          },
+          "sessions": {
+            "rows": 4,
+            "sha256": "dfd2fbffa7ef028d5b775b04151ab182997648cc05fb89dedac5ae5f463c27c8"
+          },
+          "upload_wrong_questions": {
+            "rows": 0,
+            "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+          },
+          "user_preferences": {
+            "rows": 0,
+            "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+          },
+          "users": {
+            "rows": 3,
+            "sha256": "cf05fea6880081e3953ac8e3b549c6bc91966b5dc378a5741c65682964497c0e"
+          }
+        },
+        "r5_linked": {
+          "rows": 0,
+          "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+        },
+        "overall_sha256": "6c230f2ec2752c618e41d941fd699762c9fa3c4b5270c8c0974b2c8c83ad4f16"
+      },
+      "after": {
+        "non_target_tables": {
+          "ai_allowed_hosts": {
+            "rows": 0,
+            "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+          },
+          "ai_audit": {
+            "rows": 0,
+            "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+          },
+          "ai_documents": {
+            "rows": 0,
+            "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+          },
+          "ai_embeddings_config": {
+            "rows": 0,
+            "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+          },
+          "ai_jobs": {
+            "rows": 0,
+            "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+          },
+          "ai_models": {
+            "rows": 0,
+            "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+          },
+          "ai_notes": {
+            "rows": 0,
+            "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+          },
+          "ai_providers": {
+            "rows": 0,
+            "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+          },
+          "ai_task_defaults": {
+            "rows": 0,
+            "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+          },
+          "ai_uploads": {
+            "rows": 0,
+            "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+          },
+          "ai_usage": {
+            "rows": 0,
+            "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+          },
+          "app_settings": {
+            "rows": 0,
+            "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+          },
+          "asst_conversations": {
+            "rows": 0,
+            "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+          },
+          "asst_messages": {
+            "rows": 0,
+            "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+          },
+          "asst_skills": {
+            "rows": 0,
+            "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+          },
+          "auth_rate_events": {
+            "rows": 1,
+            "sha256": "774e7154ee4b950263c9766e2e287e46717af7066c72564d8c5ece51b74cfd31"
+          },
+          "chunk_embeddings": {
+            "rows": 0,
+            "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+          },
+          "cls_assets": {
+            "rows": 0,
+            "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+          },
+          "cls_courses": {
+            "rows": 0,
+            "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+          },
+          "cls_quiz_attempts": {
+            "rows": 0,
+            "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+          },
+          "cls_scenes": {
+            "rows": 0,
+            "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+          },
+          "cls_sessions": {
+            "rows": 0,
+            "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+          },
+          "cls_turns": {
+            "rows": 0,
+            "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+          },
+          "eval_runs": {
+            "rows": 1,
+            "sha256": "1fac9bcbcd5f14c8454386c82d847f3929738bbe69389fd3837f123d330f37af"
+          },
+          "focus_sessions": {
+            "rows": 0,
+            "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+          },
+          "knowledge_points": {
+            "rows": 245,
+            "sha256": "fcc72e2f8a338a48690b28bfae0fb56d417b2af9fc5e64d3bbee667e244441c8"
+          },
+          "methods": {
+            "rows": 0,
+            "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+          },
+          "note_versions": {
+            "rows": 0,
+            "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+          },
+          "pl_card_scans": {
+            "rows": 0,
+            "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+          },
+          "pl_cards": {
+            "rows": 0,
+            "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+          },
+          "pl_import_items": {
+            "rows": 0,
+            "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+          },
+          "pl_imports": {
+            "rows": 0,
+            "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+          },
+          "pl_page_edits": {
+            "rows": 0,
+            "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+          },
+          "pl_pages": {
+            "rows": 0,
+            "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+          },
+          "pl_paper_answers": {
+            "rows": 0,
+            "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+          },
+          "pl_paper_attempts": {
+            "rows": 0,
+            "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+          },
+          "pl_paper_items": {
+            "rows": 0,
+            "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+          },
+          "pl_papers": {
+            "rows": 0,
+            "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+          },
+          "pl_questions": {
+            "rows": 0,
+            "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+          },
+          "prompt_templates": {
+            "rows": 0,
+            "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+          },
+          "recovery_codes": {
+            "rows": 0,
+            "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+          },
+          "schema_version": {
+            "rows": 6,
+            "sha256": "63c115e7e7714727953abaff131ccef6db843315d06ceea5f70f8cf7ae55eecb"
+          },
+          "service_heartbeat": {
+            "rows": 0,
+            "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+          },
+          "sessions": {
+            "rows": 4,
+            "sha256": "dfd2fbffa7ef028d5b775b04151ab182997648cc05fb89dedac5ae5f463c27c8"
+          },
+          "upload_wrong_questions": {
+            "rows": 0,
+            "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+          },
+          "user_preferences": {
+            "rows": 0,
+            "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+          },
+          "users": {
+            "rows": 3,
+            "sha256": "cf05fea6880081e3953ac8e3b549c6bc91966b5dc378a5741c65682964497c0e"
+          }
+        },
+        "r5_linked": {
+          "rows": 0,
+          "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+        },
+        "overall_sha256": "6c230f2ec2752c618e41d941fd699762c9fa3c4b5270c8c0974b2c8c83ad4f16"
+      }
+    },
+    "note": "单事务提交；再次 --apply 应删除 0 行（幂等）"
+  },
+  "recommendation": {
+    "safe_to_apply": true,
+    "requires_operator_review": true,
+    "deletable_total": 3,
+    "unknown_total": 0,
+    "kept_r3_only_review": 0,
+    "notes": [
+      "先复核报告中 deletable 清单（3 行的示例主键），确认均属旧 r3 学习记录",
+      "apply 前由运维/lead 确认可恢复备份；工具在 --apply 时会先自动备份",
+      "apply 为单事务删除，二次运行应删除 0 行（幂等）"
+    ]
+  },
+  "warnings": []
+}
