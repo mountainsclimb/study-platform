@@ -71,6 +71,8 @@ _ID_TABLES = frozenset({
     "mastery_paths", "mastery_path_nodes", "mastery_path_events",
     # M5：机械/工厂演示模板的确定性仿真运行记录（固定种子，可复现）。
     "demo_sim_runs",
+    # M6：带引文的专题报告与互动讲义（规则汇编 + 结构化导出）。
+    "topic_reports", "handouts",
 })
 _INSERT_TABLE = re.compile(r"^\s*INSERT\s+INTO\s+([a-z_][a-z_0-9]*)\b", re.IGNORECASE)
 _QMARK = re.compile(r"""'(?:[^']|'')*'|"(?:[^"]|"")*"|--[^\n]*|/\*[\s\S]*?\*/|\?""")

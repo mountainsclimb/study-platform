@@ -1156,6 +1156,23 @@ TOOL_SPECS = [
             _param("limit", "integer", "返回条数 1–8，默认 5"),
         ],
     },
+    {
+        "name": "step_hint",
+        "description": (
+            "读取某道题的逐步辅导提示（审题→知识点→解析首步→完整解析）。未解锁步骤只返回标题，"
+            "不含正文；完整解析需学生在题目页逐级提交尝试后才会解锁。引用时说明这是分步提示。"
+        ),
+        "side_effect": False,
+        "requires_confirmation": False,
+        "params": [
+            _param(
+                "ref",
+                "string",
+                "题目统一引用（bank:<qid> / app:<id> / official:<公开编号>，题库裸题号也可）",
+                True,
+            )
+        ],
+    },
 ]
 
 TOOL_NAMES = frozenset(spec["name"] for spec in TOOL_SPECS)
@@ -1965,6 +1982,55 @@ async def _tool_web_search(user, args) -> dict:
     )
 
 
+def _tool_step_hint(user, args) -> dict:
+    """读取某道题的逐步辅导提示（只读）：只返回服务端公开视图，锁定步骤天然无正文。
+
+    ``ref`` 支持统一题目引用（``bank:`` / ``app:`` / ``official:``，裸题号按题库解析）：
+    已有会话直接读取（``guided_hint.get_hint_by_ref``）；没有会话时按
+    ``guided_hint.create_hint`` 幂等创建（同用户同题复用，不重复生成步骤）。
+    题目不可用/被隔离/引用格式错误等统一转成中文 :class:`ToolError`，不向上抛 500；
+    锁定步骤的正文只由服务端视图保证不下发，本工具**不自行补全**任何正文。
+    """
+    ref = _arg_str(args, "ref", required=True, max_len=160)
+    from . import guided_hint
+
+    try:
+        try:
+            view = guided_hint.get_hint_by_ref(user["id"], ref)
+        except HTTPException as exc:
+            if exc.status_code != 404:
+                raise
+            view = guided_hint.create_hint(user["id"], ref)
+    except HTTPException as exc:
+        detail = exc.detail if isinstance(exc.detail, str) and exc.detail.strip() else (
+            "服务暂时不可用，请稍后重试"
+        )
+        raise ToolError("该题暂时无法生成逐步提示：%s" % detail.strip(), status=exc.status_code) from None
+    except Exception:  # noqa: BLE001 - 工具边界：未知异常统一转中文，不把 500 抛给模型
+        raise ToolError("该题暂时无法生成逐步提示：服务暂时不可用，请稍后重试") from None
+
+    hint = view.get("hint") if isinstance(view.get("hint"), dict) else {}
+    steps = view.get("steps") if isinstance(view.get("steps"), list) else []
+    progress = hint.get("progress") if isinstance(hint.get("progress"), dict) else {}
+    total = int(progress.get("total") or len(steps))
+    unlocked = int(progress.get("unlocked") or 0)
+    if progress.get("done"):
+        summary = "分步提示：第 %d/%d 步已解锁（全部解锁）；完整解析可以查看了。" % (
+            unlocked, total,
+        )
+    else:
+        summary = "分步提示：第 %d/%d 步已解锁；后续步骤需先在题目页提交尝试后才会解锁。" % (
+            unlocked, total,
+        )
+    question_ref_value = str(hint.get("question_ref") or ref)
+    return _tool_ok(
+        "step_hint",
+        summary,
+        {"hint": hint, "steps": steps},
+        [{"kind": "question", "ref": question_ref_value}],
+    )
+
+
 READ_TOOL_HANDLERS = {
     "search_source_bank": _tool_search_source_bank,
     "search_official": _tool_search_official,
@@ -1976,6 +2042,7 @@ READ_TOOL_HANDLERS = {
     "list_knowledge_points": _tool_list_knowledge_points,
     "list_mybank_questions": _tool_list_mybank_questions,
     "web_search": _tool_web_search,
+    "step_hint": _tool_step_hint,
 }
 
 
@@ -2349,7 +2416,10 @@ def _system_prompt(user: dict, conversation: dict, skills: list[dict] | None = N
         "5. 平台精选题（official:<公开编号>，公开编号形如 plz-...）：只引用工具返回的公开信息，"
         "引用时必须写「平台精选 · 公开编号 plz-...」并说明其审核状态（社区待核验/已核验/精选）；"
         "绝不透露或猜测内部 ID、投稿人、审核员与后台字段；已撤回/有争议的题目不得复述题面、答案或解析。\n"
-        "6. 数学公式用 $...$，回答用中文 Markdown；引用题目写题号；回答简明、可执行，不说空话。\n\n"
+        "6. 数学公式用 $...$，回答用中文 Markdown；引用题目写题号；回答简明、可执行，不说空话。\n"
+        "7. 分步提示（step_hint）只引用工具返回的已解锁步骤，锁定步骤只能说明「需先在题目页提交尝试」，"
+        "不得编造、补全或推测其正文；引用时说明这是分步提示，完整解析须提示学生在题目页逐级提交尝试后"
+        "才会解锁。\n\n"
         "【可用工具】\n%s\n\n"
         "【输出协议（必须严格遵守）】\n"
         "每一步只输出一个 JSON 对象，不要输出 Markdown 代码块或任何额外文字：\n"

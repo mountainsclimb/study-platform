@@ -11,6 +11,7 @@ import { createModelPicker } from '../components/modelPicker.js';
 import { filePicker } from '../components/filePicker.js';
 import { createPromptGrid } from '../components/promptGrid.js';
 import { renderMindmapWidget, markdownToMindmapTree } from '../components/mindmap.js';
+import { renderTopicReportsPanel, renderHandoutsPanel, m6t } from '../components/learningDocs.js';
 import { t } from '../core/i18n.js';
 
 // OCR 逐页状态由后端给出：text=资料自带文本层，pending=待识别，recognized=已识别，
@@ -78,8 +79,19 @@ function coverageSummary(doc) {
 // 知识清单三个入口：我的笔记 / 资料库 / AI 整理。用模块级变量记住当前分区，
 // 让 renderRoute 重新渲染（保存、回滚、任务完成）后仍停留在同一入口。
 let noteSection = 'notes';
+// M6 学习文档（专题报告 / 互动讲义）组件实例：页面重渲染或登出/401 时销毁，
+// 关闭可能残留的弹层并移除 window 级监听；接口不可用时由组件内部中文降级。
+let learningDocsControllers = [];
+
+function destroyLearningDocs() {
+  for (const controller of learningDocsControllers) {
+    try { controller.destroy(); } catch { /* 单个组件清理失败不影响页面 */ }
+  }
+  learningDocsControllers = [];
+}
+
 // 登出/401 后清空分区记忆，避免下一个账号一进知识清单就落在 AI 整理表单。
-onSessionReset(() => { noteSection = 'notes'; });
+onSessionReset(() => { noteSection = 'notes'; destroyLearningDocs(); });
 
 function statusTag(text, tone, glyph) {
   return el('span', { class: 'pg-tag', 'data-tone': tone },
@@ -121,6 +133,8 @@ function renderDocCoverage(doc) {
 
 
 export async function renderNotes(container, version, params = null) {
+  // 重新渲染前先销毁上一轮 M6 学习文档组件（含打开的弹层），避免残留弹层与请求。
+  destroyLearningDocs();
   const [notesRes, docsRes, gridSpec, catalog, kps] = await Promise.all([
     api('/notes'),
     api('/documents'),
@@ -832,6 +846,32 @@ export async function renderNotes(container, version, params = null) {
     if (noteSection === 'ai') updateEstimate();
   }
 
+  // M6 学习文档：在既有三个入口与阅读区之后追加「专题报告 / 互动讲义」两个折叠区块，
+  // 服务端规则汇编内容只读陈列（创建/编辑/导出/删除由组件接管）。区块放在页面底部，
+  // 不改动既有 tab 与列表渲染逻辑；接口不可用时组件内部显式中文降级，不影响笔记/资料/摘录。
+  const topicReportsPanel = renderTopicReportsPanel({ heading: false });
+  const handoutsPanel = renderHandoutsPanel({ heading: false });
+  learningDocsControllers = [topicReportsPanel, handoutsPanel];
+  const learningDocsSection = el('section', {
+    class: 'm6-learning-docs',
+    id: 'notes-learning-docs',
+    'aria-label': m6t('sectionTitle'),
+  },
+  el('div', { class: 'm6-learning-docs-head' },
+    el('p', { class: 'pg-kicker' }, m6t('sectionEyebrow')),
+    el('h2', { class: 'm6-learning-docs-title' }, m6t('sectionTitle')),
+    el('p', { class: 'help' }, m6t('sectionHint'))),
+  el('details', { class: 'm6-fold', 'data-m6-fold': 'topic-reports' },
+    el('summary', { class: 'm6-fold-summary' },
+      el('span', { class: 'm6-fold-title' }, m6t('topicReportsTitle')),
+      el('span', { class: 'm6-fold-note' }, m6t('topicReportsSummary'))),
+    topicReportsPanel.element),
+  el('details', { class: 'm6-fold', 'data-m6-fold': 'handouts' },
+    el('summary', { class: 'm6-fold-summary' },
+      el('span', { class: 'm6-fold-title' }, m6t('handoutsTitle')),
+      el('span', { class: 'm6-fold-note' }, m6t('handoutsSummary'))),
+    handoutsPanel.element));
+
   container.replaceChildren(
     el('div', { class: 'pg-page-head' },
       heading('KNOWLEDGE WORKSPACE', t('notes.connectScatteredMaterialsIntoKnowledge'),
@@ -840,7 +880,7 @@ export async function renderNotes(container, version, params = null) {
           button(t('notes.newNote'), () => { switchSection('notes'); toggleManual(); }, 'secondary', 'edit'),
           button(t('notes.organizeMaterialsWithAi'), () => switchSection('ai'), '', 'sparkle')))),
     sectionTabs,
-    notesPanel, docsPanel, aiPanel);
+    notesPanel, docsPanel, aiPanel, learningDocsSection);
   switchSection(noteSection);
 
   renderDocsUI();

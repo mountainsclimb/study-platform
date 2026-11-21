@@ -533,3 +533,43 @@ for every public read path, and distribution changes must keep the fingerprint/.
     99 new locale keys (`study.m5.*`) keep zh/en aligned (5,177 keys each); `accept_runner.py` gains an `m5` stage
     running `scripts/integration/m5_accept.py`, and `ui_static_accept.py` asserts the mechanical/factory components,
     low-WebGL fallback, page wiring and the `study.m5.` namespace minimum.
+
+17. **M6 rule-based documents, step-hint tool and pyKT protocol (2026-11-21).** Two new rule-compilation modules
+    (explicitly `generator="rules"`, no AI model call, citations only from real rows) plus assistant/protocol additions.
+    - `app/topic_report.py` (`/api/topic-reports`, table `topic_reports`) turns a topic plus selected
+      documents/notes/knowledge points/artifacts into a seven-section Markdown report: real document chunks are quoted
+      with `（来源：《title》第 N 页 · chunk <id> · 文档版本 <doc_version>）`, note excerpts come from
+      `doc_annotations` with their citations, artifacts are referenced by kind + fixed revision, related practice items
+      come from `practice.search_similar_questions` labelled as candidates only, and evidence comes from
+      `study_evidence.summary` with an honest sample-sufficiency note. At least one source is required (422), each kind
+      is capped at 10 and a user at 50, ownership failures are 404, and `sources` matches the prose one-to-one.
+      Editing uses `expected_version` CAS (409) with title ≤120 / content ≤200KB; `GET .../markdown` returns a
+      `text/markdown` attachment with an RFC 5987 Chinese filename.
+    - `app/handout.py` (`/api/handouts`, table `handouts`) builds an interactive handout from a course, notes, artifacts
+      and/or knowledge points (≥1 source, caps and ownership as above) with fixed-order sections `course_outline`,
+      `artifact` (fixed revision, legal inline PNG previews capped at 300KB total with an explicit omission note),
+      `excerpt`, `practice`, `evidence` and `meta`. `GET .../export?format=html|pdf` returns a self-contained HTML file
+      (inline CSS, no scripts or external links, fully escaped, `data-handout-id`/`data-version`) or a PDF through the
+      existing Playwright renderer (503 Chinese fallback when unavailable); invalid formats are 422.
+    - `app/assistant.py` gains the read-only `step_hint` tool (`side_effect=false`, param `ref`): it resolves
+      `guided_hint.get_hint_by_ref` (idempotently creating the session when missing) and returns only the public view —
+      locked steps have no body server-side and the tool never fills them in — with a Chinese summary telling the
+      student to submit attempts in the question page. The tool list grows from 13 to 14 and the system prompt forbids
+      inventing locked-step content.
+    - `app/ai/notes_agent.py` scan pages now carry local-OCR content blocks (`id/kind/text/latex/needs_review/
+      confidence/order/page/rotation/bbox/norm/source`, ≤200 per page) when the visual model is unavailable
+      (`source=local_ocr`), persisted through `ocr_pages_json` without adding empty keys to legacy pages;
+      `_local_ocr_page` calls `ocr.recognize_image(..., include_blocks=True)` while `_local_ocr_page_text` stays
+      compatible, and visual-model pages never claim local blocks as visual transcription.
+    - `scripts/integration/pykt_export.py` exports de-identified JSONL (`user_key=sha256(salt+":"+user_id)[:16]`,
+      item/kc/version/timestamp/label/hint-state fields; no usernames, stems or answers) from read-only storage only
+      when an explicit salt is provided (`--salt` / `STUDY_PYKT_SALT`, otherwise exit 2), skips pending/unknown/
+      self-report/orphan rows, evaluates data thresholds (users, events, per-user events, per-KC events, label
+      coverage; `evaluation_allowed` honest) and computes deterministic baselines (smoothed accuracy + leakage-free
+      PFA-lite); BKT/DKT are explicitly left to a separate training environment.
+    - Frontend: `web/js/components/learningDocs.js` provides `renderTopicReportsPanel` / `renderHandoutsPanel`
+      (list/create/detail/edit with CAS/download Markdown/export HTML+PDF/delete, per-panel Chinese degradation);
+      `web/js/pages/notes.js` mounts a bottom 「学习文档」 section with two collapsed panels and destroys them on session
+      reset; `web/styles-m6.css` is loaded by `web/index.html`; 110 new locale keys (`study.m6.*`) keep zh/en aligned
+      (5,287 keys each). `accept_runner.py` gains an `m6` stage running `scripts/integration/m6_accept.py`, and
+      `ui_static_accept.py` asserts the M6 component/page/style wiring and the `study.m6.` namespace minimum.

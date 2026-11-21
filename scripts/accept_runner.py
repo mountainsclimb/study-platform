@@ -83,6 +83,7 @@ STAGE_LABELS = {
     "m3": "M3 逐步提示/资料定位/掌握路径端到端（临时数据目录）",
     "m4": "M4 课堂版本化演示与固定版本导出端到端（临时数据目录）",
     "m5": "M5 机械/工厂演示模板与固定种子仿真端到端（临时数据目录）",
+    "m6": "M6 专题报告/互动讲义/逐步提示工具/pyKT 协议端到端（临时数据目录）",
     "pytest": "pytest（全量）",
     "ui-server": "UI 服务器可达性",
     "ui-plaza": "广场端到端（投稿→评审→发布→撤回）",
@@ -451,6 +452,14 @@ def build_stages(
         command=[python, "scripts/integration/m5_accept.py"],
         cwd=root,
         description="M5 端到端：机械/工厂模板、DES 可复现、附件与课堂导出（隔离数据目录，TestClient）",
+    )
+    candidates["m6"] = Stage(
+        key="m6", name=STAGE_LABELS["m6"],
+        # M6（方案 §5.3）：临时数据目录内跑通「专题报告（真实引用）/互动讲义（HTML/PDF 导出）/
+        # 小纸只读 step_hint 工具/pyKT 去标识化数据协议与阈值门控」；不读写题库与生产数据。
+        command=[python, "scripts/integration/m6_accept.py"],
+        cwd=root,
+        description="M6 端到端：规则汇编文档、讲义导出、逐步提示工具与 pyKT 协议（隔离数据目录）",
     )
     candidates["pytest"] = Stage(
         key="pytest", name=STAGE_LABELS["pytest"],

@@ -237,14 +237,54 @@ def _row_chunks(row) -> list[dict]:
     return [item for item in raw if isinstance(item, dict)] if isinstance(raw, list) else []
 
 
-def _page_entry(text="", state="pending", source="none", updated_at=None, error=None) -> dict:
-    return {
+MAX_PAGE_OCR_BLOCKS = 200
+
+
+def _normalize_ocr_blocks(raw) -> list[dict]:
+    """扫描页 OCR 内容块（M6 扩面）：只保留可定位/可展示字段，超量截断。
+
+    块来自本地 OCR（``ocr.build_blocks``）：文字/公式/表格/图片 + 原图 bbox/归一化位置、
+    阅读顺序、页码、旋转与置信度；视觉模型转写的页不伪造块。
+    """
+    blocks: list[dict] = []
+    for index, item in enumerate(raw or []):
+        if not isinstance(item, dict):
+            continue
+        text = str(item.get("text") or "")
+        if not text.strip() and item.get("kind") != "image":
+            continue
+        block = {
+            "id": str(item.get("id") or f"b{index + 1}")[:32],
+            "kind": str(item.get("kind") or "text")[:16],
+            "text": text[:4000],
+            "latex": (str(item.get("latex"))[:2000] if item.get("latex") else None),
+            "needs_review": bool(item.get("needs_review")),
+            "confidence": item.get("confidence"),
+            "order": _page_number(item.get("order"), 0),
+            "page": _page_number(item.get("page"), 0),
+            "rotation": item.get("rotation") if isinstance(item.get("rotation"), (int, float)) else 0,
+            "bbox": item.get("bbox") if isinstance(item.get("bbox"), dict) else None,
+            "norm": item.get("norm") if isinstance(item.get("norm"), dict) else None,
+            "source": str(item.get("source") or "local_ocr")[:32],
+        }
+        blocks.append(block)
+        if len(blocks) >= MAX_PAGE_OCR_BLOCKS:
+            break
+    return blocks
+
+
+def _page_entry(text="", state="pending", source="none", updated_at=None, error=None, blocks=None) -> dict:
+    entry = {
         "text": str(text or ""),
         "state": state if state in OCR_PAGE_STATES else "pending",
         "source": str(source or "none"),
         "updated_at": updated_at or db.utcnow(),
         "error": str(error)[:400] if error else None,
     }
+    normalized_blocks = _normalize_ocr_blocks(blocks)
+    if normalized_blocks:
+        entry["blocks"] = normalized_blocks
+    return entry
 
 
 def _normalize_ocr_pages(raw, default_version: int = 1) -> dict:
@@ -290,6 +330,9 @@ def _normalize_ocr_pages(raw, default_version: int = 1) -> dict:
             "updated_at": value.get("updated_at"),
             "error": value.get("error"),
         }
+        blocks = _normalize_ocr_blocks(value.get("blocks"))
+        if blocks:
+            pages[str(number)]["blocks"] = blocks
     return {"version": version, "pages": pages}
 
 
@@ -722,34 +765,55 @@ def _ocr_prompt_with_hint(ocr_hint: str | None = None) -> str:
     )
 
 
-async def _local_ocr_page_text(image_part) -> tuple[str, str | None]:
-    """逐页先跑本地 OCR；不可用/失败返回空文本，不阻断视觉识别，也不伪造结果。"""
+async def _local_ocr_page(image_part) -> tuple[str, list[dict], str | None]:
+    """逐页先跑本地 OCR（含内容块）；不可用/失败返回空文本与空块，不阻断视觉识别。
+
+    M6「扫描资料本地识别扩面」：本地引擎返回文字块与原图定位（bbox/norm/阅读顺序/页码/
+    置信度），视觉模型不可用时页面可保留可定位的块；视觉模型成功时块仅用于校对提示，
+    不冒充视觉转写。
+    """
     data = image_part.get("data") if isinstance(image_part, dict) else None
     if not isinstance(data, str) or not data:
-        return "", None
+        return "", [], None
     try:
         from . import ocr as local_ocr
     except Exception:  # 本地 OCR 模块导入失败按不可用处理，视觉识别照常进行
-        return "", "本地 OCR 模块不可用"
+        return "", [], "本地 OCR 模块不可用"
     try:
-        result = await local_ocr.recognize_image(image_part)
+        # 新引擎支持 include_blocks；旧签名/测试替身可能不接受该参数，回退为纯文本调用。
+        try:
+            result = await local_ocr.recognize_image(image_part, include_blocks=True)
+        except TypeError:
+            result = await local_ocr.recognize_image(image_part)
     except local_ocr.OcrUnavailable as error:
-        return "", str(error)
+        return "", [], str(error)
     except local_ocr.OcrTimeout as error:
-        return "", str(error)
+        return "", [], str(error)
     except Exception:  # 页图损坏/引擎异常：当没有本地提示处理，不影响视觉识别
-        return "", None
-    text = str(result.get("text") or "").strip() if isinstance(result, dict) else ""
-    return text[:LOCAL_OCR_HINT_LIMIT], None
+        return "", [], None
+    if not isinstance(result, dict):
+        return "", [], None
+    text = str(result.get("text") or "").strip()[:LOCAL_OCR_HINT_LIMIT]
+    blocks = _normalize_ocr_blocks(result.get("blocks"))
+    return text, blocks, None
+
+
+async def _local_ocr_page_text(image_part) -> tuple[str, str | None]:
+    """兼容旧调用：只返回 (text, note)。"""
+    text, _blocks, note = await _local_ocr_page(image_part)
+    return text, note
 
 
 def _ocr_fallback_entry(page_no: int, local_text: str, *, timeout: bool = False, error=None,
-                        local_note: str | None = None) -> dict:
+                        local_note: str | None = None, blocks=None) -> dict:
     """视觉模型超时/失败时的页结果：有本地 OCR 文本则保留并标注来源，否则记该页失败。"""
     text = str(local_text or "").strip()
     if text:
         # 本地 OCR 确实识别出文字：保留文本但标注 source=local_ocr，提示用户核对，不冒充视觉识别。
-        return {"page": page_no, "text": text, "state": "recognized", "source": "local_ocr"}
+        return {
+            "page": page_no, "text": text, "state": "recognized", "source": "local_ocr",
+            "blocks": _normalize_ocr_blocks(blocks),
+        }
     message = _ocr_timeout_message(page_no) if timeout else _ocr_error(error)
     note = str(local_note or "").strip()
     if note:
@@ -1228,7 +1292,9 @@ async def _save_ocr_pages(document_id: int, user_id: int, pages: list[dict], *, 
             source = str(raw.get("source") or "ocr")
             if source not in OCR_RESULT_SOURCES:
                 source = "ocr"
-            page_map[key] = _page_entry(text, "recognized", source, now)
+            page_map[key] = _page_entry(
+                text, "recognized", source, now, blocks=raw.get("blocks"),
+            )
             saved_pages.append(page_no)
         if not saved_pages and not failed_pages and not preserved:
             raise HTTPException(422, "页码超出资料范围，未保存任何页")
@@ -1443,13 +1509,14 @@ async def _ocr_job(job_id: int, user_id: int, data, provider):
 
         _ocr_update_job(job_id, "running", f"ocr-{len(scoped_done)}/{page_count}")
         local_text = ""
+        local_blocks: list[dict] = []
         local_ocr_note = None
         try:
             rendered = await asyncio.to_thread(_render_pdf_pages_to_images, pdf, page_no, page_no)
             if not rendered:
                 raise ValueError("未渲染出页面图片")
-            # 先跑本地 OCR：有文本时注入视觉提示让模型校对；视觉不可用/失败时保留本地文本。
-            local_text, local_ocr_note = await _local_ocr_page_text(rendered[0][1])
+            # 先跑本地 OCR：有文本时注入视觉提示让模型校对；视觉不可用/失败时保留本地文本与内容块。
+            local_text, local_blocks, local_ocr_note = await _local_ocr_page(rendered[0][1])
             call = await _ocr_recognize_page(
                 call_model, provider, model, rendered[0][1], user_id,
                 job_id=job_id, ocr_hint=local_text,
@@ -1458,9 +1525,13 @@ async def _ocr_job(job_id: int, user_id: int, data, provider):
             if local_text:
                 local_ocr_hint_pages.add(page_no)
         except asyncio.TimeoutError:
-            entry = _ocr_fallback_entry(page_no, local_text, timeout=True, local_note=local_ocr_note)
+            entry = _ocr_fallback_entry(
+                page_no, local_text, timeout=True, local_note=local_ocr_note, blocks=local_blocks,
+            )
         except Exception as error:  # 单页失败只记录该页，整批继续
-            entry = _ocr_fallback_entry(page_no, local_text, error=error, local_note=local_ocr_note)
+            entry = _ocr_fallback_entry(
+                page_no, local_text, error=error, local_note=local_ocr_note, blocks=local_blocks,
+            )
         if entry.get("source") == "local_ocr":
             local_ocr_pages.add(page_no)
 

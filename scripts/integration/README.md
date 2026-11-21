@@ -19,6 +19,8 @@
 | `m3_accept.py` | M3 端到端验收（临时数据目录 + TestClient）：逐步提示创建（锁定正文不下发）→ 未提交尝试不能解锁 → 尝试后逐级解锁至完整解析 → 他人 404；上传 TXT 资料 → 按摘录/页/chunk 定位原文 → 缺失摘录 422 → 保存摘录与列表有效 → 重新定位 → 他人不可定位；掌握路径生成（2 节点/样本状态）→ 概念复述门槛与完成 → 变式练习无独立证据保持待完成 → 他人 404 → 归档；函数图与白板作为学习附件保存并可按题目 `by-target` 读取，输出 `m3-accept-report.json`；已接入 `accept_runner.py` 的 `m3` 阶段 |
 | `m4_accept.py` | M4 端到端验收（临时数据目录 + TestClient）：创建流程演示学习附件 → 建课堂 → meta 声明手工 `demo` 场景（既有生成类型不变）→ 插入固定版本演示场景 → 源附件升版后课堂仍保留原版本 → 导出 PPTX（含「固定版本」）/离线 HTML（`data-fixed-revision` + 内嵌快照）/ZIP（`demos/*.json`）/PDF → ZIP 导回课堂且演示仍为固定版本 → 笔记 `by-target` 读取附件 → 他人课程 404 → 删除演示场景并清空，输出 `m4-accept-report.json`；已接入 `accept_runner.py` 的 `m4` 阶段 |
 | `m5_accept.py` | M5 端到端验收（临时数据目录 + TestClient）：模板库（机械 3D/工厂仿真/参数元数据）→ 机械构建确定性 + 工程读数（速比/输出转速）→ 参数越界 422/未知模板 404 → 机械附件保存并插入课堂固定版本场景 → 离线 HTML 含 `data-demo-frame-ready` 帧就绪标记 → 工厂 DES 同 seed 逐字段可复现（事件/指标/瓶颈原因）→ 运行记录本人回读、他人 404 → 工厂附件插入课堂 → ZIP 含两份演示快照，输出 `m5-accept-report.json`；已接入 `accept_runner.py` 的 `m5` 阶段 |
+| `m6_accept.py` | M6 端到端验收（临时数据目录 + TestClient）：上传资料 → 专题报告规则汇编（真实页码/chunk/版本引用与来源列表）→ 版本 CAS 409/升版 → Markdown 下载 → 他人 404；课程+附件 → 互动讲义小节（课程大纲/附件/证据/说明）→ 自包含 HTML（无外链脚本）→ PDF 200/503 → 他人 404；`/api/assistant/tools` 含只读 `step_hint`；提交真实作答后 pyKT 去标识化导出（行数/`evaluation_allowed`）与门控/基线结构，输出 `m6-accept-report.json`；已接入 `accept_runner.py` 的 `m6` 阶段 |
+| `pykt_export.py` | pyKT 离线评估协议（只读 SQLite、不联网、不训练）：去标识化 JSONL（`user_key=sha256(salt+":"+user_id)[:16]`，含 item/kc/version/timestamp/label/提示揭晓状态；无用户名/题干/答案）；**盐必须显式提供**（`--salt` 或 `STUDY_PYKT_SALT`，缺失退出码 2）；阈值门控（用户/事件/每用户/每 KC/标签覆盖，`evaluation_allowed` 如实）与规则基线（平滑正确率 + 无泄露 PFA-lite）；报告默认 `screenshots/pykt-report.json` |
 | `README.md` | 本文件 |
 
 ## 安全边界（务必遵守）

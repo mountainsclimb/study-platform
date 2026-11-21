@@ -1852,5 +1852,85 @@ bottleneck_station/bottleneck_reason/dropped/blocked`。
   工厂同种子可复现与指标/运行回读与隔离/附件与课堂固定版本导出/帧就绪标记/ZIP 双演示快照），
   报告 `screenshots/m5-accept-report.json`。
 - `scripts/accept_runner.py` 新增 `m5` 阶段（… → m4 → m5 → pytest）。
-- 专项测试：`tests/test_demo_library.py`（15）、`tests/test_m5_integration.py`（6）、
-  `tests/test_m5_video_frames.py`（3），连同既有附件/课堂回归共 46 passed（专项 24 passed）。
+- 专项测试：`tests/test_demo_library.py`（15）、`tests/test_m5_integration.py`（5）、
+  `tests/test_m5_video_frames.py`（3），连同既有附件/课堂回归共 46 passed（专项 23 passed）。
+
+## 29. M6 专题报告 / 互动讲义 / 小纸分步提示 / pyKT 协议（2026-11-21）
+
+> 详细记录见 `docs/知序优化实施记录-20261121-第十轮.md`。专题报告与互动讲义均为**服务端规则汇编**
+> （`generator="rules"`，不调用 AI 模型），引用只来自真实资料片段/摘录/附件/题目；失败中文降级、不伪造内容。
+> 新增表 `topic_reports` / `handouts`（各自 `init_*()` 幂等建表，已登记 `db.py::_ID_TABLES`）。
+
+### 29.1 专题报告 `/api/topic-reports`（`app/topic_report.py`，6 条）
+
+| 方法/路径 | 请求 | 响应要点 |
+| --- | --- | --- |
+| `POST /api/topic-reports` | `{topic, title?, document_ids?, note_ids?, kp_ids?, artifact_ids?}` | 201 `{report:{report_id,topic,title,generator,status,version,created_at,updated_at}, content_md, sources}`；四类来源至少一项（422）、每类 ≤10、个人 ≤50；他人资料/笔记/附件 404、非法知识点 422。 |
+| `GET /api/topic-reports` | `?limit=20` | `{items:[summary],total,limit,note}`（最近更新在前）。 |
+| `GET /api/topic-reports/{id}` | — | `{report,content_md,sources}`；他人 404。 |
+| `PATCH /api/topic-reports/{id}` | `{title?,content_md?,expected_version?}` | 版本 CAS 冲突 409；title ≤120、content_md ≤200KB（422）；成功 version+1。 |
+| `DELETE /api/topic-reports/{id}` | — | `{deleted:true,report_id}`；他人 404。 |
+| `GET /api/topic-reports/{id}/markdown` | — | `text/markdown; charset=utf-8` 附件（RFC 5987 中文文件名 + ASCII 回退）。 |
+
+正文固定七节：标题/说明 → 一、主题与范围 → 二、资料依据（命中主题关键字的 chunk，带
+`《标题》第 N 页 · chunk <id> · 文档版本 <doc_version>`；未命中回退开头并注明）→ 三、笔记摘录
+（笔记摘要 + `doc_annotations` 摘录出处）→ 四、学习附件（kind/固定版本 vN）→ 五、相关练习（题库检索候选，
+注明非正式标签）→ 六、学习证据（`study_evidence.summary` 真实字段 + 样本是否充足）→ 七、口径与局限
+（规则汇编非 AI、引用随版本/删除失效）。`sources` 与正文一一对应，不编造。
+
+### 29.2 互动讲义 `/api/handouts`（`app/handout.py`，5 条）
+
+| 方法/路径 | 请求 | 响应要点 |
+| --- | --- | --- |
+| `POST /api/handouts` | `{title?,course_id?,note_ids?,artifact_ids?,kp_ids?}` | 201 `{handout:{handout_id,title,course_id,version,generator,created_at,updated_at}, sections:[...]}`；至少一项来源（422）、单类 ≤10、个人 ≤50；课程/笔记/附件他人 404、知识点 422。 |
+| `GET /api/handouts` | `?limit=20` | `{items:[summary],total,limit}`。 |
+| `GET /api/handouts/{id}` | — | `{handout,sections}`；他人 404。 |
+| `DELETE /api/handouts/{id}` | — | 删除；他人 404。 |
+| `GET /api/handouts/{id}/export?format=html\|pdf` | 默认 html | html=`text/html; charset=utf-8` 自包含单文件（内联 CSS、无脚本/外链、`html.escape`、`data-handout-id`/`data-version`）；pdf=`application/pdf`（依赖 `app.ai.render.html_to_pdf`，不可用 503 中文）；非法 format 422；均带安全下载文件名。 |
+
+小节固定顺序：`course_outline`（场景标题/类型/speech 摘要）→ `artifact`（kind/固定版本/来源/合法 PNG 预览，累计
+≤300KB 超限省略并注明）→ `excerpt`（笔记摘录 ≤10，带文档出处）→ `practice`（题库候选）→ `evidence`
+（学习证据 + 样本是否充足）→ `meta`（规则汇编声明/引用局限/固定版本说明）。
+
+### 29.3 小纸只读工具 `step_hint`（`app/assistant.py`）
+
+- `TOOL_SPECS` 新增 `step_hint`：`side_effect=false`、`requires_confirmation=false`、参数 `ref`（必填 ≤160）；
+  `/api/assistant/tools` 工具数 13 → 14。
+- 处理器读取 `guided_hint.get_hint_by_ref`，无会话时幂等创建；只返回公开视图（`hint`+`steps`），
+  锁定步骤服务端无正文、工具不补全；`refs` 指向题目统一引用；异常转中文 `ToolError` 不 500。
+- 系统提示新增规则：只引用已解锁步骤、不得编造/推测锁定内容、完整解析须提示学生页面逐级提交尝试。
+
+### 29.4 扫描资料本地识别内容块（`app/ai/notes_agent.py`）
+
+- 扫描页本地 OCR 结果新增内容块（`id/kind/text/latex/needs_review/confidence/order/page/rotation/bbox/norm/source`，
+  ≤200 块/页，空文字块丢弃）；视觉模型超时/失败时保留 `source=local_ocr` 的文本 + 块，视觉成功不冒充块来源。
+- 页面结构（`ocr_pages_json`）与 `_page_entry`/`_normalize_ocr_pages` 支持 `blocks` 往返，旧页面不新增空键；
+  `_local_ocr_page_text` 保留兼容；`_local_ocr_page` 调用 `ocr.recognize_image(..., include_blocks=True)`。
+- 单测 `tests/test_m6_ocr_blocks.py`（6）覆盖规范化/截断/往返/fallback/落库。
+
+### 29.5 pyKT 离线评估协议（`scripts/integration/pykt_export.py`）
+
+- 只读 SQLite；去标识化盐必须显式提供（`--salt` 或 `STUDY_PYKT_SALT`，缺失拒绝导出退出码 2）；
+  JSONL 字段 `user_key(sha256 盐+id[:16])/item_key/item_version/kc_keys/timestamp/label/source_key/
+  prompt_state/reveal_state/self_report/evidence_version`，不含用户名/题干/答案；跳过 pending/unknown/自评/孤儿行。
+- 阈值门控：用户数、总事件、每用户事件（达标人数）、每 KC 事件、标签覆盖率；`evaluation_allowed` 如实反映；
+  `baseline_metrics`：平滑正确率 + PFA-lite（仅用时间顺序历史、无泄露）；报告默认 `screenshots/pykt-report.json`。
+- 真实数据不足时只输出协议/门控/基线结论，不在仓库写入真实用户数据（默认产物已 .gitignore）。
+
+### 29.6 前端与静态契约
+
+- `web/js/components/learningDocs.js`：`renderTopicReportsPanel`/`renderHandoutsPanel`（列表/创建/详情/
+  编辑 CAS/下载 Markdown/导出 HTML/PDF/删除；接口不可用独立中文降级、隐藏创建）；
+  `web/js/pages/notes.js` 页面底部「学习文档」区块（两个折叠面板），会话重置销毁；
+  `web/styles-m6.css`（`.m6-`）由 `web/index.html` 加载。
+- locale 新增 110 个 `study.m6.*` 键，zh/en 各 **5,287** 键对齐；ui_static 新增 M6 组件/页面/样式/命名空间断言。
+
+### 29.7 验收入口
+
+- `python -X utf8 scripts/integration/m6_accept.py`：端到端 15 项（专题报告真实引用/版本 CAS/Markdown/隔离；
+  互动讲义小节/自包含 HTML/PDF/隔离；助手只读 step_hint；pyKT 去标识化导出与门控/基线结构），
+  报告 `screenshots/m6-accept-report.json`。
+- `scripts/accept_runner.py` 新增 `m6` 阶段（… → m5 → m6 → pytest）。
+- 专项测试：`tests/test_topic_report.py`（19）、`tests/test_handout.py`（17）、
+  `tests/test_assistant_step_hint.py`（7）、`tests/test_pykt_export.py`（18）、
+  `tests/test_m6_integration.py`（5）、`tests/test_m6_ocr_blocks.py`（6），新增合计 72 passed。

@@ -117,6 +117,8 @@ LOCALE_NAMESPACES = (
     ("study.m4.", 60),
     # M5 命名空间：机械/工厂演示（键量下限按本轮交付）。
     ("study.m5.", 20),
+    # M6 命名空间：专题报告与互动讲义（键量下限按本轮交付）。
+    ("study.m6.", 100),
 )
 
 #: 直接 t('literal') 键扫描的前端文件（WS30 相关页面/组件；其余页面键由既有 pytest 覆盖）。
@@ -697,6 +699,29 @@ class UiStaticAccept:
         checks.append(("主站加载机械演示样式",
                        "styles-mech.css" in index_source_m5,
                        "index.html 需引入 /static/styles-mech.css"))
+
+        # M6：专题报告与互动讲义组件、笔记页接入与样式。
+        learning_docs_js = JS / "components" / "learningDocs.js"
+        m6_css = WEB / "styles-m6.css"
+        checks.append(("M6 学习文档组件与样式齐全",
+                       learning_docs_js.is_file() and m6_css.is_file(),
+                       f"缺少: {[str(path.name) for path in (learning_docs_js, m6_css) if not path.is_file()]}"))
+        learning_docs = self._read(learning_docs_js) if learning_docs_js.is_file() else ""
+        checks.append(("专题报告面板接入列表/创建/编辑/导出",
+                       all(token in learning_docs for token in
+                           ("/topic-reports", "createReport", "expected_version",
+                            "downloadMarkdown")),
+                       "learningDocs.js 需实现专题报告列表/创建/编辑/下载"))
+        checks.append(("互动讲义面板接入列表/小节/HTML/PDF 导出",
+                       all(token in learning_docs for token in
+                           ("/api/handouts", "sections", "export?format", "pdf")),
+                       "learningDocs.js 需实现互动讲义列表/小节/导出"))
+        checks.append(("笔记页接入学习文档区块",
+                       "renderTopicReportsPanel" in notes and "renderHandoutsPanel" in notes,
+                       "notes.js 需接入学习文档区块"))
+        checks.append(("主站加载学习文档样式",
+                       "styles-m6.css" in index_source_m5,
+                       "index.html 需引入 /static/styles-m6.css"))
 
         question = self._read(QUESTION_JS)
         checks.append(("题目详情接入「查看原理」并懒加载播放器",

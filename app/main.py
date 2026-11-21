@@ -25,6 +25,8 @@ from . import study_artifact, study_evidence, study_review
 from . import doc_location, guided_hint, mastery_path
 # M5（§5.4）：机械/工厂演示模板库与固定种子离散事件仿真。
 from . import demo_library
+# M6（§5.3）：带引文的专题报告与互动讲义（规则汇编 + 结构化导出）。
+from . import handout, topic_report
 
 WEB_DIR = Path(__file__).resolve().parents[1] / "web"
 health_log = logging.getLogger("zhixu.health")
@@ -224,6 +226,9 @@ async def lifespan(app):
     guided_hint.init_guided_hints()
     # M5：机械/工厂演示模板库与固定种子仿真运行记录。
     demo_library.init_demo_library()
+    # M6：专题报告与互动讲义（规则汇编，引用真实资料/笔记/附件）。
+    topic_report.init_topic_reports()
+    handout.init_handouts()
     dispatcher = asyncio.create_task(ai.recover_queued_jobs()) if ai.redis_url() else None
     try:
         yield
@@ -732,6 +737,9 @@ app.include_router(doc_location.router)
 app.include_router(guided_hint.router)
 # M5：机械/工厂演示模板与确定性仿真。
 app.include_router(demo_library.router)
+# M6：专题报告与互动讲义。
+app.include_router(topic_report.router)
+app.include_router(handout.router)
 
 app.mount("/static", StaticFiles(directory=str(WEB_DIR)), name="static")
 
