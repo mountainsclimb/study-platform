@@ -173,3 +173,122 @@ def test_note_apkg_export_end_to_end(client):
     assert again.status_code == 200
     assert _deck_ids(again.content) == _deck_ids(response.content)
 
+
+# ---------------------------------------------------------------------------
+# 站内题目引用与来源版本（Phase 4：笔记/Anki 保留题目链接与版本）
+# ---------------------------------------------------------------------------
+
+
+def test_question_ref_helpers_normalize_and_degrade():
+    bank = anki_export.question_ref_of({"qid": "0028f646b2b0dde3:1"})
+    assert bank == {"ref": "bank:0028f646b2b0dde3:1", "source": "bank", "source_label": "高考题库"}
+    official = anki_export.question_ref_of({"ref": "official:plz-0123456789abcdef0123"})
+    assert official["source"] == "official" and official["ref"].startswith("official:plz-")
+    app = anki_export.question_ref_of({"qid": "app:12"})
+    assert app["source"] == "app" and app["ref"] == "app:12"
+    # 缺字段/空白引用安全降级（不抛错、不伪造引用）。
+    assert anki_export.question_ref_of(None) is None
+    assert anki_export.question_ref_of({}) is None
+    assert anki_export.question_ref_of({"qid": "   "}) is None
+
+    assert anki_export.source_version_of({}) == ""
+    assert anki_export.source_version_of({"bank_version": "bank-20261121-r5"}) == "bank-20261121-r5"
+    assert anki_export.source_version_of({"published_version": 3}) == "3"
+    assert anki_export.source_version_of({"content_revision": "7"}) == "7"
+
+
+def test_wrong_card_carries_question_ref_and_bank_version(monkeypatch):
+    """错题卡背面保留站内题目引用与题库版本（离线复习也能对照版本回站内练习）。"""
+    from app import practice
+
+    qid = "0028f646b2b0dde3:1"
+    question = {
+        "qid": qid, "stem_plain": "题干", "options": [], "has_answer": True,
+        "answer_text": "A", "solution": "解析", "images": [], "quarantined": False,
+    }
+    monkeypatch.setattr(practice, "load_question", lambda value: question)
+    monkeypatch.setattr(practice, "_public_question", lambda value, user_id: {
+        "stem_plain": "题干", "options": [], "answer_text": "A", "solution": "解析",
+        "subject": "数学", "year": 2024, "paper_name": "", "number_label": "", "type_label": "单选题",
+    })
+    card = anki_export._wrong_card(1, {
+        "qid": qid, "ref": f"bank:{qid}", "source": "bank",
+        "subject": "数学", "bank_version": "bank-20261121-r5",
+    })
+    assert card is not None
+    assert f"题目引用：bank:{qid}" in card["back"]
+    assert "来源版本：bank-20261121-r5" in card["back"]
+    assert "知序错题" in card["tags"] and "引用_bank" in card["tags"]
+
+
+def test_wrong_card_official_ref_uses_published_version(monkeypatch):
+    from app import practice
+
+    public_id = "plz-0123456789abcdef0123"
+    qid = f"official:{public_id}"
+    question = {
+        "qid": qid, "stem_plain": "精选题干", "options": [], "has_answer": True,
+        "answer_text": "B", "solution": "", "images": [], "quarantined": False,
+    }
+    monkeypatch.setattr(practice, "load_question", lambda value: question)
+    monkeypatch.setattr(practice, "_public_question", lambda value, user_id: {
+        "stem_plain": "精选题干", "options": [], "answer_text": "B", "solution": "",
+        "subject": "物理", "year": None, "paper_name": "", "number_label": "", "type_label": "填空题",
+    })
+    card = anki_export._wrong_card(1, {
+        "qid": qid, "ref": qid, "source": "official",
+        "public_id": public_id, "published_version": 3, "subject": "物理",
+    })
+    assert card is not None
+    assert f"题目引用：{qid}" in card["back"]
+    assert "来源版本：3" in card["back"]
+    assert "引用_official" in card["tags"]
+
+
+def test_note_cards_include_question_refs_and_versions():
+    cards = anki_export.note_cards(
+        "### Q: 什么是导数？\n**A:** 函数在某点的瞬时变化率。",
+        "数学", "导数清单",
+        question_refs=[
+            {"ref": "official:plz-0123456789abcdef0123", "published_version": 3},
+            {"ref": "bank:0028f646b2b0dde3:1", "bank_version": "bank-20261121-r5"},
+        ],
+        source_versions=["D1 v2"],
+    )
+    assert len(cards) == 1
+    back = cards[0]["back"]
+    assert "official:plz-0123456789abcdef0123" in back
+    assert "bank:0028f646b2b0dde3:1" in back
+    assert "bank-20261121-r5" in back and "D1 v2" in back
+    # 既有切卡语义/标签顺序保持：首标签仍是学科。
+    assert cards[0]["tags"][0] == "数学"
+    assert "笔记引用_official" in cards[0]["tags"]
+
+
+def test_note_deck_infers_question_refs_from_content_and_sources():
+    deck = anki_export.note_deck({
+        "title": "导数清单",
+        "subject": "数学",
+        "content": "## 定义\n导数是一个极限。参考 bank:0028f646b2b0dde3:1 与 "
+                   "official:plz-0123456789abcdef0123。",
+        "sources": [{"ref": "app:12", "content_revision": "7"}],
+        "source_versions": {"1": 2},
+    })
+    assert len(deck) == 1
+    _name, cards = deck[0]
+    assert cards
+    back = " ".join(card["back"] for card in cards)
+    for ref in ("bank:0028f646b2b0dde3:1", "official:plz-0123456789abcdef0123", "app:12"):
+        assert ref in back
+    assert "D1 v2" in back
+
+
+def test_apkg_model_fields_unchanged_by_reference_metadata():
+    """题目引用/版本只放背面文本与标签：Anki 模板字段仍是 Front/Back/Tags。"""
+    from pathlib import Path
+
+    source = Path(anki_export.__file__).read_text(encoding="utf-8")
+    assert 'fields=[{"name": "Front"}, {"name": "Back"}, {"name": "Tags"}]' in source
+    assert '<hr id="answer">' in source
+
+

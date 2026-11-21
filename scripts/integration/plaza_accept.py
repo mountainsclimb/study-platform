@@ -84,6 +84,8 @@ PASSWORD = "plaza-accept-12345"
 AUTH_COOKIE = "study_session"
 SUBJECT = "数学"
 GRADE = "高一"
+#: WS28 抽检门禁状态/设置接口：实例显式 armed 时验收链路需临时关闭门禁（结束恢复原模式）。
+QUALITY_GATE_PATH = "/api/plaza/admin/quality/gate"
 STUDY_DATA_DIR_HINT = "请换一个全新的 STUDY_DATA_DIR 重启隔离实例后重试"
 ADMIN_HINT = (
     "实例可能已预先播种了其它账号（首个注册账号已不是本脚本默认管理员）："
@@ -817,6 +819,9 @@ class PlazaAccept:
             "admin_token_used": bool(admin_token),
             "skip_ui": skip_ui,
         }
+        #: 抽检门禁兼容：原状态快照 / 是否由本脚本临时关闭（结束前恢复）。
+        self.gate_origin: dict | None = None
+        self.gate_disabled = False
         self.clients: dict[str, httpx.Client] = {}
         self.api_calls: dict[str, dict] = {}
         self.data: dict = {
@@ -1214,6 +1219,94 @@ class PlazaAccept:
         checks.append(("普通作者不能授权角色（403）", denied.status_code == 403,
                        f"HTTP {denied.status_code}"))
         self.step("管理员授权广场角色（编辑/评审/学科复核）", checks, started=started)
+
+    # -- 抽检门禁兼容（WS28）：显式 armed 实例的验收前关闭/结束后恢复 --------
+    def read_quality_gate(self) -> dict:
+        """编辑视角读取抽检门禁状态（配置 + 审计计数 + 最近判定）。"""
+        editor = self.clients["editor"]
+        response = self.request(editor, "GET", QUALITY_GATE_PATH)
+        self.expect(response, 200, "读取抽检门禁状态")
+        return self.payload(response, "抽检门禁状态")
+
+    def ensure_gate_compatible(self) -> None:
+        """实例显式激活抽检门禁（env/管理员设置 armed）时，验收链路先临时关闭门禁。
+
+        记录原状态；``restore_gate()`` 在链路结束（含失败）时恢复原模式，避免破坏实例配置。
+        未显式配置且库中无抽检记录时门禁不阻断（armed=False），这里不会改动任何设置。
+        """
+        self.gate_origin = None
+        self.gate_disabled = False
+        if "editor" not in self.clients:
+            return
+        state = self.read_quality_gate()
+        self.gate_origin = state
+        mode = str(state.get("mode") or "")
+        armed = bool(state.get("armed"))
+        if mode == "off" or not (armed or state.get("enforced")):
+            return
+        admin = self.clients["admin"]
+        response = self.request(admin, "PUT", QUALITY_GATE_PATH, data={"mode": "off"})
+        self.expect(response, 200, "验收前临时关闭抽检门禁")
+        body = self.payload(response, "临时关闭抽检门禁")
+        if str(body.get("mode") or "") != "off" or body.get("enforced"):
+            raise FlowFailure(
+                "抽检门禁临时关闭失败：PUT %s {mode:'off'} 返回 mode=%r enforced=%r"
+                % (QUALITY_GATE_PATH, body.get("mode"), body.get("enforced")))
+        self.gate_disabled = True
+        self.warning(
+            "实例抽检门禁已显式激活（mode=%s armed=%s source=%s/%s）："
+            "验收链路已临时关闭门禁，结束前恢复原模式"
+            % (mode, armed, state.get("mode_source"), state.get("armed_source")))
+
+    def restore_gate(self) -> None:
+        """恢复 ``ensure_gate_compatible()`` 记录的抽检门禁原状态（失败只记问题，不掩盖主流程）。"""
+        if not self.gate_disabled:
+            return
+        started = time.time()
+        origin = self.gate_origin or {}
+        admin = self.clients["admin"]
+        restored = False
+        last_error = ""
+        try:
+            mode_source = str(origin.get("mode_source") or "")
+            if mode_source == "setting":
+                response = self.request(admin, "PUT", QUALITY_GATE_PATH,
+                                        data={"mode": str(origin.get("mode") or "")})
+            else:
+                # 原模式来自 env/默认：reset 删除运行期设置后回落原来源（env 优先）。
+                response = self.request(admin, "PUT", QUALITY_GATE_PATH, data={"reset": True})
+            self.expect(response, 200, "恢复抽检门禁原模式")
+            body = self.payload(response, "恢复抽检门禁原模式")
+            if (mode_source != "setting"
+                    and str(origin.get("armed_source") or "") == "setting"
+                    and origin.get("armed") is not None):
+                response = self.request(admin, "PUT", QUALITY_GATE_PATH,
+                                        data={"armed": bool(origin.get("armed"))})
+                self.expect(response, 200, "恢复抽检门禁 armed 设置")
+                body = self.payload(response, "恢复抽检门禁 armed 设置")
+            current = self.read_quality_gate()
+            restored = (
+                str(current.get("mode") or "") == str(origin.get("mode") or "")
+                and bool(current.get("armed")) == bool(origin.get("armed")))
+            self.data["quality_gate"] = {
+                "origin": {key: origin.get(key) for key in (
+                    "mode", "mode_source", "armed", "armed_source", "enforced",
+                    "required", "pilot_limit", "published_total")},
+                "restored": restored,
+                "final": {key: current.get(key) for key in (
+                    "mode", "mode_source", "armed", "armed_source", "enforced", "required")},
+            }
+        except FlowFailure as exc:  # noqa: PERF203 - 恢复失败记录为问题，不覆盖主流程异常
+            last_error = str(exc)
+        checks = [
+            ("抽检门禁恢复为验收前原模式（mode/armed 一致）", restored,
+             last_error or json.dumps(self.data.get("quality_gate") or {},
+                                      ensure_ascii=False)[:300]),
+        ]
+        try:
+            self.step("恢复抽检门禁原状态（验收不改变实例门禁配置）", checks, started=started)
+        except FlowFailure:
+            pass
 
     def create_question(self) -> None:
         started = time.time()
@@ -1954,15 +2047,14 @@ class PlazaAccept:
             found.append(item)
         return found
 
-    def publish_new_question(self, label: str, *, qtype: str = "SINGLE",
-                             content: dict | None = None,
-                             record_step: bool = True) -> dict:
-        """Phase 3 复用：创建个人题 → 投稿 → 声明 → 送审 → 初审 → 5 票 → 签发，返回发布信息。
+    def create_verified_submission(self, label: str, *, qtype: str = "SINGLE",
+                                   content: dict | None = None,
+                                   grade: str = GRADE) -> dict:
+        """创建个人题 → 投稿 → 声明 → 送审 → 初审 → 5 票独立评审，停在 verified（不签发）。
 
-        供 plaza_accept 自身（Phase 3 抽检/回滚）与 official_accept（精选链路）共用；
-        每一步都用 ``self.expect`` 断言，失败会带可读标签抛 ``FlowFailure``（不静默跳过）。
+        供抽检门禁（先 409 → 签发前抽检 pass → 再签发）、一键恢复等需要「待签发」投稿的
+        验收步骤复用；每一步都用 ``self.expect`` 断言，失败会带可读标签抛 ``FlowFailure``。
         """
-        started = time.time()
         author = self.clients["author"]
         editor = self.clients["editor"]
         if content is None:
@@ -1979,7 +2071,7 @@ class PlazaAccept:
             }
         created = self.payload(self.expect(
             self.request(author, "POST", "/api/paperlab/questions", data={
-                "type": qtype, "subject": SUBJECT, "grade": GRADE, "difficulty": 0.5,
+                "type": qtype, "subject": SUBJECT, "grade": grade, "difficulty": 0.5,
                 "knowledge_tags": [self.marker, label, "函数"],
                 "content": content,
             }), 200, f"{label}：创建个人题"), "创建个人题")
@@ -2025,6 +2117,26 @@ class PlazaAccept:
                                  "conflict_declared": False,
                              }), 201, f"{label}：第 {index} 票评审"), "评审响应")
             transitions.append(str(reviewed_body.get("transition") or ""))
+        return {"question_id": question_id, "submission_id": submission_id,
+                "public_id": public_id, "version": version, "transitions": transitions}
+
+    def publish_new_question(self, label: str, *, qtype: str = "SINGLE",
+                             content: dict | None = None,
+                             record_step: bool = True, grade: str = GRADE) -> dict:
+        """Phase 3 复用：创建个人题 → 投稿 → 声明 → 送审 → 初审 → 5 票 → 签发，返回发布信息。
+
+        供 plaza_accept 自身（Phase 3 抽检/回滚）与 official_accept（精选链路）共用；
+        每一步都用 ``self.expect`` 断言，失败会带可读标签抛 ``FlowFailure``（不静默跳过）。
+        """
+        started = time.time()
+        editor = self.clients["editor"]
+        prepared = self.create_verified_submission(
+            label, qtype=qtype, content=content, grade=grade)
+        question_id = prepared["question_id"]
+        submission_id = prepared["submission_id"]
+        public_id = prepared["public_id"]
+        version = prepared["version"]
+        transitions = prepared["transitions"]
         published = self.payload(self.expect(
             self.request(editor, "POST", f"/api/plaza/submissions/{submission_id}/publish", data={
                 "version": version,
@@ -2786,56 +2898,61 @@ class PlazaAccept:
 
         self.prepare_accounts()
         self.grant_roles()
-        self.create_question()
-        self.create_submission()
-        self.patch_submission()
-        self.submit_submission()
-        self.initial_review()
-        self.assert_community_public()
-        self.assert_queues_and_events()
+        # WS28 抽检门禁兼容：实例显式 armed 时先临时关闭门禁，链路结束（含失败）恢复原模式。
+        self.ensure_gate_compatible()
+        try:
+            self.create_question()
+            self.create_submission()
+            self.patch_submission()
+            self.submit_submission()
+            self.initial_review()
+            self.assert_community_public()
+            self.assert_queues_and_events()
 
-        # UI：社区待核验（公开列表/详情、作者投稿台、评审员评审台）
-        self.ui_hook("广场公开页与工作台（社区待核验）", ui_flow_community,
-                     self.data["public_id"], self.data["submission_id"], self.marker)
+            # UI：社区待核验（公开列表/详情、作者投稿台、评审员评审台）
+            self.ui_hook("广场公开页与工作台（社区待核验）", ui_flow_community,
+                         self.data["public_id"], self.data["submission_id"], self.marker)
 
-        self.hide_votes_check()
-        self.submit_reviews()
-        self.assert_verified_public()
-        self.ui_hook("编辑台待发布队列（核验通过）", ui_flow_editor_queue,
-                     self.data["submission_id"], self.marker)
-        self.publish()
-        self.assert_featured_public()
-        self.ui_hook("广场公开页（平台精选）", ui_flow_featured,
-                     self.data["public_id"], self.marker)
-        self.withdraw()
-        self.assert_withdrawn_invisible()
-        self.ui_hook("广场公开详情（已撤回隐藏态）", ui_flow_withdrawn,
-                     self.data["public_id"], self.marker)
-        self.identity_flow()
+            self.hide_votes_check()
+            self.submit_reviews()
+            self.assert_verified_public()
+            self.ui_hook("编辑台待发布队列（核验通过）", ui_flow_editor_queue,
+                         self.data["submission_id"], self.marker)
+            self.publish()
+            self.assert_featured_public()
+            self.ui_hook("广场公开页（平台精选）", ui_flow_featured,
+                         self.data["public_id"], self.marker)
+            self.withdraw()
+            self.assert_withdrawn_invisible()
+            self.ui_hook("广场公开详情（已撤回隐藏态）", ui_flow_withdrawn,
+                         self.data["public_id"], self.marker)
+            self.identity_flow()
 
-        # ---- Phase 3：质量运营 / 互动 / 回滚 / 通知 ----------------------
-        self.phase3_publish_extra_questions()
-        self.phase3_quality_pass()
-        self.phase3_feedback_on_b()
-        self.phase3_favorite_and_withdraw_b()
-        self.phase3_revise_republish_rollback()
-        self.phase3_quality_high_withdraw()
-        self.phase3_appeal_flow()
+            # ---- Phase 3：质量运营 / 互动 / 回滚 / 通知 ------------------
+            self.phase3_publish_extra_questions()
+            self.phase3_quality_pass()
+            self.phase3_feedback_on_b()
+            self.phase3_favorite_and_withdraw_b()
+            self.phase3_revise_republish_rollback()
+            self.phase3_quality_high_withdraw()
+            self.phase3_appeal_flow()
 
-        phase3 = self._phase3()
-        self.ui_hook("Phase3 广场详情（收藏/纠错/举报，桌面+手机）",
-                     ui_flow_phase3_detail, phase3["b"]["public_id"],
-                     phase3["b"]["stem_v1"])
-        self.ui_hook("Phase3 通知铃铛与通知面板", ui_flow_notifications,
-                     REVIEWER_NAMES[0])
-        self.ui_hook("Phase3 编辑台抽检/反馈/指标分区", ui_flow_admin_phase3)
-        self.ui_hook("Phase3 作者投稿台申诉卡", ui_flow_appeal,
-                     int(self.data["submission_id"]))
+            phase3 = self._phase3()
+            self.ui_hook("Phase3 广场详情（收藏/纠错/举报，桌面+手机）",
+                         ui_flow_phase3_detail, phase3["b"]["public_id"],
+                         phase3["b"]["stem_v1"])
+            self.ui_hook("Phase3 通知铃铛与通知面板", ui_flow_notifications,
+                         REVIEWER_NAMES[0])
+            self.ui_hook("Phase3 编辑台抽检/反馈/指标分区", ui_flow_admin_phase3)
+            self.ui_hook("Phase3 作者投稿台申诉卡", ui_flow_appeal,
+                         int(self.data["submission_id"]))
 
-        self.phase3_notification_read_flow()
-        self.phase3_metrics()
+            self.phase3_notification_read_flow()
+            self.phase3_metrics()
 
-        self.report["elapsed_http_seconds"] = round(time.time() - started, 2)
+            self.report["elapsed_http_seconds"] = round(time.time() - started, 2)
+        finally:
+            self.restore_gate()
 
     # -- 收尾 -------------------------------------------------------------
     def finalize(self) -> int:

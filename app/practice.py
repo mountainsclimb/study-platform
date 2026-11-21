@@ -1806,6 +1806,7 @@ def _build_search_sql(
     subject: str | None = None,
     type: str | None = None,
     province: str | None = None,
+    grade_filter: dict | None = None,
     year: int | None = None,
     year_from: int | None = None,
     year_to: int | None = None,
@@ -1843,6 +1844,21 @@ def _build_search_sql(
     if provinces:
         clauses.append("q.province IN (" + ",".join("?" for _ in provinces) + ")")
         values.extend(provinces)
+
+    # 学段筛选：只读题库当前发布包（r5）没有 grade 列，此时安全降级为不筛选（由调用方
+    # 在 grade_filter 里返回 applied=false 说明）；未来题库带 grade 列时按标准年级/
+    # 学段前缀过滤。未知/非法值在调用方已降级，不会走到这里报 422。
+    grade_values = list((grade_filter or {}).get("values") or [])
+    grade_stages = list((grade_filter or {}).get("stages") or [])
+    if (grade_values or grade_stages) and "grade" in _bank_question_columns(con):
+        grade_parts: list[str] = []
+        if grade_values:
+            grade_parts.append("q.grade IN (" + ",".join("?" for _ in grade_values) + ")")
+        for stage in grade_stages:
+            grade_parts.append("q.grade LIKE ?")
+        clauses.append("(" + " OR ".join(grade_parts) + ")")
+        values.extend(grade_values)
+        values.extend(stage + "%" for stage in grade_stages)
 
     # r5 的 year 是 TEXT：必须按数值转型比较，否则 '999' 会大于 '2026'。
     # 非法筛选值安全降级为不过滤（FastAPI 层通常已把非整数输入挡成 422）。
@@ -2098,6 +2114,35 @@ def _catalog_cache_key() -> tuple:
     return (_bank_content_digest(), tuple(sorted(_active_isolations())))
 
 
+#: 标准年级兜底（与 ``app/paperlab/db.py::GRADES`` 同口径；paperlab 不可用时仍能下发筛选选项）。
+_FALLBACK_GRADES = (
+    "小学一年级", "小学二年级", "小学三年级", "小学四年级", "小学五年级", "小学六年级",
+    "初中一年级", "初中二年级", "初中三年级",
+    "高中一年级", "高中二年级", "高中三年级",
+)
+_FALLBACK_GRADE_STAGES = ("小学", "初中", "高中")
+
+
+def _question_grade_options() -> list[str]:
+    """可筛选的标准年级列表（与我的题库/试卷工坊共用 ``paperlab.db.GRADES``）。"""
+    try:
+        from .paperlab import db as paperlab_db
+
+        grades = [str(item) for item in (paperlab_db.GRADES or []) if str(item).strip()]
+        return grades or list(_FALLBACK_GRADES)
+    except Exception:  # noqa: BLE001 - 试卷工坊不可用时用内置标准年级兜底
+        return list(_FALLBACK_GRADES)
+
+
+def _question_grade_stages() -> list[str]:
+    """学段列表（小学/初中/高中）；与 ``app/official.py::GRADE_STAGES`` 同口径。"""
+    try:
+        return list(_official_module().GRADE_STAGES)
+    except Exception:  # noqa: BLE001
+        return list(_FALLBACK_GRADE_STAGES)
+
+
+
 def _build_catalog() -> dict:
     with _bank() as con:
         questions = _bank_table(con, "questions")
@@ -2123,6 +2168,14 @@ def _build_catalog() -> dict:
             ),
             "total": total, "source_total": total, "available_total": available,
             "quarantined_count": total - available, "difficulties": list(DIFFICULTIES),
+            # 学段筛选元数据：前端用标准年级 + 学段生成筛选项（official 按快照 grade 过滤；
+            # 当前只读题库 r5 无 grade 列时题库侧安全降级不筛选，grade_note 说明口径）。
+            "grades": _question_grade_options(),
+            "grade_stages": _question_grade_stages(),
+            "grade_note": (
+                "学段筛选支持标准年级（精确匹配）与学段（小学/初中/高中，前缀匹配）；"
+                "平台精选按快照年级过滤，题库侧仅在有年级字段时生效。"
+            ),
             "type_labels": TYPE_LABELS, "error_tag_presets": list(ERROR_TAG_PRESETS),
             "difficulty_note": "难度按「管理员标注 → 统计难度(≥20人次) → AI预估(可选)」顺序显示",
         }
@@ -2169,6 +2222,7 @@ def _bank_questions_page(
     subject: str | None = None,
     type: str | None = None,
     province: str | None = None,
+    grade_filter: dict | None = None,
     year: int | None = None,
     year_from: int | None = None,
     year_to: int | None = None,
@@ -2188,7 +2242,14 @@ def _bank_questions_page(
     page_size: int = 12,
 ) -> dict:
     """题库题分页（原 ``GET /api/questions`` 主体；``source=bank`` 行为保持不变）。"""
+    grade_filter = grade_filter if isinstance(grade_filter, dict) else None
     with _app_with_bank() as con:
+        grade_applied = bool(
+            grade_filter
+            and grade_filter.get("valid")
+            and (grade_filter.get("values") or grade_filter.get("stages"))
+            and "grade" in _bank_question_columns(con)
+        )
         # r5 题序/年份都是 TEXT：显式数值转型后再排序（'10' 不能排在 '2' 前面）。
         year_expr = _int_sql(con, "q.year")
         order_expr = _int_sql(con, "q.order_in_paper")
@@ -2207,6 +2268,7 @@ def _bank_questions_page(
         }
         join_sql, where_sql, params = _build_search_sql(
             con, user_id, subject=subject, type=type, province=province,
+            grade_filter=grade_filter,
             year=year, year_from=year_from, year_to=year_to,
             difficulty=difficulty, include_ai_difficulty=include_ai_difficulty,
             kp_id=kp_id, method_id=method_id, status=status, has_answer=has_answer,
@@ -2263,7 +2325,8 @@ def _bank_questions_page(
                         pos = min(insert_positions[idx], len(items))
                         items.insert(pos, card)
                         review_slots.append({"index": pos, "qid": card["qid"], "days_since_wrong": days})
-    return {"items": items, "total": total, "review_slots": review_slots}
+    return {"items": items, "total": total, "review_slots": review_slots,
+            "grade_filter_applied": grade_applied}
 
 
 def _official_questions_page(
@@ -2272,12 +2335,14 @@ def _official_questions_page(
     subject: str | None = None,
     type: str | None = None,
     q: str | None = None,
+    grade_filter: dict | None = None,
     offset: int = 0,
     page_size: int = 12,
 ) -> dict:
-    """平台精选公开题分页：只应用学科/题型/关键词筛选（题库专属筛选不适用）。"""
+    """平台精选公开题分页：只应用学科/题型/关键词/学段筛选（题库专属筛选不适用）。"""
     payload = _official_module().search_official(
-        keyword=q, subject=subject, type=type, limit=page_size, offset=offset,
+        keyword=q, subject=subject, type=type, grade=grade_filter,
+        limit=page_size, offset=offset,
     )
     questions = [item for item in (payload.get("items") or []) if isinstance(item, dict)]
     qids = [question["qid"] for question in questions]
@@ -2296,11 +2361,41 @@ def _official_questions_page(
 QUESTION_SOURCES = ("bank", "official", "all")
 
 
+def _normalize_question_grade_filter(grade) -> dict | None:
+    """学段筛选参数规范化（非法/未知安全降级为不筛选，不抛 422）。"""
+    text = str(grade or "").strip()
+    if not text:
+        return None
+    try:
+        return _official_module().normalize_grade_filter(text)
+    except Exception:  # noqa: BLE001 - 学段筛选项异常不能拖垮题目列表
+        return {
+            "requested": text, "values": [], "stages": [], "valid": False,
+            "degraded": True, "reason": "学段筛选暂不可用，已忽略该筛选",
+        }
+
+
+def _grade_filter_meta(normalized: dict | None, *, bank_applied: bool = False,
+                       official_applied: bool = False) -> dict:
+    """学段筛选响应元数据（applied 表示该筛选在本响应中是否真正生效）。"""
+    normalized = normalized if isinstance(normalized, dict) else {}
+    return {
+        "requested": normalized.get("requested") or "",
+        "applied": bool(bank_applied or official_applied),
+        "bank_applied": bool(bank_applied),
+        "official_applied": bool(official_applied),
+        "values": list(normalized.get("values") or []),
+        "stages": list(normalized.get("stages") or []),
+        "reason": normalized.get("reason") or "",
+    }
+
+
 @router.get("/questions")
 def list_questions(
     subject: str | None = None,
     type: str | None = None,
     province: str | None = None,
+    grade: str | None = None,
     year: int | None = None,
     year_from: int | None = None,
     year_to: int | None = None,
@@ -2327,13 +2422,17 @@ def list_questions(
       撤回/争议在查询时立即不可见；
     - ``source=all``：题库题 + 平台精选合并（题库在前），返回 ``bank_total``/``official_total``
       各自总数；二次复习槽位仅 ``source=bank`` 提供；
+    - ``grade``：学段筛选（标准年级精确匹配或学段前缀匹配；official 用快照 grade，题库无
+      年级字段时安全降级不筛选），非法/未知值不 422，响应追加 ``grade_filter`` 说明；
     - 非法 ``source`` 统一 422。
     """
     source_key = str(source or "bank").strip().lower()
     if source_key not in QUESTION_SOURCES:
         raise HTTPException(422, "来源筛选值无效，只支持 bank / official / all")
+    grade_filter = _normalize_question_grade_filter(grade)
     bank_kwargs = dict(
-        subject=subject, type=type, province=province, year=year, year_from=year_from,
+        subject=subject, type=type, province=province, grade_filter=grade_filter,
+        year=year, year_from=year_from,
         year_to=year_to, difficulty=difficulty, include_ai_difficulty=include_ai_difficulty,
         kp_id=kp_id, method_id=method_id, status=status, has_answer=has_answer,
         has_solution=has_solution, has_ai_explanation=has_ai_explanation, sort=sort,
@@ -2344,14 +2443,23 @@ def list_questions(
             user["id"], include_reviews=include_reviews, page=page, page_size=page_size,
             **bank_kwargs,
         )
+        bank_applied = bool(payload.pop("grade_filter_applied", False))
         payload.update({"page": page, "page_size": page_size})
+        if grade_filter is not None:
+            meta = _grade_filter_meta(grade_filter, bank_applied=bank_applied)
+            if grade_filter.get("valid") and not bank_applied:
+                meta["reason"] = (
+                    "当前只读题库没有年级字段，学段筛选在题库侧暂不生效"
+                    "（平台精选按快照年级过滤）"
+                )
+            payload["grade_filter"] = meta
         return payload
     if source_key == "official":
         page_payload = _official_questions_page(
-            user["id"], subject=subject, type=type, q=q,
+            user["id"], subject=subject, type=type, q=q, grade_filter=grade_filter,
             offset=(page - 1) * page_size, page_size=page_size,
         )
-        return {
+        result = {
             "items": page_payload["items"],
             "total": page_payload["total"],
             "page": page,
@@ -2360,12 +2468,22 @@ def list_questions(
             "source": "official",
             "bank_total": 0,
             "official_total": page_payload["total"],
-            "notice": "平台精选列表支持学科、题型与关键词筛选；年份/省份/难度等题库专属筛选不适用。",
+            "notice": "平台精选列表支持学科、题型、关键词与学段筛选；年份/省份/难度等题库专属筛选不适用。",
         }
+        if grade_filter is not None:
+            official_applied = bool(
+                grade_filter.get("valid")
+                and (grade_filter.get("values") or grade_filter.get("stages"))
+            )
+            result["grade_filter"] = _grade_filter_meta(
+                grade_filter, official_applied=official_applied,
+            )
+        return result
     # source=all：题库在前、精选在后，按合并总偏移严格分页，两类各自返回 total。
     bank_payload = _bank_questions_page(
         user["id"], include_reviews=False, page=page, page_size=page_size, **bank_kwargs,
     )
+    bank_applied = bool(bank_payload.pop("grade_filter_applied", False))
     bank_total = int(bank_payload["total"])
     bank_items = list(bank_payload["items"])
     offset = (page - 1) * page_size
@@ -2374,16 +2492,17 @@ def list_questions(
     official_items: list[dict] = []
     if remaining > 0:
         official_payload = _official_questions_page(
-            user["id"], subject=subject, type=type, q=q,
+            user["id"], subject=subject, type=type, q=q, grade_filter=grade_filter,
             offset=official_offset, page_size=remaining,
         )
         official_items = official_payload["items"]
         official_total = int(official_payload["total"])
     else:
         official_total = _official_questions_page(
-            user["id"], subject=subject, type=type, q=q, offset=0, page_size=0,
+            user["id"], subject=subject, type=type, q=q, grade_filter=grade_filter,
+            offset=0, page_size=0,
         )["total"]
-    return {
+    result = {
         "items": [*bank_items, *official_items],
         "total": bank_total + official_total,
         "page": page,
@@ -2394,6 +2513,22 @@ def list_questions(
         "official_total": official_total,
         "notice": "合并列表按「高考题库在前、平台精选在后」排序；二次复习槽位仅在 source=bank 时返回。",
     }
+    if grade_filter is not None:
+        official_applied = bool(
+            grade_filter.get("valid") and (grade_filter.get("values") or grade_filter.get("stages"))
+        )
+        meta = _grade_filter_meta(
+            grade_filter, bank_applied=bank_applied, official_applied=official_applied,
+        )
+        # 合并列表里「学段筛选完整生效」要求题库与精选两侧都能过滤；题库无年级字段时
+        # applied=false，前端会提示「仅平台精选生效」而不是把题库结果伪装成已按学段过滤。
+        meta["applied"] = bool(bank_applied and official_applied)
+        if official_applied and not bank_applied and not grade_filter.get("degraded"):
+            meta["reason"] = (
+                "当前只读题库没有年级字段，学段筛选仅对平台精选生效"
+            )
+        result["grade_filter"] = meta
+    return result
 
 
 @router.get("/questions/{qid:path}/issues")
@@ -4329,6 +4464,16 @@ def stats(user=Depends(current_user)):
             "AND qid LIKE 'official:%'",
             (user["id"],),
         ).fetchone()[0]
+    # 平台精选统计口径（可见性查询时判定，撤回/争议不计入）：与首页/学情共用同一口径；
+    # 既有平铺字段 official_attempts/official_practiced/official_wrong_count 语义保持不变。
+    try:
+        official_caliber = _official_module().official_caliber(user["id"])
+    except Exception:  # noqa: BLE001 - 精选口径失败不能拖垮整体学习统计
+        official_caliber = {
+            "available": False, "total_questions": 0, "practice_pool": 0,
+            "auto_gradable": 0, "attempts": 0, "practiced": 0, "wrong_count": 0,
+            "due_reviews": 0, "note": "平台精选统计暂不可用",
+        }
     progress = {}
     with _bank() as con:
         questions = _bank_table(con, "questions")
@@ -4354,6 +4499,7 @@ def stats(user=Depends(current_user)):
         "app_attempts": app_attempts, "app_practiced": app_practiced, "app_wrong_count": app_wrong_count,
         "official_attempts": official_attempts, "official_practiced": official_practiced,
         "official_wrong_count": official_wrong_count,
+        "official": official_caliber,
         "mastered": counts.get("熟练掌握", 0), "mastery_counts": {level: counts.get(level, 0) for level in LEVELS},
         "subject_progress": list(progress.values()), "recent_attempts": [_attempt_public(row) for row in recent],
     }

@@ -10,7 +10,10 @@
   通过）的中位小时数；另给 ``submitted``→``published`` 的签发时长；
 * **抽检问题率**：最新抽检记录中 ``issue`` 占比与 ``high`` 严重问题数；首批 100%
   抽检覆盖率单独给出；
-* **撤回数**：发布撤回记录数、投稿撤回数、回滚次数（``release_rolled_back`` 事件）。
+* **抽检门禁（WS28）**：模式（off/initial_100/always）、是否已激活（armed）、试点
+  窗口计数、阻断/override/通过次数与最近判定；
+* **一键恢复 / 批量处理 / 通知**：``release_restored`` 事件数、编辑台批量处理量与
+  跳过数（``plaza_ops_batches``）、站内通知未读总量（admin 聚合口径）。
 
 所有字段集中在本模块计算，编辑台/前端只展示不重算；指标为运营口径，不做个性化。
 """
@@ -22,7 +25,7 @@ from datetime import datetime
 from fastapi import APIRouter, Depends
 
 from ..db import connection, utcnow
-from . import db, service
+from . import db, gate, service
 
 router = APIRouter()
 
@@ -91,7 +94,7 @@ def admin_metrics(user=Depends(service.require_plaza_role("editor"))):
             "SELECT status, submission_id FROM plaza_releases",
         ).fetchall()]
         checks = [dict(row) for row in con.execute(
-            "SELECT submission_id, decision, severity, auto_withdrawn "
+            "SELECT submission_id, version, release_id, decision, severity, auto_withdrawn "
             "FROM plaza_quality_checks",
         ).fetchall()]
         events = [dict(row) for row in con.execute(
@@ -101,6 +104,16 @@ def admin_metrics(user=Depends(service.require_plaza_role("editor"))):
             "SELECT submission_id, version, status, public_asset_id "
             "FROM plaza_public_assets",
         ).fetchall()]
+        gate_state = gate.state(con)
+        batch_rows = [dict(row) for row in con.execute(
+            "SELECT kind, action, requested, updated, skipped FROM plaza_ops_batches",
+        ).fetchall()]
+        notification_total = int(con.execute(
+            "SELECT COUNT(*) FROM plaza_notifications",
+        ).fetchone()[0])
+        notification_unread = int(con.execute(
+            "SELECT COUNT(*) FROM plaza_notifications WHERE read_at IS NULL",
+        ).fetchone()[0])
         feedback_tables = {
             "issues": "plaza_issues",
             "reports": "plaza_reports",
@@ -185,15 +198,24 @@ def admin_metrics(user=Depends(service.require_plaza_role("editor"))):
         if str(item.get("decision") or "") == "issue"
         and str(item.get("severity") or "") == "high"
     )
-    checked_submissions = {
-        int(item.get("submission_id") or 0) for item in checks
-    }
+    post_publish_checks = [
+        item for item in checks if item.get("release_id") is not None
+    ]
+    pre_publish_checks = checks_total - len(post_publish_checks)
     published_ids = {
         int(row.get("id") or 0) for row in submissions
         if str(row.get("status") or "") == "published"
     }
+    post_check_submissions = {
+        int(item.get("submission_id") or 0) for item in post_publish_checks
+    }
+    all_check_submissions = {
+        int(item.get("submission_id") or 0) for item in checks
+    }
     # 抽检只发生在已发布题：抽检后被撤回的题仍计入「首批发布题」基数，
-    # 这样 100% 抽检覆盖率不会因严重问题自动撤回而虚降。
+    # 这样 100% 抽检覆盖率不会因严重问题自动撤回而虚降；签发前抽检
+    # （pre_publish，release_id 为空）只在签发后计入覆盖率。
+    checked_submissions = post_check_submissions | (all_check_submissions & published_ids)
     withdrawn_after_check = len(checked_submissions - published_ids)
     published_count = len(published_ids) + withdrawn_after_check
     pending_checks = max(0, len(published_ids - checked_submissions))
@@ -205,14 +227,64 @@ def admin_metrics(user=Depends(service.require_plaza_role("editor"))):
         "pending_total": pending_checks,
         "coverage_rate": _rate(len(checked_submissions), published_count),
     }
+    gate_summary = {
+        "mode": gate_state["mode"],
+        "mode_label": gate_state["mode_label"],
+        "mode_source": gate_state["mode_source"],
+        "armed": bool(gate_state["armed"]),
+        "armed_source": gate_state["armed_source"],
+        "enforced": bool(gate_state["enforced"]),
+        "required": bool(gate_state["required"]),
+        "window_open": bool(gate_state["window_open"]),
+        "pilot_limit": int(gate_state["pilot_limit"]),
+        "pilot_remaining": gate_state["pilot_remaining"],
+        "published_total": int(gate_state["published_total"]),
+        "checks_total": int(gate_state["checks_total"]),
+        "blocked_total": int(gate_state["blocked_total"]),
+        "override_total": int(gate_state["override_total"]),
+        "passed_total": int(gate_state["passed_total"]),
+        "evaluated_total": int(gate_state["evaluated_total"]),
+        "by_mode": dict(gate_state.get("by_mode") or {}),
+        "notice": str(gate_state.get("notice") or ""),
+    }
 
-    # ---- 撤回 / 回滚 ---------------------------------------------------------
+    # ---- 撤回 / 回滚 / 一键恢复 ---------------------------------------------
     releases_withdrawn = sum(
         1 for item in releases if str(item.get("status") or "") == "withdrawn"
     )
     rollbacks = sum(
         1 for item in events if str(item.get("action") or "") == "release_rolled_back"
     )
+    restored = sum(
+        1 for item in events if str(item.get("action") or "") == "release_restored"
+    )
+
+    # ---- 批量处理 / 通知（WS28） --------------------------------------------
+    batch_by_kind: dict[str, dict] = {}
+    for item in batch_rows:
+        key = str(item.get("kind") or "")
+        slot = batch_by_kind.setdefault(
+            key, {"batches": 0, "requested": 0, "updated": 0, "skipped": 0},
+        )
+        slot["batches"] += 1
+        slot["requested"] += int(item.get("requested") or 0)
+        slot["updated"] += int(item.get("updated") or 0)
+        slot["skipped"] += int(item.get("skipped") or 0)
+    batch_totals = {
+        "batches": len(batch_rows),
+        "requested": sum(int(item.get("requested") or 0) for item in batch_rows),
+        "updated_total": sum(int(item.get("updated") or 0) for item in batch_rows),
+        "skipped_total": sum(int(item.get("skipped") or 0) for item in batch_rows),
+        "by_kind": [
+            {"kind": key, **value}
+            for key, value in sorted(batch_by_kind.items())
+        ],
+    }
+    notification_summary = {
+        "total": int(notification_total),
+        "unread_total": int(notification_unread),
+        "read_total": max(0, int(notification_total) - int(notification_unread)),
+    }
 
     caliber = {
         "submissions": "广场投稿总数（全部状态）；public_visible 为匿名可读状态数",
@@ -226,10 +298,13 @@ def admin_metrics(user=Depends(service.require_plaza_role("editor"))):
         ),
         "quality": (
             "抽检记录口径：issue_rate=问题记录/抽检记录；high_issue_rate=高风险/"
-            "抽检记录；sampling 为试点首批 100% 抽检覆盖率"
+            "抽检记录；sampling 为试点首批 100% 抽检覆盖率；gate 为抽检门禁"
+            "（模式/激活/试点窗口/阻断/override/通过次数）"
         ),
         "feedback": "纠错/举报/申诉总数与未处理（pending）数",
-        "withdrawals": "发布撤回数、投稿撤回数、回滚次数（事件链口径）",
+        "withdrawals": "发布撤回数、投稿撤回数、回滚次数与一键恢复次数（事件链口径）",
+        "ops": "编辑台批量处理批次/请求/成功/跳过数（plaza_ops_batches 口径）",
+        "notifications": "站内通知总量与未读总量（admin 聚合口径，不含用户身份）",
     }
 
     return {
@@ -283,6 +358,9 @@ def admin_metrics(user=Depends(service.require_plaza_role("editor"))):
             "issue_rate": _rate(issues, checks_total),
             "high_issue_rate": _rate(high_issues, checks_total),
             "pending_checks": pending_checks,
+            "pre_publish_checks": pre_publish_checks,
+            "post_publish_checks": len(post_publish_checks),
+            "gate": gate_summary,
             "sampling": sampling,
         },
         "feedback": {
@@ -297,7 +375,23 @@ def admin_metrics(user=Depends(service.require_plaza_role("editor"))):
             "releases_withdrawn": releases_withdrawn,
             "submissions_withdrawn": status_counts["withdrawn"],
             "rollbacks": rollbacks,
+            "restorations": restored,
         },
+        "restorations": {
+            "total": restored,
+            "latest_event": next(
+                (
+                    str(item.get("created_at") or "")
+                    for item in reversed(events)
+                    if str(item.get("action") or "") == "release_restored"
+                ),
+                "",
+            ),
+        },
+        "ops": {
+            "batch": batch_totals,
+        },
+        "notifications": notification_summary,
         "caliber": caliber,
     }
 

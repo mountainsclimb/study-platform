@@ -50,6 +50,21 @@ def test_cancel_queued_job_settles_immediately(client):
     assert body["finished_at"]
 
 
+def test_cancel_awaiting_outline_job_settles_immediately(client):
+    """等待人工确认提纲的任务没有执行进程在跑，取消必须直接落定。
+
+    回归：曾把 awaiting_outline 当终态返回 200 却不改状态，任务永久占坑且无法释放。
+    """
+    user_id = client.get("/api/auth/me").json()["id"]
+    job_id = _insert_job(user_id, "awaiting_outline")
+    response = client.post(f"/api/ai/jobs/{job_id}/cancel")
+    assert response.status_code == 200, response.text
+    body = response.json()
+    assert body["status"] == "cancelled"
+    assert body["cancelled"] == 1
+    assert body["finished_at"]
+
+
 def test_cancel_running_job_goes_through_cancel_request(client):
     user_id = client.get("/api/auth/me").json()["id"]
     job_id = _insert_job(user_id, "running")

@@ -562,6 +562,23 @@ def test_concurrency_limit_blocks_new_job(client, monkeypatch):
     assert "并发" in response.json()["detail"]["message"]
 
 
+def test_awaiting_outline_does_not_hold_concurrency_slot(client):
+    """等待人工确认提纲的任务不占全站并发（执行进程已退出），不应永久占坑。
+
+    回归：CONSUMING_ACTIVE_STATES 曾包含 awaiting_outline，暂停的课程任务会让同类型
+    新任务一直 429，必须能正常创建。
+    """
+    user = _user(client)
+    assert client.post("/api/admin/ai/quotas", json={
+        "kind": "course", "daily_limit": 50, "concurrency_limit": 1,
+    }).status_code == 200
+    _insert_job(user["id"], task="course", status="awaiting_outline")
+    with db.connection() as con:
+        assert usage.current_concurrency("course", con) == 0
+        # 不抛 429：等待确认的任务不算并发占用。
+        usage.check_new_job(con, user_id=user["id"], kind="course")
+
+
 def test_concurrency_memory_fallback_when_database_count_fails(client, monkeypatch):
     usage.note_job_active(901, "explain")
     usage.note_job_active(902, "explain")

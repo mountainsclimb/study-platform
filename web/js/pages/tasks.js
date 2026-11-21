@@ -421,26 +421,81 @@ function safeJson(value, limit = 4000) {
   }
 }
 
-/** 任务结果对应的页面入口；未知任务返回 null（只显示结果摘要，不报错）。 */
+/** 取第一个正整数 id（兼容 number/数字字符串；0、null、undefined 跳过）。 */
+function firstId(...values) {
+  for (const value of values) {
+    if (value === null || value === undefined || value === '' || Array.isArray(value)) continue;
+    const numeric = Number(value);
+    if (Number.isFinite(numeric) && numeric > 0) return Math.trunc(numeric);
+  }
+  return null;
+}
+
+/** 取首个 id 列表（题目 ids 等）的第一项。 */
+function firstQuestionId(...lists) {
+  for (const list of lists) {
+    if (!Array.isArray(list) || !list.length) continue;
+    const numeric = Number(list[0]);
+    if (Number.isFinite(numeric) && numeric > 0) return Math.trunc(numeric);
+  }
+  return null;
+}
+
+/** 任务结果对应的页面入口；未知任务返回 null（只显示结果摘要，不报错）。
+ *
+ * 深链约定（与对应页面读取的参数一致）：
+ * - 试卷工坊：`#/paperlab?import=<import_id>`、`#/paperlab?tab=papers&paper=<paper_id>`；
+ * - 课堂：`#/classroom?course=<course_id>`；
+ * - 笔记：`#/notes?note=<note_id>`，资料 OCR：`#/notes?document=<document_id>`；
+ * - 我的题库：`#/mybank?edit=<question_id>`（AI 补全题目的核验入口）；
+ * - 拍题草稿：`#/upload?upload=<upload_id>`（既有语义保持不变）。
+ */
 function resultRoute(job) {
   const task = job.task;
-  const request = job.request || {};
-  const result = job.result || {};
+  const request = job.request && typeof job.request === 'object' ? job.request : {};
+  const params = request.params && typeof request.params === 'object' ? request.params : {};
+  const result = job.result && typeof job.result === 'object' ? job.result : {};
   switch (task) {
-    case 'notes':
-      return { route: 'notes', before: () => { state.selectedNote = result.note_id || null; } };
+    case 'notes': {
+      const noteId = firstId(result.note_id, request.note_id);
+      return {
+        route: 'notes',
+        params: noteId ? { note: noteId } : null,
+        before: () => { state.selectedNote = noteId || null; },
+      };
+    }
     case 'explain':
     case 'question-analysis': {
       const qid = request.qid || result.qid;
       return qid ? { route: 'practice', qid } : null;
     }
-    case 'paper-import':
-    case 'paper-enrich':
+    case 'paper-import': {
+      // 试卷识别导入 → 导入详情（paperlab.js 已能读 import 参数并打开导入记录）。
+      const importId = firstId(request.import_id, params.import_id, result.import_id,
+        result.summary?.import_id, result.paper?.import_id);
+      return { route: 'paperlab', params: importId ? { import: importId } : null };
+    }
+    case 'paper-enrich': {
+      // AI 补全落在“我的题库”的个人题上：能拿到试卷 id 时打开试卷详情，否则直达题目编辑。
+      const paperId = firstId(result.paper_id, result.paper?.id, params.paper_id, request.paper_id);
+      if (paperId) return { route: 'paperlab', params: { tab: 'papers', paper: paperId } };
+      const questionId = firstQuestionId(result.done_ids, result.question_ids,
+        params.question_ids, request.question_ids);
+      return { route: 'mybank', params: questionId ? { edit: questionId } : null };
+    }
     case 'paper-compose':
-    case 'paper-revision':
-      return { route: 'paperlab' };
-    case 'course':
-      return { route: 'classroom' };
+    case 'paper-revision': {
+      // AI 组卷 / 错题巩固卷：结果带 paper_id → 直接打开试卷详情。
+      const paperId = firstId(result.paper_id, result.paper?.id, params.paper_id, request.paper_id);
+      return paperId
+        ? { route: 'paperlab', params: { tab: 'papers', paper: paperId } }
+        : { route: 'paperlab' };
+    }
+    case 'course': {
+      // 课堂深链：classroom.js 读取 course 参数后直接进入课程播放器。
+      const courseId = firstId(result.course_id, result.course?.id, params.course_id, request.course_id);
+      return courseId ? { route: 'classroom', params: { course: courseId } } : { route: 'classroom' };
+    }
     case 'insight-report':
       return { route: 'insight' };
     case 'assistant-turn':
@@ -452,8 +507,14 @@ function resultRoute(job) {
         ? { route: 'upload', params: { upload: uploadId } }
         : { route: 'upload' };
     }
-    case 'ocr':
-      return { route: 'upload' };
+    case 'ocr': {
+      // 资料 OCR → 笔记页资料库深链；notes.js 读取 document 参数后定位资料卡。
+      const documentId = firstId(request.document_id, params.document_id,
+        result.document_id, result.document?.id);
+      return documentId
+        ? { route: 'notes', params: { document: documentId } }
+        : { route: 'notes', params: { section: 'docs' } };
+    }
     case 'tagging':
       return { route: 'admin' };
     default:

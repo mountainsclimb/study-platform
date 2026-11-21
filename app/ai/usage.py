@@ -40,8 +40,10 @@ USAGE_TABLE = "ai_job_usage"
 QUOTA_TABLE = "ai_quotas"
 
 TERMINAL_STATUSES = ("completed", "failed", "interrupted", "cancelled")
-# 占用「每人每日配额 / 全站并发」的未失败状态；awaiting_outline 属于等待人工确认的在途任务。
-CONSUMING_ACTIVE_STATES = ("queued", "running", "cancel_requested", "awaiting_outline")
+# 占用「全站并发」的未失败状态；awaiting_outline 是等待人工确认提纲的在途任务，
+# 执行进程已退出、不再占用算力，不能计入并发（否则暂停的课程会永久占坑导致后续 429）。
+# 它仍占用「每人每日配额」的在途保护见 daily_used 的独立口径。
+CONSUMING_ACTIVE_STATES = ("queued", "running", "cancel_requested")
 NON_CONSUMING_STATES = ("failed", "cancelled", "interrupted")
 INPUT_KINDS = ("text", "image", "pdf", "audio", "none")
 

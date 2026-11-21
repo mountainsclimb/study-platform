@@ -53,14 +53,23 @@ DEFAULT_REPORT_PATH = ROOT / "screenshots" / "accept-report.json"
 DEFAULT_ALLOWED_HOSTS = "127.0.0.1,localhost,[::1],testserver"
 
 # 与 app/main.py::_compute_build_id 同口径：验收留痕的 build_id 必须与页面/接口报出的一致。
+# 与 app/main.py::BUILD_FINGERPRINT_PATTERNS 保持一致（方案 §7「分发与运维」）：
+# 源码、迁移、提示词、前端 JS/语言包/样式、编辑器构建产物与 vendored 源码都参与指纹，
+# 这样验收报告里的 build_id 与服务 /api/health 暴露的构建号同口径。
 BUILD_ID_PATTERNS = (
     "app/**/*.py",
+    "app/migrations/**/*.sql",
     "app/ai/prompts/**/*.yaml",
     "web/js/**/*.js",
-    "web/styles.css",
-    "web/styles-pages.css",
+    "web/locales/*.json",
+    "web/styles*.css",
     "web/index.html",
+    "web/editor/**/*",
+    "web/vendor/**/*",
+    "editor/src/**/*",
+    "editor/vendor/**/*",
 )
+BUILD_ID_SKIP_PARTS = frozenset({"__pycache__", "node_modules", ".git"})
 
 # 阶段键（-Stages / --stages 使用）。顺序即执行顺序。
 STAGE_LABELS = {
@@ -69,10 +78,12 @@ STAGE_LABELS = {
     "node-check": "node --check (web/js)",
     "editor-typecheck": "编辑器类型检查（tsc --noEmit）",
     "editor-build": "编辑器构建产物一致性（-EditorBuild）",
+    "ui-static": "前端静态契约与 ESM 解析",
     "pytest": "pytest（全量）",
     "ui-server": "UI 服务器可达性",
     "ui-plaza": "广场端到端（投稿→评审→发布→撤回）",
     "ui-official": "平台精选接入学习链路（official）",
+    "ui-ops": "运维监控与质量运营闭环",
     "ui-routes": "UI 路由核对",
     "ui-upload": "拍题入库页面核对",
     "ui-modules": "整合模块端到端",
@@ -243,15 +254,22 @@ def _probe_bank(directory: Path, source: str, release: str, root: Path) -> BankI
 def compute_build_id(root: Path = ROOT) -> str:
     """内容指纹（源码 + 前端资源），与 app/main.py::_compute_build_id 同口径。"""
     digest = hashlib.sha256()
-    files: list[Path] = []
+    entries: dict[str, Path] = {}
     for pattern in BUILD_ID_PATTERNS:
-        files.extend(root.glob(pattern))
-    for path in sorted(files):
-        if "__pycache__" in path.parts:
-            continue
+        for path in root.glob(pattern):
+            if not path.is_file():
+                continue
+            if any(part in BUILD_ID_SKIP_PARTS for part in path.parts):
+                continue
+            try:
+                relative = path.relative_to(root).as_posix()
+            except ValueError:  # 符号链接越界
+                continue
+            entries[relative] = path
+    for relative in sorted(entries):
         try:
-            digest.update(path.relative_to(root).as_posix().encode("utf-8"))
-            digest.update(path.read_bytes())
+            digest.update(relative.encode("utf-8"))
+            digest.update(entries[relative].read_bytes())
         except OSError:
             continue
     return digest.hexdigest()[:12]
@@ -392,6 +410,12 @@ def build_stages(
             skip_returncodes={2: "缺少构建工具（check_editor_build 返回 2），未比对构建产物"},
             description="重新构建编辑器并与入库的 web/editor 比对（exit 1=漂移、2=无构建工具）",
         )
+    candidates["ui-static"] = Stage(
+        key="ui-static", name=STAGE_LABELS["ui-static"],
+        command=[python, "scripts/integration/ui_static_accept.py"],
+        cwd=root, needs=("node",),
+        description="前端静态契约（任务深链/来源/Anki/locale）与 ESM 解析",
+    )
     candidates["pytest"] = Stage(
         key="pytest", name=STAGE_LABELS["pytest"],
         command=[python, "-m", "pytest", "-q", *(pytest_args or [])],
@@ -423,6 +447,12 @@ def build_stages(
             command=[python, "scripts/integration/official_accept.py", "--base-url", base_url],
             cwd=root, requires=("ui-server",),
             description="平台精选接入：official 引用检索/作答/错题/复习/工坊/撤回即时不可见",
+        )
+        candidates["ui-ops"] = Stage(
+            key="ui-ops", name=STAGE_LABELS["ui-ops"],
+            command=[python, "scripts/integration/ops_accept.py", "--base-url", base_url],
+            cwd=root, requires=("ui-server",),
+            description="运维监控 /api/admin/monitor、抽检门禁、一键恢复、批量处理、通知",
         )
         candidates["ui-ai-usage"] = Stage(
             key="ui-ai-usage", name=STAGE_LABELS["ui-ai-usage"],

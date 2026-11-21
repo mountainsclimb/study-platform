@@ -443,6 +443,8 @@ class GenerateInput(BaseModel):
     web_search_limit: int | None = Field(
         default=None, ge=generate.MIN_WEB_SEARCH_LIMIT, le=generate.MAX_WEB_SEARCH_LIMIT,
     )
+    # P4 平台精选题素材：source_ref=official:<公开编号>；撤回/争议/未发布题 404，格式非法 422。
+    source_ref: str | None = Field(default=None, max_length=160)
 
 
 class RegenerateInput(BaseModel):
@@ -514,6 +516,11 @@ async def generate_course(course_id: int, data: GenerateInput, user=Depends(curr
         params["image_model"] = data.image_model.strip()[:160]
     if data.material_text:
         params["material_text"] = data.material_text.strip()[:12000]
+    # P4：平台精选题素材（格式非法 422；可见性由任务准入校验按查询时状态判定）。
+    if data.source_ref is not None:
+        seed_ref = generate.normalize_seed_source_ref(data.source_ref)
+        if seed_ref:
+            params["source_ref"] = seed_ref
     # P3：联网查找资料（stage=outline|all 时生成大纲前检索；scenes 阶段不重复检索）。
     params["web_search"] = bool(data.web_search)
     params["web_search_limit"] = int(

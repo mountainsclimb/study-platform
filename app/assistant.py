@@ -31,7 +31,7 @@ import pydantic
 from pydantic import BaseModel, Field
 from starlette.concurrency import run_in_threadpool
 
-from . import assistant_skills, db, practice
+from . import assistant_skills, db, practice, question_ref
 from .auth import current_user
 
 router = APIRouter(prefix="/api/assistant", tags=["AI assistant"])
@@ -193,7 +193,15 @@ def _trim(text, limit: int) -> str:
 
 
 class ToolError(ValueError):
-    """工具参数/业务错误：作为结构化错误返回给模型，不向 HTTP 层抛 500。"""
+    """工具参数/业务错误：作为结构化错误返回给模型，不向 HTTP 层抛 500。
+
+    ``status`` 供 Agent 循环把它映射成结构化错误码（默认 422；撤回/不存在为 404）。
+    """
+
+    def __init__(self, message: str = "", *, status: int = 422):
+        super().__init__(message)
+        self.status = int(status)
+
 
 
 class AssistantProtocolError(ValueError):
@@ -1017,10 +1025,29 @@ TOOL_SPECS = [
     },
     {
         "name": "read_question",
-        "description": "读取一道题库题目的题干、选项与知识点；只有本人已作答（未解锁门控放行）才返回答案与解析。",
+        "description": (
+            "读取一道题库题或个人/平台精选题的题干、选项与知识点；只有本人已作答（未解锁门控放行）"
+            "才返回答案与解析。接受题库题号或统一引用（official:<公开编号>）。"
+        ),
         "side_effect": False,
         "requires_confirmation": False,
-        "params": [_param("qid", "string", "题库题号（从检索结果获得）", True)],
+        "params": [_param("qid", "string", "题号或统一引用（题库题号 / official:<公开编号>）", True)],
+    },
+    {
+        "name": "search_official",
+        "description": (
+            "检索平台精选公开题（社区待核验/已核验/精选），返回公开编号、来源标签与审核状态；"
+            "撤回/争议题不会出现。引用时使用公开编号（plz-...），不要提内部 ID。"
+        ),
+        "side_effect": False,
+        "requires_confirmation": False,
+        "params": [
+            _param("keyword", "string", "题干关键词（可选）"),
+            _param("subject", "string", "学科筛选（可选），例如 数学 / 物理"),
+            _param("grade", "string", "学段或年级筛选（可选），例如 高中 / 高中一年级"),
+            _param("qtype", "string", "题型筛选（可选，如 SINGLE / single_choice）"),
+            _param("limit", "integer", "返回条数 1–10，默认 5"),
+        ],
     },
     {
         "name": "list_wrongs",
@@ -1081,11 +1108,14 @@ TOOL_SPECS = [
     },
     {
         "name": "create_explain_job",
-        "description": "为一道已解锁题目创建 AI 详细讲解任务（写操作：需要用户在界面确认后才执行）。",
+        "description": (
+            "为一道已解锁题目创建 AI 详细讲解任务（支持 official:<公开编号> 的平台精选题；"
+            "写操作：需要用户在界面确认后才执行）。"
+        ),
         "side_effect": True,
         "requires_confirmation": True,
         "params": [
-            _param("qid", "string", "题库题号（必须已由本人作答解锁）", True),
+            _param("qid", "string", "题号或统一引用（题库题号 / official:<公开编号>，必须已由本人作答解锁）", True),
             _param("mode", "string", "讲解模式（可选，缺省用默认模式）"),
         ],
     },
@@ -1157,7 +1187,8 @@ def get_tools(user=Depends(current_user)):
             "max_skill_prompt_chars": MAX_SKILL_PROMPT_CHARS,
         },
         "scope_note": (
-            "助手只能读你本人的题库、错题、笔记、统计与「我的题库」，以及只读高考题库；"
+            "助手只能读你本人的题库、错题、笔记、统计与「我的题库」，以及只读高考题库和"
+            "当前公开可见的平台精选（社区待核验/已核验/精选，撤回/争议不可读）；"
             "联网搜索只能通过 DeepSeek 官方搜索接口发出你给出的关键词，结果带来源链接，不会伪造出处；"
             "除联网搜索外不能访问外网、不能执行命令、不能读别人的数据。创建讲解任务、错题巩固卷与组卷"
             "属于写操作，必须由你在对话里确认后才会执行；助手不会确认成绩，也不会发布试卷。"
@@ -1413,6 +1444,8 @@ def _tool_search_source_bank(user, args) -> dict:
         items.append(
             {
                 "qid": item.get("qid"),
+                "source": "bank",
+                "source_label": "高考题库",
                 "subject": item.get("subject") or "",
                 "year": item.get("year"),
                 "type": item.get("type_label") or item.get("type") or "",
@@ -1440,14 +1473,148 @@ def _tool_search_source_bank(user, args) -> dict:
     return _tool_ok("search_source_bank", summary, {"items": items, "total": data.get("total")}, refs)
 
 
+def _tool_search_official(user, args) -> dict:
+    """检索平台精选公开题（社区待核验/已核验/精选），返回公开编号与审核状态。
+
+    只读；可见性走 ``app.official.search_official``（撤回/争议在查询时即时不可见），
+    返回的公开编号（``plz-...``）可直接用于助手引用与课堂素材，不含任何内部 ID。
+    """
+    keyword = _arg_str(args, "keyword", max_len=120)
+    subject = _arg_str(args, "subject", max_len=40)
+    grade = _arg_str(args, "grade", max_len=40)
+    qtype = _arg_str(args, "qtype", max_len=40)
+    limit = _arg_int(args, "limit", low=1, high=10, default=5)
+    if not any((keyword, subject, grade, qtype)):
+        raise ToolError("请至少提供 keyword / subject / grade / qtype 之一后再检索平台精选")
+    from . import official as official_module
+
+    grade_filter = official_module.normalize_grade_filter(grade) if grade else None
+    try:
+        payload = official_module.search_official(
+            keyword=keyword or None, subject=subject or None, type=qtype or None,
+            grade=grade_filter, limit=limit, offset=0,
+        )
+    except HTTPException:
+        raise
+    items = []
+    for item in (payload.get("items") or [])[:limit]:
+        if not isinstance(item, dict) or not item.get("qid"):
+            continue
+        items.append(
+            {
+                "qid": item.get("qid"),
+                "source": item.get("source") or "official",
+                "source_label": item.get("source_label") or "平台精选",
+                "public_id": item.get("public_id") or "",
+                "review_status": item.get("review_status") or "",
+                "review_status_label": item.get("review_status_label") or "",
+                "status_label": item.get("status_label") or "",
+                "published_version": item.get("published_version"),
+                "featured": bool(item.get("featured")),
+                "community_pending": bool(item.get("community_pending")),
+                "subject": item.get("subject") or "",
+                "grade": item.get("grade") or "",
+                "type": item.get("type_label") or item.get("type") or "",
+                "stem": _trim(item.get("stem_plain"), 160),
+                "has_answer": bool(item.get("has_answer")),
+                "knowledge_tags": [
+                    str(tag) for tag in (item.get("knowledge_tags") or []) if _text(tag)
+                ][:5],
+            }
+        )
+    refs = [
+        {
+            "kind": "question",
+            "qid": item["qid"],
+            "title": "平台精选题 · %s" % (item["subject"] or ""),
+            "source": "official",
+            "source_label": "平台精选",
+            "public_id": item["public_id"],
+            "review_status": item["review_status"],
+        }
+        for item in items
+    ]
+    featured = sum(1 for item in items if item["featured"])
+    summary = "平台精选命中 %d 道（匹配总数 %s，其中平台精选 %d 道；引用时写公开编号）" % (
+        len(items), payload.get("total", len(items)), featured,
+    )
+    return _tool_ok(
+        "search_official",
+        summary,
+        {
+            "items": items,
+            "total": payload.get("total"),
+            "grade_filter": grade_filter,
+        },
+        refs,
+    )
+
+
+def _official_source_summary(question: dict) -> dict:
+    """平台精选来源声明摘要（只含广场公开字段，不含内部确认者/用户 ID）。"""
+    declaration = question.get("source_declaration")
+    declaration = declaration if isinstance(declaration, dict) else {}
+    return {str(key): _text(value) for key, value in declaration.items() if _text(value)}
+
+
+def _official_read_missing_error(official_module, public_id: str) -> ToolError:
+    """已撤回/争议/不存在的平台精选题：给模型清晰中文提示，绝不回显正文。"""
+    try:
+        info = official_module.inspect_official(public_id)
+    except Exception:  # noqa: BLE001 - 可见性检查失败按不可见处理
+        info = {}
+    status = str(info.get("status") or "")
+    if status == "withdrawn":
+        message = (
+            "该平台精选题（公开编号 %s）已撤回，内容不再展示；历史作答、错题与成绩记录保留，"
+            "不能读取题面、选项或答案。" % public_id
+        )
+    elif status == "disputed":
+        message = (
+            "该平台精选题（公开编号 %s）有争议或待修订，已暂停展示内容；"
+            "历史作答、错题与成绩记录保留。" % public_id
+        )
+    elif info.get("exists"):
+        message = (
+            "该平台精选题（公开编号 %s）当前不可见（未发布/已下架），内容不再展示。" % public_id
+        )
+    else:
+        message = "未找到该平台精选题（公开编号 %s 不存在或未公开）。" % public_id
+    return ToolError(message, status=404)
+
+
 def _tool_read_question(user, args) -> dict:
     qid = _arg_str(args, "qid", required=True, max_len=160)
-    question = practice.load_question(qid)
+    from . import official as official_module
+
+    parsed = question_ref.try_parse(qid)
+    official_public_id = ""
+    if parsed is not None and parsed.is_official:
+        official_public_id = official_module.normalize_public_id(parsed.key)
+        if not official_public_id:
+            raise ToolError(
+                "平台精选引用格式不正确：应为 official:<公开编号>（如 official:plz-xxxx）",
+                status=422,
+            )
+    elif str(qid).strip().lower().startswith("official:"):
+        raise ToolError(
+            "平台精选引用格式不正确：应为 official:<公开编号>（如 official:plz-xxxx）",
+            status=422,
+        )
+    try:
+        question = practice.load_question(qid)
+    except HTTPException as exc:
+        if official_public_id and exc.status_code == 404:
+            raise _official_read_missing_error(official_module, official_public_id) from None
+        raise
+    is_official = str(question.get("source") or "") == official_module.SOURCE
     unlocked = practice.latest_attempt(user["id"], qid) is not None
     practice_allowed = bool(question.get("practice_allowed"))
     quarantined = bool(question.get("quarantined"))
     data = {
         "qid": qid,
+        "source": question.get("source") or "bank",
+        "source_label": question.get("source_label") or "高考题库",
         "subject": question.get("subject") or "",
         "type": question.get("type_label") or question.get("type") or "",
         "stem": _trim(question.get("stem_plain"), 1500),
@@ -1468,19 +1635,66 @@ def _tool_read_question(user, args) -> dict:
     notes = []
     if not practice_allowed:
         notes.append("该题已隔离或仅为上下文材料，不可作答，回答时不得提供答案或解析。")
+    if is_official:
+        data.update(
+            {
+                "public_id": question.get("public_id") or official_public_id,
+                "official_status": question.get("official_status") or "",
+                "status_label": question.get("status_label") or "",
+                "review_status": question.get("review_status") or "",
+                "review_status_label": question.get("review_status_label") or "",
+                "published_version": question.get("published_version"),
+                "featured": bool(question.get("featured")),
+                "community_pending": bool(question.get("community_pending")),
+                "notice": question.get("notice") or "",
+                "source_declaration": _official_source_summary(question),
+                "figure_notice": question.get("figure_notice") or "",
+                "knowledge_tags": [
+                    str(tag) for tag in (question.get("knowledge_tags") or []) if _text(tag)
+                ][:12],
+            }
+        )
+        notes.append(
+            "该题来源为平台精选（公开编号 %s）；回答中引用时写「平台精选 %s」，"
+            "不要提任何内部 ID、投稿人或审核员信息。" % (official_public_id, official_public_id)
+        )
+        if question.get("community_pending"):
+            notes.append("该题仍在社区核验中，答案与解析可能继续修订，讲解时要注明。")
+        elif question.get("review_status") == "verified":
+            notes.append("该题已社区核验通过但尚未签发平台精选，讲解时要注明来源状态。")
     if unlocked:
         answer = question.get("answer") if isinstance(question.get("answer"), dict) else {}
         data["answer"] = _trim(answer.get("text"), 1200)
         data["solution"] = _trim(question.get("solution"), 2000)
-        notes.append("用户已作答（门控放行），可以讲解答案与解析，但要说明依据来自题库。")
+        if is_official:
+            notes.append(
+                "用户已作答（门控放行），可以讲解答案与解析，但要说明依据来自平台精选公开题。"
+            )
+        else:
+            notes.append("用户已作答（门控放行），可以讲解答案与解析，但要说明依据来自题库。")
     else:
         notes.append("用户尚未作答：按门控规则不返回答案与解析，回答时必须提醒用户先独立作答。")
     data["notes"] = notes
+    title = "平台精选题 · %s" % (question.get("subject") or "") if is_official else (
+        "题目 · %s" % (question.get("subject") or "题库")
+    )
+    ref = {"kind": "question", "qid": qid, "title": title}
+    if is_official:
+        ref.update({
+            "source": "official",
+            "source_label": "平台精选",
+            "public_id": official_public_id,
+            "review_status": question.get("review_status") or "",
+        })
     return _tool_ok(
         "read_question",
-        "读取题目 %s 成功（%s）" % (qid, "已解锁" if unlocked else "未解锁，不返回答案"),
+        "读取题目 %s 成功（%s%s）" % (
+            qid,
+            "平台精选，" if is_official else "",
+            "已解锁" if unlocked else "未解锁，不返回答案",
+        ),
         data,
-        [{"kind": "question", "qid": qid, "title": "题目 · %s" % (question.get("subject") or "题库")}],
+        [ref],
     )
 
 
@@ -1497,6 +1711,11 @@ def _tool_list_wrongs(user, args) -> dict:
         items.append(
             {
                 "qid": card.get("qid"),
+                "source": card.get("source") or "bank",
+                "source_label": card.get("source_label") or "高考题库",
+                "public_id": card.get("public_id") or "",
+                "review_status": card.get("review_status") or "",
+                "unavailable": bool(card.get("unavailable")),
                 "subject": card.get("subject") or "",
                 "type": card.get("type_label") or card.get("type") or "",
                 "stem": _trim(card.get("stem_plain"), 150),
@@ -1539,17 +1758,36 @@ def _tool_get_stats(user, args) -> dict:
         "due_count": raw.get("due_count", 0),
         "mastery_counts": raw.get("mastery_counts") or {},
         "subject_progress": subject_progress,
+        # 平台精选口径（可见性查询时判定，撤回不计入）；既有字段语义不变。
+        "official": raw.get("official") if isinstance(raw.get("official"), dict) else {},
     }
-    summary = (
-        "累计作答 %s 次、已判定 %s 次，正确率 %s%%；错题 %s 道，其中 %s 道到期复习。"
-        % (
-            data["attempts"],
-            data["graded_attempts"],
-            data["accuracy"],
-            data["wrong_count"],
-            data["due_count"],
+    official = data["official"]
+    if official.get("available"):
+        summary = (
+            "累计作答 %s 次、已判定 %s 次，正确率 %s%%；错题 %s 道，其中 %s 道到期复习；"
+            "平台精选已练 %s 道（可练 %s 道）、精选错题 %s 道。"
+            % (
+                data["attempts"],
+                data["graded_attempts"],
+                data["accuracy"],
+                data["wrong_count"],
+                data["due_count"],
+                official.get("practiced", 0),
+                official.get("practice_pool", 0),
+                official.get("wrong_count", 0),
+            )
         )
-    )
+    else:
+        summary = (
+            "累计作答 %s 次、已判定 %s 次，正确率 %s%%；错题 %s 道，其中 %s 道到期复习。"
+            % (
+                data["attempts"],
+                data["graded_attempts"],
+                data["accuracy"],
+                data["wrong_count"],
+                data["due_count"],
+            )
+        )
     return _tool_ok("get_stats", summary, data)
 
 
@@ -1729,6 +1967,7 @@ async def _tool_web_search(user, args) -> dict:
 
 READ_TOOL_HANDLERS = {
     "search_source_bank": _tool_search_source_bank,
+    "search_official": _tool_search_official,
     "read_question": _tool_read_question,
     "list_wrongs": _tool_list_wrongs,
     "get_stats": _tool_get_stats,
@@ -1766,7 +2005,9 @@ def _prepare_create_explain_job(user, args, conversation) -> dict:
         modes = (load_explain_modes() or {}).get("modes") or {}
         if mode not in modes:
             raise ToolError("讲解模式不存在：%s" % mode)
-    summary = "为题目 %s（%s %s）创建「AI 详细讲解」任务，使用模型 %s。" % (
+    is_official = str(question.get("source") or "") == "official"
+    summary = "为%s %s（%s %s）创建「AI 详细讲解」任务，使用模型 %s。" % (
+        "平台精选题" if is_official else "题目",
         qid,
         question.get("subject") or "",
         question.get("type_label") or "",
@@ -1774,6 +2015,19 @@ def _prepare_create_explain_job(user, args, conversation) -> dict:
     )
     if mode:
         summary = summary.replace("」任务", "（模式 %s）」任务" % mode)
+    ref = {
+        "kind": "question",
+        "qid": qid,
+        "title": ("平台精选题 · %s" if is_official else "题目 · %s")
+        % (question.get("subject") or ""),
+    }
+    if is_official:
+        ref.update({
+            "source": "official",
+            "source_label": "平台精选",
+            "public_id": question.get("public_id") or "",
+            "review_status": question.get("review_status") or "",
+        })
     return {
         "ok": True,
         "tool": "create_explain_job",
@@ -1787,7 +2041,7 @@ def _prepare_create_explain_job(user, args, conversation) -> dict:
             "provider_id": provider_id,
             "model": model,
         },
-        "refs": [{"kind": "question", "qid": qid, "title": "题目 · %s" % (question.get("subject") or "")}],
+        "refs": [ref],
     }
 
 
@@ -2092,7 +2346,10 @@ def _system_prompt(user: dict, conversation: dict, skills: list[dict] | None = N
         "3. 不编造题号、笔记、知识点、统计数字或成绩；工具没查到的就明确说没找到。\n"
         "4. 写操作（创建讲解任务 / 错题巩固卷 / 组卷）永远不能直接执行：按协议调用工具后系统会生成"
         "「待确认操作」，必须由用户点击确认后才真正创建。你不能确认成绩、不能发布试卷、不能修改他人数据。\n"
-        "5. 数学公式用 $...$，回答用中文 Markdown；引用题目写题号；回答简明、可执行，不说空话。\n\n"
+        "5. 平台精选题（official:<公开编号>，公开编号形如 plz-...）：只引用工具返回的公开信息，"
+        "引用时必须写「平台精选 · 公开编号 plz-...」并说明其审核状态（社区待核验/已核验/精选）；"
+        "绝不透露或猜测内部 ID、投稿人、审核员与后台字段；已撤回/有争议的题目不得复述题面、答案或解析。\n"
+        "6. 数学公式用 $...$，回答用中文 Markdown；引用题目写题号；回答简明、可执行，不说空话。\n\n"
         "【可用工具】\n%s\n\n"
         "【输出协议（必须严格遵守）】\n"
         "每一步只输出一个 JSON 对象，不要输出 Markdown 代码块或任何额外文字：\n"
@@ -2289,6 +2546,7 @@ def _collect_refs(bucket: list, incoming) -> None:
             return
         bucket.append({key_: ref.get(key_) for key_ in ref if key_ in (
             "kind", "qid", "note_id", "kp_id", "paper_id", "question_id", "title",
+            "source", "source_label", "public_id", "review_status",
         )})
         seen.add(key)
 

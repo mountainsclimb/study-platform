@@ -9,7 +9,9 @@
 | `classroom_accept.py` | Playwright 浏览器验收：课程创建 → 生成 → 大纲确认 → 播放器（聚光灯/字幕）→ 测验判分 → AI 老师对话 → **PBL / 交互场景** → **导出 PPTX/HTML/ZIP** → **课程 ZIP 导入** → **多智能体课堂（名册/讨论/插话/回放/白板）**；以及语音输入（课堂 tutor / AI 助手）支持与不支持两种状态、桌面与手机截图 |
 | `modules_accept.py` | Playwright 浏览器验收（**不含课堂**）：首页 AI 工作台 6 卡/跳转/动态、我的题库（统计/筛选/编辑弹层/导入 dry_run/导出下载）、试卷工坊（4 tab/导入历史/组卷试题篮/试卷详情/Word PK 头/打印 iframe/答题卡 SVG/整卷练习提交）、学情分析（有数据/空态/打印媒体/无 provider 时 AI 建议禁用）、任务中心（列表/过滤/详情或空态）、AI 助手（会话/新建/技能选择/无 provider 发送引导）、移动端 390 无溢出 |
 | `plaza_accept.py` | 广场 Phase 2 + Phase 3 端到端验收：HTTP 全链路（匿名访客读广场 → 作者投稿/声明/送审 → 编辑初审 → 5 人独立评审阈值 → 自动核验通过 → 编辑签发精选 → 撤回 → 匿名不可见；Phase 3 追加抽检 pass/high 自动撤回、收藏/纠错/举报/申诉闭环、回滚恢复旧版本、通知中心与质量指标）+ 可选 Playwright 页面冒烟（匿名广场桌面/手机、作者投稿台、评审台、编辑台、详情收藏/纠错/举报、通知铃铛、编辑台抽检/反馈/指标、作者申诉卡），输出 `plaza-accept-report.json` 与 23 张截图 |
-| `official_accept.py` | 平台精选接入学习链路端到端验收：复用 plaza_accept 账号/角色/发布链路发布客观题+主观题 → 匿名/登录检索与 `official:<public_id>` 详情 → official 作答（客观判分/主观 pending）→ 错题与复习队列 → 工坊建卷（快照含 official 来源）→ 整卷练习提交/回看 → 撤回后检索/详情/作答/建卷立即失效、复习队列保留已撤回提示，输出 `official-accept-report.json` |
+| `official_accept.py` | 平台精选接入学习链路端到端验收（15 步）：复用 plaza_accept 账号/角色/发布链路发布客观题+主观题 → 匿名/登录检索与 `official:<public_id>` 详情 → official 作答（客观判分/主观 pending）→ 错题与复习队列 → 工坊建卷（快照含 official 来源）→ 整卷练习提交/回看 → **学段筛选 `/api/questions?grade=` 与 `/api/insight/home` 精选口径** → **课堂以 `source_ref=official:<id>` 建课生成大纲（`outline.sources` 含公开编号/精选版本）** → **助手 HTTP 会话驱动 `read_question` 读取 official 题面** → 撤回后检索/详情/作答/建卷/课堂建课立即失效、助手读取给出已撤回提示，输出 `official-accept-report.json` |
+| `ops_accept.py` | WS30 质量运营 + 运维端到端验收：`GET /api/admin/monitor` 结构/权限/短缓存/单组降级构造与恢复；抽检门禁 `initial_100 + armed`（未抽检签发 409 → 签发前抽检 pass → 200、override 审计、普通用户 403）；一键恢复（抽检 high 自动撤回→恢复公开、编辑撤回→恢复、未确认 422、未知 404、改版 v2 已活跃时恢复旧发布 409、幂等）；批量处理 issues/reports/appeals 部分成功语义；通知 unread-count/kind 全读/ids 去重/事件去重；指标 gate/restorations/ops.batch/notifications 字段，输出 `ops-accept-report.json` |
+| `ui_static_accept.py` | WS30 前端静态验收（不启动服务/不联网）：`node --check` 遍历 `web/js/**/*.js` + ESM 解析；任务深链格式（课堂/笔记/OCR/工坊/我的题库/拍题）；平台精选公开配图与纠错接口；学段筛选接线；笔记/Anki 题链接与来源版本字段；locale 中英文键对齐，输出 `ui-static-accept-report.json` |
 | `ai_usage_accept.py` | AI 用量与配额端到端验收：脚本内嵌只监听 127.0.0.1 的 OpenAI 兼容假模型 → 普通用户创建 explain 任务完成任务 → `/api/ai/usage/me` 用量行（模型/耗时/tokens/入参分类）→ 管理台 `/api/admin/ai/usage` 汇总 → 普通用户 403 → 配额收紧为 1 后超额 429（不落库/不消耗）→ 恢复默认配额，输出 `ai-usage-accept-report.json`；不产生真实模型费用 |
 | `fake_model_server.py` | 仅供本目录验收使用的 **OpenAI 兼容假模型服务**（只监听 `127.0.0.1`，按 prompt 标记返回固定结构化 JSON） |
 | `README.md` | 本文件 |
@@ -342,8 +344,31 @@ python scripts/integration/official_accept.py --base-url http://127.0.0.1:8846
   来源声明）→ 整卷练习逐题作答 → 提交判分（客观错题入统一错题本、主观题 pending）→ 回看；
 - 撤回：编辑撤回两条精选 → `source=official` 检索/详情/作答/官方作答历史/工坊建卷立即 404
   或不可见；`/api/review/queue` 保留历史并显示「已撤回」占位提示（不回显受限正文）；
+- **学段筛选（WS26/WS29）**：`/api/questions?grade=高中|高中一年级|初中|未知值` 的标准年级精确/
+  学段前缀匹配、`grade_filter` 元数据（`applied/official_applied`）、未知值安全降级、题库侧
+  无 grade 列时 `applied=false` 的说明；`/api/catalog` 下发 `grade_stages` 与标准年级；
+- **首页精选口径（WS26）**：`/api/insight/home` 的 `official{available,total_questions,practice_pool,
+  auto_gradable,attempts,practiced,wrong_count}` 与本人作答链路一致，`bank.official_practice_pool`
+  与 official 口径同值，`caliber.official` 口径说明存在；
+- **课堂接入精选（WS26）**：脚本内嵌只监听 127.0.0.1 的假模型服务 + `POST /api/providers` 建连接，
+  `source_ref=official:<public_id>` 建课生成大纲 → 课程 `outline.sources` 记录 `kind=official` /
+  `public_id` / `published_version` / 来源声明，`config.seed_source` 可回看；格式非法 422；
+  撤回后再次以该素材建课由生成准入直接 404（提示已撤回）；
+- **助手接入精选（WS26/WS27）**：HTTP 会话（`POST /api/assistant/conversations[/{id}/messages]`）驱动
+  助手 `read_question` 工具读取 `official:<public_id>` → 工具结果 `ok=true` 且含 `public_id`/
+  `published_version`/`review_status`/`source_declaration`，助手消息 `refs` 含 official 引用；
+  撤回后同一工具返回结构化「已撤回」错误且不回显正文；假模型连接不可用时自动降级为
+  **接口契约静态校验**并在报告/`warnings` 显式标记（不静默跳过）；
+- **抽检门禁兼容（WS28）**：实例显式 `armed`（env `STUDY_PLAZA_QUALITY_GATE` 或管理员设置）时，
+  发布链路前临时关闭门禁、结束前恢复原模式（报告 `data.quality_gate` 记录 origin/restore）；
+  未显式配置且库中无抽检记录时不阻断；
+- **课堂生成并发保障**：课堂大纲任务停在 `awaiting_outline`（产品语义）仍占用全站 `course`
+  并发；脚本探测历史遗留任务并尝试 cancel，同时以管理员临时把 `course` 并发上限从默认 2 提到 20、
+  结束恢复原设置（报告 `data.classroom.concurrency_guard`），保证同一实例可重复运行；
+  已知产品限制：暂停态任务的 `POST /api/ai/jobs/{id}/cancel` 返回 200 但状态不变；
 - 产物：`screenshots/integration/official-accept-report.json`（`steps[]` 每步断言、`api` 覆盖、
-  `data` 公开题号/试卷/练习 id、`environment` 启动方式与必需环境变量），退出码 0/1。
+  `data` 公开题号/课堂 `outline.sources`/助手工具结果/学段筛选/门禁 origin、`environment`
+  启动方式与必需环境变量），退出码 0/1。
 
 ## AI 用量与配额验收（`ai_usage_accept.py`，WS24 Phase 3）
 
@@ -381,9 +406,112 @@ python scripts/integration/ai_usage_accept.py --base-url http://127.0.0.1:8846
 > 同日重复运行超过该配额时任务创建会被 429 拒绝，请换全新 `STUDY_DATA_DIR` 实例复跑。
 
 > 串联建议（`scripts/accept_runner.py -Ui`）：同一隔离实例上依次运行
-> `plaza_accept.py` → `official_accept.py` → `ai_usage_accept.py` 最省时；三个脚本共用
-> 「广场验收管理员/广场验收作者」验收账号命名，顺序变化时会自动登录复用或按首个注册账号=管理员
-> 初始化，不依赖预设数据。
+> `plaza_accept.py` → `official_accept.py` → `ops_accept.py` → `ui_static_accept.py` 最省时；
+> 前三个脚本共用「广场验收管理员/广场验收作者」验收账号命名，顺序变化时会自动登录复用或按
+> 首个注册账号=管理员初始化，不依赖预设数据；`ui_static_accept.py` 为纯静态检查，可在任意时刻运行。
+> 注意 `ops_accept.py` 会把抽检门禁显式设置为 `initial_100+armed` 验证拦截后**最终恢复为 off**
+> （脚本负责的 armed 场景，不把实例留在强制抽检状态）；如需继续验证「实例显式 armed 门禁」，
+> 请在它之前运行 `official_accept.py` / `plaza_accept.py`（两者会在显式 armed 时临时关闭门禁、
+> 结束前恢复原模式）。
+
+## WS30 第四轮端到端验收扩展（`ops_accept.py` / `ui_static_accept.py` / 扩展 `official_accept.py`）
+
+WS30 在既有验收脚本上补齐第四轮能力：运维监控、抽检门禁、一键恢复、批量处理、通知增强、
+精选接入课堂/助手、学段筛选、任务深链与笔记/Anki 版本字段。全部经公开 HTTP API 或纯静态断言，
+`httpx.Client(trust_env=False)`；只改 `scripts/integration/` 与 `docs/验收记录.md`，未改
+`app/`、`web/`、`tests/`。报告 JSON 落 `screenshots/integration/`（目录已 gitignore）。
+
+### 1. 启动隔离实例（全新数据目录，建议显式 armed 门禁）
+
+```powershell
+cd E:\responsibility\study-platform
+$env:PYTEST_DISABLE_PLUGIN_AUTOLOAD='1'
+$env:STUDY_ALLOWED_HOSTS='127.0.0.1,localhost,[::1],testserver'
+$env:STUDY_INDEX_PREWARM='0'
+# 建议：实例启动时显式 armed，验证「抽检门禁兼容」分支（official/plaza 临时关闭并恢复；
+# ops 显式 armed 验证后最终恢复 off）
+$env:STUDY_PLAZA_QUALITY_GATE='initial_100'
+$env:STUDY_DATA_DIR = Join-Path $env:TEMP ('zhixu-ws30-' + (Get-Random))
+python -m uvicorn app.main:app --host 127.0.0.1 --port 8856
+```
+
+> 抽检门禁语义（WS28 交付）：模式 `off|initial_100(默认)|always`；显式配置（env
+> `STUDY_PLAZA_QUALITY_GATE` 或管理员 `PUT /api/plaza/admin/quality/gate {mode,armed}`）即激活；
+> 未显式配置且库中无抽检记录时不阻断（兼容既有脚本首跑发布）。触发流程：
+> `verified → publish 409(detail.code=quality_gate_blocked)` → `POST /api/plaza/admin/quality/checks
+> {submission_id,decision:"pass"}`（`phase=pre_publish`，响应 `gate.publish_ready=true`）→ 再 publish 200。
+
+### 2. 运行验收（建议顺序）
+
+```powershell
+# ① 平台精选接入（含课堂/助手 official + 学段筛选/首页口径；实例显式 armed 时自动兼容）
+python scripts/integration/official_accept.py --base-url http://127.0.0.1:8856
+# ② 质量运营 + 运维监控（抽检门禁/一键恢复/批量/通知/指标；结束恢复门禁 off）
+python scripts/integration/ops_accept.py --base-url http://127.0.0.1:8856
+# ③ 前端静态验收（不启动服务，可任意时刻运行；node --check 需要本机 Node.js）
+python scripts/integration/ui_static_accept.py
+# ④（可选）既有广场全链路回归（显式 armed 时自动临时关闭/恢复门禁）
+python scripts/integration/plaza_accept.py --base-url http://127.0.0.1:8856 --skip-ui
+```
+
+`ops_accept.py` 常用参数：`--base-url`（默认 8856）、`--out`、`--json`、`--admin-username` /
+`--admin-password` / `--admin-token`（与 plaza_accept 一致，预先播种实例复用已存在管理员）。
+`ui_static_accept.py` 常用参数：`--out`、`--json`。
+
+### 3. `ops_accept.py` 覆盖点（17 步）
+
+- **运维监控**：`GET /api/admin/monitor` 管理员可读、普通用户 403、匿名 401；结构
+  `ok/status/checks{tasks,ai,media,data,plaza}/build/thresholds/cache`、短缓存与 `refresh=1`；
+  构造 20 条待处理纠错使 `checks.plaza` 单组降级（warn/error）且整体不 500、清理后恢复、
+  其他组结构完整；响应不含敏感 Key；
+- **批量处理**：`POST /api/plaza/admin/{issues|reports|appeals}/batch` 部分成功语义
+  （`updated/skipped`、`already_handled`/`not_found`、重复批量不重复通知）、反馈人通知、
+  事件链与 `metrics.ops.batch` 口径；
+- **抽检门禁**：管理员显式 `{mode:initial_100,armed:true}`；未抽检签发 409（code/guidance/
+  override 入口/gate 状态/blocked 审计）→ 签发前抽检 pass（`phase=pre_publish`、
+  `publish_ready=true`）→ 再签发 200（`satisfied/pass_check`）；override 缺理由 422、带理由
+  200（`quality_gate_override` 审计事件+指标）；普通用户改门禁 403；
+- **一键恢复**：抽检 `issue+high` 自动撤回 → 公开不可见 → 收藏者/作者通知 → `restore`
+  （`confirm_resolved=true`）恢复公开（`restore_source=quality_auto_withdraw`、事件
+  `release_restored`、收藏者 `favorite_restored`）→ 重复恢复幂等不重复通知；编辑撤回后恢复
+  （`editor_withdraw`）、未确认 422、未知发布 404、活跃发布幂等；改版 v2 已活跃时恢复旧发布
+  409（`active_version`/`restore_version`，避免内容回退）；
+- **通知增强**：`unread-count` 与列表同口径（`by_kind` 求和/`kinds_total`）、按 kind 全读、
+  按 ids 读取（重复 id 去重）、未知 kind 422、`all=true` 全读；同一事件重复触发在去重窗口内只
+  产生一条通知；
+- **指标补充**：`/api/plaza/admin/metrics` 的 `quality.gate`（blocked/passed/override/
+  pilot_limit）、`withdrawals.restorations`/`restorations`、`ops.batch`（batches/requested/
+  updated/skipped/by_kind）、`notifications`（total=unread+read）、`caliber` 口径说明；
+- **收尾**：抽检门禁恢复 `off`（脚本负责显式 armed 场景，不把实例留在强制抽检状态）。
+
+### 4. `ui_static_accept.py` 覆盖点（6 步，纯静态）
+
+- `node --check` 遍历 `web/js/**/*.js` + `vm.SourceTextModule` 真 ESM 解析（Node 缺失时记
+  warning 并失败该步，不静默跳过）；
+- 任务深链：`tasks.js` 的 `#/paperlab?import=|tab=papers&paper=`、`#/classroom?course=`、
+  `#/notes?note=|document=`、`#/mybank?edit=`、`#/upload?upload=` 与各页面 `params.get(...)`
+  读取一致；
+- 平台精选配图/纠错：`images[].accessible/url` 公开图渲染、`figure_urls` 兼容、
+  `figure_notice`/加载失败降级、`[图N]/[公式N]` 占位、`POST /api/plaza/questions/{id}/issues`
+  字段白名单/登录引导/成功后 toast、精选编号跳广场；
+- 学段筛选：能力探测、`catalog.grade_stages` 选项、URL 恢复/重置/清除芯片、
+  `grade_filter.applied=false` 降级提示；后端 `/api/questions?grade=` 与 official 学段口径；
+- 笔记/Anki：统一题目引用（`bank:/app:/official:`）链接与来源版本字段，`.apkg` 模型字段不变；
+- locale：中英文键集合/占位符一致、前端字面量键齐全、WS30 命名空间键量与非空。
+
+### 5. 报告产物
+
+| 报告 | 内容 |
+|---|---|
+| `screenshots/integration/ops-accept-report.json` | `steps[]/checks[]`、`api`（端点/调用）、`data{baseline,monitor,batch,gate,restore,notifications,metrics}`、`warnings/problems`、`environment`（门禁语义与启动方式） |
+| `screenshots/integration/official-accept-report.json` | 追加 `data{classroom,assistant,grade,insight,quality_gate}`（课堂 outline.sources、助手工具结果、学段筛选元数据、门禁 origin/恢复） |
+| `screenshots/integration/ui-static-accept-report.json` | `steps[]/checks[]`、`environment`（Node 版本、检查范围）、`problems/warnings` |
+
+> 可重复运行：账号登录优先（复跑 0 次注册请求）；`ops_accept.py` 会清理历史失败运行遗留的
+> 待处理纠错积压并断言实例累计指标（`>=` 口径），同一实例复跑通过。已知缺陷：运维监控
+> `withdrawn` 撤回传播抽样对「同一 public_id 的新版本重新签发（v2 active + v1 withdrawn）」
+> 会误报「撤回泄露」（既有 `app/monitor.py` 口径问题，非本脚本数据），`ops_accept.py` 记录为
+> warning 不判断失败，待 WS27 修复。
 
 ## 清理
 

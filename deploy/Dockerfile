@@ -20,6 +20,11 @@ COPY web ./web
 COPY eval ./eval
 COPY deploy ./deploy
 COPY scripts ./scripts
+# 分发治理（方案 §7「分发与运维」）：构建上下文由根 `.dockerignore` 收敛（排除 data/、
+# backups/、node_modules/、.git/ 与验收产物）；镜像随包携带三方声明与 vendored 编辑器源码，
+# 便于溯源与许可证核对。web/editor 是构建产物，已随 `COPY web` 进入镜像。
+COPY THIRD_PARTY_NOTICES.md ./THIRD_PARTY_NOTICES.md
+COPY editor/vendor ./editor/vendor
 
 RUN useradd -m -u 10001 zhixu && mkdir -p /data /bank && chown -R zhixu:zhixu /app /data
 USER zhixu

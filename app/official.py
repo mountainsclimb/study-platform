@@ -18,14 +18,17 @@
 ``app.plaza.figures`` 的公开图映射，因此与广场公开详情页字段口径一致；不写入广场表、
 不写 ``app/plaza/**``（该目录由并行工作流维护）。
 
-对外只暴露三个读取函数：
+对外暴露的读取函数：
 
 * :func:`load_official_question`：按 public_id 读公开题，返回与 ``practice.load_question``
   同形的题目字典（``qid=official:<public_id>``）；不可见统一 404。
 * :func:`search_official`：公开题列表 + total（LIKE 快照 JSON；供 ``/api/questions`` 的
-  ``source=official|all`` 使用）。
+  ``source=official|all`` 与助手 ``search_official`` 工具使用），支持学科/题型/关键词/学段
+  （快照 grade）过滤。
 * :func:`inspect_official`：只返回可见性/状态摘要（不回显正文），供错题卡/复习队列在
   题目被撤回后显示「内容已撤回」提示并保留历史成绩。
+* :func:`official_caliber`：首页/学情/统计共用的平台精选口径（可见总量/可自动判分 +
+  本人已练/错题/到期复习；撤回/争议在查询时剔除、不做进程内缓存）。
 """
 from __future__ import annotations
 
@@ -34,7 +37,7 @@ import re
 from fastapi import HTTPException
 
 from . import question_ref
-from .db import connection
+from .db import connection, utcnow
 
 SOURCE = question_ref.SOURCE_OFFICIAL
 SOURCE_LABEL = question_ref.SOURCE_LABELS[SOURCE]
@@ -58,6 +61,16 @@ STATUS_NOTICES = {
     "withdrawn": NOTICE_WITHDRAWN,
     "disputed": NOTICE_DISPUTED,
 }
+
+#: 学段与标准年级（与 ``app/paperlab/db.py::GRADES`` 同一口径；这里保留本地常量，
+#: 避免 official 读取层反向依赖试卷工坊模块）。
+GRADE_STAGES = ("小学", "初中", "高中")
+STANDARD_GRADES = (
+    "小学一年级", "小学二年级", "小学三年级", "小学四年级", "小学五年级", "小学六年级",
+    "初中一年级", "初中二年级", "初中三年级",
+    "高中一年级", "高中二年级", "高中三年级",
+)
+GRADE_FILTER_MAX_CHARS = 40
 
 #: 快照题型（工坊题型）→ 练习侧题型（与 ``practice.APP_PRACTICE_TYPE_MAP`` 同口径）。
 _PRACTICE_TYPE_MAP = {
@@ -148,6 +161,76 @@ def _split_csv(value) -> list[str]:
     if not value:
         return []
     return [part.strip() for part in str(value).split(",") if part.strip()]
+
+
+# ---------------------------------------------------------------------------
+# 学段筛选（grade）：官方侧用快照 grade；支持标准年级精确匹配与学段前缀匹配
+# ---------------------------------------------------------------------------
+
+def normalize_grade_filter(value) -> dict:
+    """把 ``grade`` 查询参数规范化成可复用结构；非法/未知值安全降级（不 422）。
+
+    返回：``{requested, values, stages, valid, degraded, reason}``。
+
+    * ``values``：标准年级（小学一年级…高中三年级）精确匹配；
+    * ``stages``：学段（小学/初中/高中）前缀匹配，例如 ``高中`` 命中 ``高中一年级``；
+    * 支持逗号分隔多值；未知片段被忽略，全部未知时整体降级为不筛选并给出原因。
+    """
+    requested = str(value or "").strip()
+    result = {
+        "requested": requested,
+        "values": [],
+        "stages": [],
+        "valid": False,
+        "degraded": False,
+        "reason": "",
+    }
+    if not requested:
+        return result
+    if len(requested) > GRADE_FILTER_MAX_CHARS:
+        result["degraded"] = True
+        result["reason"] = "学段筛选值过长（最多 %d 字），已忽略该筛选" % GRADE_FILTER_MAX_CHARS
+        return result
+    unknown: list[str] = []
+    for piece in _split_csv(requested):
+        if piece in STANDARD_GRADES:
+            if piece not in result["values"]:
+                result["values"].append(piece)
+        elif piece in GRADE_STAGES:
+            if piece not in result["stages"]:
+                result["stages"].append(piece)
+        elif piece not in unknown:
+            unknown.append(piece)
+    if not result["values"] and not result["stages"]:
+        result["degraded"] = True
+        result["reason"] = "未知的学段筛选值，已忽略该筛选"
+        return result
+    result["valid"] = True
+    if unknown:
+        result["reason"] = "已忽略未知学段值：%s" % "、".join(unknown[:5])
+    return result
+
+
+def matches_grade(grade_value, normalized) -> bool:
+    """快照年级是否符合规范化后的学段筛选（无有效筛选时恒真）。"""
+    normalized = normalized if isinstance(normalized, dict) else {}
+    if not normalized.get("valid"):
+        return True
+    text = str(grade_value or "").strip()
+    if not text:
+        return False
+    if text in (normalized.get("values") or []):
+        return True
+    return any(text.startswith(stage) for stage in (normalized.get("stages") or []))
+
+
+def _grade_filter_active(normalized) -> bool:
+    return bool(
+        isinstance(normalized, dict)
+        and normalized.get("valid")
+        and (normalized.get("values") or normalized.get("stages"))
+    )
+
 
 
 def _like_pattern(keyword: str) -> str:
@@ -465,11 +548,50 @@ def _log_fallback_failure() -> None:
         pass
 
 
-def search_official(keyword=None, subject=None, type=None, limit: int = 20,
+def _visibility_clause(plaza_db) -> tuple[str, list]:
+    """公开可见性 WHERE 子句（查询时判定：published 还需 active 发布指针）。"""
+    marks = ",".join("?" for _ in plaza_db.PUBLIC_STATUSES)
+    clause = (
+        f"status IN ({marks}) AND public_id IS NOT NULL AND public_id <> ''"
+        " AND (status <> 'published' OR EXISTS (SELECT 1 FROM plaza_releases r "
+        "WHERE r.submission_id = plaza_submissions.id AND r.status='active' "
+        "AND r.public_id = plaza_submissions.public_id))"
+    )
+    return clause, list(plaza_db.PUBLIC_STATUSES)
+
+
+def _snapshot_content(row: dict, plaza_db) -> tuple[dict, dict]:
+    """从投稿行读快照 JSON 与公开内容（损坏时返回空结构，不抛错）。"""
+    snapshot = plaza_db.json_load((row or {}).get("snapshot_json"), {})
+    if not isinstance(snapshot, dict):
+        snapshot = {}
+    content = snapshot.get("content") if isinstance(snapshot.get("content"), dict) else {}
+    return snapshot, content
+
+
+def _snapshot_grade(row: dict, plaza_db) -> str:
+    """快照年级（平台精选的学段口径；旧快照缺失时回落到投稿行 grade 列）。"""
+    snapshot, _content = _snapshot_content(row, plaza_db)
+    return str(snapshot.get("grade") or (row or {}).get("grade") or "").strip()
+
+
+def _snapshot_auto_gradable(row: dict, plaza_db) -> bool:
+    """快照是否可自动判分（与 ``_project`` 的 grading_status='auto' 同一判定）。"""
+    snapshot, content = _snapshot_content(row, plaza_db)
+    raw_type = str(snapshot.get("type") or "SUBJECTIVE").upper()
+    options = [item for item in (content.get("options") or []) if isinstance(item, dict)]
+    answers = [str(item) for item in (content.get("answers") or []) if str(item).strip()]
+    objective = raw_type in ("SINGLE", "MULTIPLE") and bool(options)
+    return (objective or raw_type == "BLANK") and bool(answers)
+
+
+def search_official(keyword=None, subject=None, type=None, grade=None, limit: int = 20,
                     offset: int = 0) -> dict:
-    """公开题列表 + total（LIKE 快照 JSON；学科/题型/关键词过滤与可见性同查询时判定）。
+    """公开题列表 + total（LIKE 快照 JSON；学科/题型/关键词/学段过滤与可见性同查询时判定）。
 
     ``type`` 同时接受工坊题型（``SINGLE`` 等）与练习侧题型（``single_choice`` 等）。
+    ``grade`` 可为原始字符串或 :func:`normalize_grade_filter` 的结果；官方侧用**快照 grade**
+    匹配（标准年级精确匹配 / 学段前缀匹配），未知值安全降级为不筛选。
     """
     plaza_db, _service, _figures = _plaza_modules()
     ensure_tables()
@@ -481,18 +603,13 @@ def search_official(keyword=None, subject=None, type=None, limit: int = 20,
         offset = max(0, int(offset or 0))
     except (TypeError, ValueError):
         offset = 0
+    grade_filter = grade if isinstance(grade, dict) else normalize_grade_filter(grade)
+    clamp_grade = _grade_filter_active(grade_filter)
     where: list[str] = []
     params: list = []
-    marks = ",".join("?" for _ in plaza_db.PUBLIC_STATUSES)
-    where.append(f"status IN ({marks})")
-    params.extend(plaza_db.PUBLIC_STATUSES)
-    where.append("public_id IS NOT NULL AND public_id <> ''")
-    # published 只有在 active 发布指针仍存在时公开可读（签发后撤回立即从检索退出）。
-    where.append(
-        "(status <> 'published' OR EXISTS (SELECT 1 FROM plaza_releases r "
-        "WHERE r.submission_id = plaza_submissions.id AND r.status='active' "
-        "AND r.public_id = plaza_submissions.public_id))"
-    )
+    visibility, visibility_params = _visibility_clause(plaza_db)
+    where.append(visibility)
+    params.extend(visibility_params)
     subjects = _split_csv(subject)
     if subjects:
         where.append("subject IN (" + ",".join("?" for _ in subjects) + ")")
@@ -517,24 +634,143 @@ def search_official(keyword=None, subject=None, type=None, limit: int = 20,
         "updated_at DESC, id DESC"
     )
     with connection() as con:
-        total = int(con.execute(
-            f"SELECT COUNT(*) FROM plaza_submissions WHERE {clause}", tuple(params)
-        ).fetchone()[0])
-        items: list[dict] = []
-        if limit:
-            rows = con.execute(
-                f"SELECT * FROM plaza_submissions WHERE {clause} {order} LIMIT ? OFFSET ?",
-                (*params, limit, offset),
-            ).fetchall()
-            items = [
-                _project(con, row_dict, plaza_db)
-                for row_dict in (_row_dict(row) for row in rows)
+        if clamp_grade:
+            # 学段过滤在 Python 侧按快照 grade 精确匹配（快照是 JSON，避免 LIKE 误匹配题干）。
+            rows = [
+                row_dict for row_dict in (
+                    _row_dict(row) for row in con.execute(
+                        f"SELECT * FROM plaza_submissions WHERE {clause} {order}", tuple(params)
+                    ).fetchall()
+                )
                 if row_dict is not None
+                and matches_grade(_snapshot_grade(row_dict, plaza_db), grade_filter)
             ]
+            total = len(rows)
+            page = rows[offset:offset + limit] if limit else []
+            items = [_project(con, row, plaza_db) for row in page]
+        else:
+            total = int(con.execute(
+                f"SELECT COUNT(*) FROM plaza_submissions WHERE {clause}", tuple(params)
+            ).fetchone()[0])
+            items: list[dict] = []
+            if limit:
+                rows = con.execute(
+                    f"SELECT * FROM plaza_submissions WHERE {clause} {order} LIMIT ? OFFSET ?",
+                    (*params, limit, offset),
+                ).fetchall()
+                items = [
+                    _project(con, row_dict, plaza_db)
+                    for row_dict in (_row_dict(row) for row in rows)
+                    if row_dict is not None
+                ]
     return {"items": items, "total": total}
 
 
+#: 平台精选统计口径（首页/学情/练习统计共用；撤回/争议在查询时剔除，不做进程内缓存）。
+CALIBER_OFFICIAL = (
+    "平台精选口径：只统计当前公开可见的精选题（社区待核验/已核验/精选；撤回/争议在查询时即时剔除，"
+    "不缓存）；可自动判分=单选/多选（有选项且有答案）或填空题（有答案）；已练精选数、精选错题数、"
+    "到期复习同样按题目当前可见性过滤，撤回题的历史记录保留但不计入本口径。"
+)
+
+
+def _chunks(values: list, size: int = 800):
+    for start in range(0, len(values), size):
+        yield values[start:start + size]
+
+
+def official_caliber(user_id=None) -> dict:
+    """平台精选口径：可见题总量/可自动判分 + 本人已练/错题（撤回题不计入）。
+
+    读取层只依赖广场公开可见性查询与统一作答表（``attempts``/``wrong_questions``），
+    与 ``/api/questions?source=official``、练习作答门禁同一口径；广场表不可读时安全降级。
+    """
+    empty = {
+        "available": False,
+        "total_questions": 0,
+        "practice_pool": 0,
+        "auto_gradable": 0,
+        "attempts": 0,
+        "practiced": 0,
+        "wrong_count": 0,
+        "due_reviews": 0,
+        "caliber": CALIBER_OFFICIAL,
+        "note": "平台精选统计暂不可用",
+    }
+    try:
+        plaza_db, _service, _figures = _plaza_modules()
+        ensure_tables()
+        clause, params = _visibility_clause(plaza_db)
+        with connection() as con:
+            rows = [
+                row_dict for row_dict in (
+                    _row_dict(row) for row in con.execute(
+                        "SELECT id, public_id, status, grade, snapshot_json, updated_at "
+                        f"FROM plaza_submissions WHERE {clause}", tuple(params),
+                    ).fetchall()
+                )
+                if row_dict is not None
+            ]
+            auto_gradable = sum(1 for row in rows if _snapshot_auto_gradable(row, plaza_db))
+        public_ids = [str(row.get("public_id") or "") for row in rows]
+        public_ids = [public_id for public_id in dict.fromkeys(public_ids) if public_id]
+        total = len(public_ids)
+        result = {
+            "available": True,
+            "total_questions": total,
+            "practice_pool": total,
+            "auto_gradable": min(auto_gradable, total),
+            "attempts": 0,
+            "practiced": 0,
+            "wrong_count": 0,
+            "due_reviews": 0,
+            "caliber": CALIBER_OFFICIAL,
+            "note": "",
+        }
+        if not user_id or not public_ids:
+            return result
+        refs = [ref_of(public_id) for public_id in public_ids]
+        attempts = practiced = wrong_count = due_reviews = 0
+        now = utcnow()
+        with connection() as con:
+            for chunk in _chunks(refs):
+                marks = ",".join("?" for _ in chunk)
+                attempts += int(con.execute(
+                    f"SELECT COUNT(*) FROM attempts WHERE user_id=? AND qid IN ({marks})",
+                    (user_id, *chunk),
+                ).fetchone()[0])
+                practiced += int(con.execute(
+                    f"SELECT COUNT(DISTINCT qid) FROM attempts WHERE user_id=? AND qid IN ({marks})",
+                    (user_id, *chunk),
+                ).fetchone()[0])
+                wrong_count += int(con.execute(
+                    "SELECT COUNT(*) FROM wrong_questions WHERE user_id=? AND archived=0 "
+                    f"AND qid IN ({marks})",
+                    (user_id, *chunk),
+                ).fetchone()[0])
+                due_reviews += int(con.execute(
+                    "SELECT COUNT(*) FROM wrong_questions WHERE user_id=? AND archived=0 "
+                    "AND next_review_at<=? AND qid IN (" + marks + ")",
+                    (user_id, now, *chunk),
+                ).fetchone()[0])
+        result.update({
+            "attempts": attempts,
+            "practiced": practiced,
+            "wrong_count": wrong_count,
+            "due_reviews": due_reviews,
+        })
+        return result
+    except HTTPException:
+        raise
+    except Exception:  # noqa: BLE001 - 广场表不可读时降级为不可用，不阻断首页/统计
+        _log_fallback_failure()
+        return empty
+
+
 __all__ = [
+    "CALIBER_OFFICIAL",
+    "GRADE_FILTER_MAX_CHARS",
+    "GRADE_STAGES",
     "NOTICE_COMMUNITY_REVIEW",
     "NOTICE_DISPUTED",
     "NOTICE_PUBLISHED",
@@ -543,12 +779,17 @@ __all__ = [
     "NOTICE_WITHDRAWN",
     "SOURCE",
     "SOURCE_LABEL",
+    "STANDARD_GRADES",
     "STATUS_NOTICES",
     "ensure_tables",
     "inspect_official",
     "load_official_question",
+    "matches_grade",
+    "normalize_grade_filter",
     "normalize_public_id",
+    "official_caliber",
     "ref_of",
     "review_status_label",
     "search_official",
 ]
+

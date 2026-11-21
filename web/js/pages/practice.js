@@ -55,6 +55,30 @@ export function detectOfficialSource() {
   return officialSourceSupportPromise;
 }
 
+// 学段筛选能力探测（WS26 契约：`GET /api/questions?...&grade=` 合法请求在响应里追加
+// `grade_filter` 对象；旧后端忽略未知参数、响应无该字段 → 控件整体隐藏，不伪造能力）。
+// 同样用合法 200 请求探测，避免非法参数触发 4xx 控制台错误污染页面验收。
+let gradeFilterSupportPromise = null;
+
+export function detectGradeFilter(probeValue = '高中') {
+  if (!gradeFilterSupportPromise) {
+    gradeFilterSupportPromise = api(`/questions?page=1&page_size=1&grade=${encodeURIComponent(probeValue)}`)
+      .then(data => Boolean(data && typeof data === 'object'
+        && data.grade_filter && typeof data.grade_filter === 'object'))
+      .catch(() => false);
+  }
+  return gradeFilterSupportPromise;
+}
+
+// 学段选项：优先用后端 catalog.grade_stages（WS26），未下发时退回固定学段。
+const FALLBACK_GRADE_STAGES = ['小学', '初中', '高中'];
+function gradeStageOptions(catalog) {
+  const stages = Array.isArray(catalog?.grade_stages)
+    ? catalog.grade_stages.map(stage => String(stage || '').trim()).filter(Boolean)
+    : [];
+  return (stages.length ? stages : FALLBACK_GRADE_STAGES).map(stage => ({ value: stage, label: stage }));
+}
+
 // 来源与审核状态徽标：后端未下发 source 时按高考题库处理（旧接口无该字段）。
 const SOURCE_BADGE_KEYS = {
   bank: 'practice.source.bank',
@@ -225,6 +249,7 @@ function activeFilterChips(filters, catalog, onChange, names = {}) {
     q: t('practice.keyword'), subject: t('common.subject'), type: t('upload.fieldType'), year: t('practice.year'), year_from: t('practice.startYear'),
     year_to: t('practice.endYear'), difficulty: t('practice.difficulty'), province: t('practice.region'), status: t('practice.myStatus'),
     source: t('practice.source.label'),
+    grade: t('practice.grade'),
     sort: t('practice.sort'), has_answer: t('practice.hasValidAnswer'), has_solution: t('practice.hasOriginalSolution'),
     has_ai_explanation: t('practice.hasAiExplanation'), include_ai_difficulty: t('practice.includeAiEstimatedDifficulty'),
     kp_id: t('practice.knowledgePoint'), method_id: t('practice.questionTypeSolution'),
@@ -258,13 +283,15 @@ function activeFilterChips(filters, catalog, onChange, names = {}) {
 }
 
 export async function renderPractice(container, version, urlParams) {
-  const [catalog, kps, prefs, methodsRes, officialSourceReady] = await Promise.all([
+  const [catalog, kps, prefs, methodsRes, officialSourceReady, gradeFilterReady] = await Promise.all([
     ensureCatalog(),
     ensureKnowledgePoints(),
     ensurePreferences(),
     api('/methods').catch(() => ({ items: [] })),
     // 平台精选来源筛选能力探测：旧后端未接 source 参数时整体隐藏来源筛选。
     detectOfficialSource(),
+    // 学段筛选能力探测：旧后端未接 grade 参数时整体隐藏学段筛选（WS26 契约）。
+    detectGradeFilter(),
   ]);
   if (!current(version)) return;
   const allMethods = methodsRes.items || [];
@@ -281,7 +308,7 @@ export async function renderPractice(container, version, urlParams) {
     const f = {};
     for (const k of ['q', 'subject', 'type', 'difficulty', 'province', 'year', 'year_from', 'year_to',
       'kp_id', 'method_id', 'status', 'sort', 'has_answer', 'has_solution', 'has_ai_explanation',
-      'include_ai_difficulty', 'source']) {
+      'include_ai_difficulty', 'source', 'grade']) {
       if (urlParams.has(k)) f[k] = urlParams.get(k);
     }
     state.filters = f;
@@ -291,6 +318,11 @@ export async function renderPractice(container, version, urlParams) {
   // 后端未接入来源筛选时忽略 URL/本地状态里的 source，避免出现不存在的能力。
   if (!officialSourceReady && state.filters.source) {
     delete state.filters.source;
+    saveFilters();
+  }
+  // 学段筛选未就绪时同样丢弃 URL/本地状态里的 grade（不留「看起来生效」的假筛选）。
+  if (!gradeFilterReady && state.filters.grade) {
+    delete state.filters.grade;
     saveFilters();
   }
   // 兼容只设置 state.selectedQid 的旧入口（例如从首页「继续练习」）。
@@ -337,6 +369,11 @@ export async function renderPractice(container, version, urlParams) {
     async () => { refreshFilters(); await loadSearch(); });
   const yearSel = makeSelect('year', t('practice.year'),
     [{ value: '', label: t('practice.allYears') }, ...(catalog.years || []).map(y => ({ value: String(y), label: t('common.yearLabel', { year: y }) }))],
+    async () => { refreshFilters(); await loadSearch(); });
+  // 学段筛选（WS26 契约：`grade=小学|初中|高中` 前缀匹配，official 用快照学段）；
+  // 选项优先用后端 catalog.grade_stages，未下发时退回固定学段；未就绪时控件不渲染。
+  const gradeSel = makeSelect('grade', t('practice.grade'),
+    [{ value: '', label: t('practice.allGrades') }, ...gradeStageOptions(catalog)],
     async () => { refreshFilters(); await loadSearch(); });
   const typeMulti = createMultiSelect({
     label: t('practice.questionTypesMultiSelect'),
@@ -445,7 +482,7 @@ export async function renderPractice(container, version, urlParams) {
   function refreshFilters() {
     moreToggle.lastChild.textContent = String(
       ['difficulty', 'province', 'status', 'source', 'year_from', 'year_to', 'method_id',
-        'has_answer', 'has_solution', 'has_ai_explanation', 'include_ai_difficulty', 'kp_id']
+        'has_answer', 'has_solution', 'has_ai_explanation', 'include_ai_difficulty', 'grade', 'kp_id']
         .filter(key => state.filters[key]).length,
     );
     chipsMount.replaceChildren(activeFilterChips(state.filters, catalog, async key => {
@@ -472,6 +509,7 @@ export async function renderPractice(container, version, urlParams) {
     statusSel.value = state.filters.status || '';
     sortSel.value = state.filters.sort || 'year_desc';
     if (officialSourceReady) sourceSel.value = state.filters.source || '';
+    if (gradeFilterReady) gradeSel.value = state.filters.grade || '';
     yearFrom.value = state.filters.year_from || '';
     yearTo.value = state.filters.year_to || '';
     methodSel.value = state.filters.method_id || '';
@@ -548,7 +586,9 @@ export async function renderPractice(container, version, urlParams) {
         }, 'ghost small', 'repeat'))),
     el('div', { class: 'filter-compact' },
       el('div', { class: 'search-wrap' }, icon('search'), keyword, searchButton),
-      field(t('common.subject'), subjectSel), field(t('practice.year'), yearSel), typeMulti.node),
+      field(t('common.subject'), subjectSel), field(t('practice.year'), yearSel),
+      gradeFilterReady ? field(t('practice.grade'), gradeSel) : null,
+      typeMulti.node),
     filterMore,
     chipsMount);
 
@@ -728,6 +768,10 @@ export async function renderPractice(container, version, urlParams) {
     // 避免用户以为年份/地区/难度筛选「没生效」。
     if (state.filters.source === 'official') {
       resultsList.append(el('div', { class: 'notice' }, t('practice.source.officialFilterNotice')));
+    }
+    // 学段筛选生效范围（WS26 契约）：题库没有 grade 列时仅平台精选生效，明确告知。
+    if (state.filters.grade && results.grade_filter && results.grade_filter.applied === false) {
+      resultsList.append(el('div', { class: 'notice' }, t('practice.gradeFilterNotice')));
     }
     for (const item of items) {
       resultsList.append(resultCard(item, {

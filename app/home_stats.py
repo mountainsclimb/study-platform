@@ -26,6 +26,12 @@
 * **待判分**：最近一次作答仍为 pending（参考答案待核验/主观题）的题目数。
 * **薄弱知识点**：复用 ``app.insight`` 的知识点口径（``question_kp`` 逐题关联、正确率 < 70%），
   返回真实样本数；已判定样本 < 3 时标记 ``sample_limited``，不做个性化推断。
+
+平台精选（独立 ``official`` 块，与 ``bank``/``personal`` 平级）：
+* **口径**：只统计当前公开可见的精选题（社区待核验/已核验/精选；撤回/争议在查询时即时剔除），
+  由 ``app/official.official_caliber`` 统一计算；本人已练精选数/精选错题数/到期复习同样按题目
+  当前可见性过滤，撤回题的历史记录保留但不计入。``bank.official_practice_pool`` 供首页题库卡片
+  展示「平台精选可练数量」。
 """
 from __future__ import annotations
 
@@ -75,6 +81,12 @@ CALIBER = {
         "不做个性化推断。"
     ),
     "due": "待复习 = 错题本未归档且已到复习时间（next_review_at）的题目数，与错题本一致。",
+    "official": (
+        "平台精选口径来自 app/official.py：只统计当前公开可见的精选题（社区待核验/已核验/精选；"
+        "撤回/争议在查询时即时剔除，不缓存）；可自动判分=单选/多选（有选项且有答案）或填空题"
+        "（有答案）；已练精选数、精选错题数与到期复习同样按题目当前可见性过滤，撤回题的历史记录"
+        "保留但不计入本口径。首页与 /api/stats、/api/questions?source=official 同一口径。"
+    ),
 }
 
 
@@ -453,13 +465,43 @@ def _personal_payload(user_id: int, days: int) -> dict:
 # ---------------------------------------------------------------------------
 
 
+def _official_caliber(user_id: int) -> dict:
+    """平台精选口径（可见性查询时判定，撤回/争议不计入；与 practice.stats 同源）。"""
+    try:
+        from . import official as official_module
+
+        return official_module.official_caliber(user_id)
+    except Exception:  # noqa: BLE001 - 精选口径失败不能拖垮首页其他真实统计
+        return {
+            "available": False,
+            "total_questions": 0,
+            "practice_pool": 0,
+            "auto_gradable": 0,
+            "attempts": 0,
+            "practiced": 0,
+            "wrong_count": 0,
+            "due_reviews": 0,
+            "caliber": CALIBER["official"],
+            "note": "平台精选统计暂不可用",
+        }
+
+
 def build_home(user_id: int, days: int = DEFAULT_DAYS) -> dict:
-    """首页统计快照：题库全局口径 + 当前账号个人口径。"""
+    """首页统计快照：题库全局口径 + 平台精选口径 + 当前账号个人口径。"""
     personal = _personal_payload(user_id, days)
+    official = _official_caliber(user_id)
+    bank = dict(_bank_caliber())
+    # 平台精选可练数量同时挂到 bank 块：首页题库卡片按这个字段展示（旧后端无该字段时
+    # 前端能力探测降级，不伪造数字）。
+    if official.get("available"):
+        bank["official_practice_pool"] = official.get("practice_pool", 0)
+        bank["official_auto_gradable"] = official.get("auto_gradable", 0)
     return {
         "generated_at": db.utcnow(),
         "range": {"days": personal["window_days"], "today": _today_start_iso()[:10], "timezone": "UTC"},
-        "bank": _bank_caliber(),
+        "bank": bank,
+        "official": official,
         "personal": personal,
         "caliber": CALIBER,
     }
+

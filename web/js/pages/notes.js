@@ -4,7 +4,7 @@ import {
   el, fill, icon, button, badge, empty, heading, loading, notice, field, input, select,
   dateText, downloadText, downloadBlob, busy, toast, wireTabKeyboard,
 } from '../core/dom.js';
-import { current, renderRoute } from '../core/router.js';
+import { current, go, renderRoute } from '../core/router.js';
 import { markdown } from '../core/markdown.js';
 import { mountJob } from '../core/jobs.js';
 import { createModelPicker } from '../components/modelPicker.js';
@@ -121,7 +121,7 @@ function renderDocCoverage(doc) {
 }
 
 
-export async function renderNotes(container, version) {
+export async function renderNotes(container, version, params = null) {
   const [notesRes, docsRes, gridSpec, catalog, kps] = await Promise.all([
     api('/notes'),
     api('/documents'),
@@ -408,7 +408,7 @@ export async function renderNotes(container, version) {
       for (const d of allDocs) {
         const info = coverageSummary(d);
         const canOcr = d.status !== 'ready';
-        docList.append(el('div', { class: 'pg-doc-item' },
+        docList.append(el('div', { class: 'pg-doc-item', 'data-document-id': String(d.id) },
           el('span', { class: 'pg-doc-icon' }, icon('file')),
           el('div', { class: 'pg-doc-main' },
             el('div', { class: 'pg-doc-head' },
@@ -759,9 +759,20 @@ export async function renderNotes(container, version) {
     jobMount);
   updateEstimate();
 
+  // 任务中心深链（与 tasks.js 深链约定一致）：#/notes?note=<id> 打开指定笔记；
+  // #/notes?document=<id> 打开资料库并定位该资料；#/notes?section=docs 只切到资料库。
+  const deepNoteId = Number(params?.get?.('note') || 0);
+  const deepDocumentId = Number(params?.get?.('document') || 0);
+  const deepSection = String(params?.get?.('section') || '');
+  if (deepNoteId) state.selectedNote = deepNoteId;
+
   // 打开生成的笔记 / 从首页或讲解卡片跳进来时，优先展示被选中的笔记，
   // 清掉上次 AI 任务与分区残留，避免一进知识清单又跳回 AI 表单。
-  if (state.selectedNote) {
+  if (deepNoteId) {
+    noteSection = 'notes';
+  } else if (deepDocumentId || deepSection === 'docs') {
+    noteSection = 'docs';
+  } else if (state.selectedNote) {
     noteSection = 'notes';
   } else if (pre || state.noteJobId) {
     noteSection = 'ai';
@@ -832,6 +843,14 @@ export async function renderNotes(container, version) {
   switchSection(noteSection);
 
   renderDocsUI();
+  // 任务中心「资料 OCR」深链：资料库已渲染后滚动定位到目标资料卡（不自动打开 OCR 弹窗）。
+  if (deepDocumentId) {
+    const target = docList.querySelector(`[data-document-id="${deepDocumentId}"]`);
+    if (target) {
+      target.classList.add('is-deep-linked');
+      target.scrollIntoView({ behavior: 'smooth', block: 'center' });
+    }
+  }
   if (state.noteJobId) mountJob(jobMount, state.noteJobId, handleNoteJobComplete);
 
   // Fix L432/L433/L434: single clean openNote flow with counter guard & accurate active class!
@@ -919,6 +938,83 @@ export async function renderNotes(container, version) {
   renderList(true);
 }
 
+/* ---------------------------------------------------------------------------
+ * 站内题目引用（统一引用 bank:<qid> / app:<id> / official:<public_id>）
+ * 笔记正文与来源里出现的引用渲染为可点击链接，可回到练习页继续作答；
+ * 已知题库/内容版本时一并标注（与 Anki 导出的题目引用/版本字段同一口径）。
+ * ------------------------------------------------------------------------- */
+
+const QUESTION_REF_PATTERN = /(?:^|[^A-Za-z0-9_.:-])((?:bank:[A-Za-z0-9_.:-]+|app:\d+|official:plz-[A-Za-z0-9]+))/g;
+const QUESTION_REF_LABEL_KEYS = {
+  bank: 'notes.questionRef.bank',
+  app: 'notes.questionRef.app',
+  official: 'notes.questionRef.official',
+};
+
+function normalizeQuestionRef(value) {
+  return String(value || '').trim().replace(/[.,;:!?)\]】]+$/, '');
+}
+
+function questionRefSource(ref) {
+  const source = String(ref || '').split(':', 1)[0];
+  return QUESTION_REF_LABEL_KEYS[source] ? source : '';
+}
+
+function questionRefLabel(ref) {
+  const source = questionRefSource(ref);
+  return source ? t(QUESTION_REF_LABEL_KEYS[source]) : t('notes.questionRef.generic');
+}
+
+/** 收集笔记里的站内题目引用：来源条目（ref/qid/source_ref）与正文中的统一引用文本。 */
+function questionRefsOf(note) {
+  const found = new Map();
+  const add = (value, meta = null) => {
+    const ref = normalizeQuestionRef(value);
+    if (!ref || !questionRefSource(ref)) return;
+    const existing = found.get(ref) || { ref, version: '' };
+    const version = meta
+      ? (meta.version ?? meta.published_version ?? meta.content_revision ?? meta.bank_version ?? '')
+      : '';
+    if (!existing.version && version !== '' && version !== null && version !== undefined) {
+      existing.version = String(version);
+    }
+    found.set(ref, existing);
+  };
+  for (const source of Array.isArray(note?.sources) ? note.sources : []) {
+    if (!source || typeof source !== 'object') continue;
+    add(source.ref || source.qid || source.source_ref, source);
+  }
+  for (const match of String(note?.content || '').matchAll(QUESTION_REF_PATTERN)) add(match[1]);
+  return [...found.values()];
+}
+
+function noteQuestionRefsNode(note) {
+  const refs = questionRefsOf(note);
+  if (!refs.length) return null;
+  return el('section', { class: 'sources', 'data-note-question-refs': 'true' },
+    el('strong', { class: 'small-text' }, t('notes.questionRefsTitle')),
+    el('p', { class: 'help' }, t('notes.questionRefsHint')),
+    el('div', { class: 'note-question-refs' },
+      ...refs.map(entry => el('div', { class: 'row between source-block', 'data-question-ref': entry.ref },
+        button(`${questionRefLabel(entry.ref)} · ${entry.ref}`,
+          () => go('practice', entry.ref), 'ghost small', 'book'),
+        entry.version
+          ? el('span', { class: 'help', 'data-no-i18n': 'true' },
+            t('notes.questionRefVersion', { v1: entry.version }))
+          : null))));
+}
+
+/** 笔记来源资料版本（资料被替换后旧引用仍指向生成时版本）。 */
+function noteSourceVersionsNode(note) {
+  const versions = note?.source_versions && typeof note.source_versions === 'object'
+    ? Object.entries(note.source_versions) : [];
+  if (!versions.length) return null;
+  const text = versions
+    .map(([documentId, version]) => `D${documentId} v${version}`)
+    .join(t('common.listSeparator'));
+  return el('p', { class: 'help', 'data-no-i18n': 'true' }, t('notes.sourceVersionsLine', { v1: text }));
+}
+
 function renderNoteDetail(note, container, reload, onPatched = null) {
   const own = note.origin !== 'official' || state.user.role === 'admin';
   const versionsMount = el('div');
@@ -1004,6 +1100,8 @@ function renderNoteDetail(note, container, reload, onPatched = null) {
     note.origin === 'official'
       ? null
       : notice(t('notes.thisNoteIsStoredInYourPrivate')),
+    noteQuestionRefsNode(note),
+    noteSourceVersionsNode(note),
     markdown(note.content || ''),
     note.sources?.length ? renderSources(note.sources) : null
   );

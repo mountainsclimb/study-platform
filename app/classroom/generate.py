@@ -182,6 +182,205 @@ DEFAULT_WEB_SEARCH_LIMIT = 5
 SCENE_SOURCES_MAX_CHARS = prompts.SCENE_SOURCES_PROMPT_MAX_CHARS
 #: ``course.outline.sources`` 中单条摘要的最大长度（避免课程行过大）。
 SOURCE_SUMMARY_MAX_CHARS = 600
+#: 平台精选题素材（seed_question/source_ref）注入大纲 prompt 的上限。
+OFFICIAL_SEED_PROMPT_MAX_CHARS = 4000
+#: 目前允许作为课程素材的题目来源：只开放平台精选（official:<public_id>）。
+SEED_QUESTION_SOURCES = ("official",)
+
+
+# ---------------------------------------------------------------------------
+# 平台精选题素材（source_ref=official:<public_id>）
+# ---------------------------------------------------------------------------
+
+def normalize_seed_source_ref(value) -> str:
+    """校验课程素材引用：目前只支持 ``official:<公开编号>``。
+
+    格式非法/来源不支持统一 422；可见性（未发布/撤回/争议）在 :func:`resolve_seed_question`
+    里按查询时状态判定并 404，不向前端回显受限正文。
+    """
+    text = str(value or "").strip()
+    if not text:
+        return ""
+    if len(text) > 160:
+        raise HTTPException(422, "课程素材引用过长（最多 160 字）")
+    source, separator, rest = text.partition(":")
+    if not separator or source.strip().lower() not in SEED_QUESTION_SOURCES:
+        raise HTTPException(
+            422,
+            "课程素材引用只支持平台精选题，格式为 official:<公开编号>（如 official:plz-xxxx）",
+        )
+    from .. import official as official_module
+
+    public_id = official_module.normalize_public_id(rest.strip())
+    if not public_id:
+        raise HTTPException(
+            422, "平台精选引用格式不正确，应为 official:<公开编号>（如 official:plz-xxxx）"
+        )
+    return official_module.ref_of(public_id)
+
+
+def seed_source_ref(params: dict) -> str:
+    """从任务参数读取素材引用（兼容 ``source_ref`` 与 ``seed_question`` 两个键名）。"""
+    params = params if isinstance(params, dict) else {}
+    for key in ("source_ref", "seed_question"):
+        value = params.get(key)
+        if value is not None and str(value).strip():
+            return str(value).strip()
+    return ""
+
+
+def resolve_seed_question(source_ref) -> dict:
+    """读取平台精选素材题（查询时判定可见性）；撤回/争议不允许作为新课程素材。"""
+    ref = normalize_seed_source_ref(source_ref)
+    if not ref:
+        raise HTTPException(422, "缺少课程素材引用")
+    from .. import practice as practice_module
+
+    try:
+        return practice_module.load_question(ref)
+    except HTTPException as exc:
+        if exc.status_code != 404:
+            raise
+        from .. import official as official_module
+
+        public_id = ref.split(":", 1)[1]
+        try:
+            info = official_module.inspect_official(public_id)
+        except Exception:  # noqa: BLE001 - 可见性摘要失败按不可见处理
+            info = {}
+        status = str(info.get("status") or "")
+        if status == "withdrawn":
+            raise HTTPException(
+                404,
+                "该平台精选题已撤回，不能再作为新课程素材；历史课程保留当时的来源标记。",
+            ) from None
+        if status == "disputed":
+            raise HTTPException(
+                404, "该平台精选题有争议或待修订，已暂停展示内容，不能作为新课程素材。"
+            ) from None
+        raise HTTPException(
+            404, "该平台精选题当前不可见（未发布/已撤回/有争议），不能作为新课程素材。"
+        ) from None
+
+
+def _official_declaration_payload(question: dict) -> dict:
+    """来源声明摘要（仅广场公开字段；超长截断，不输出内部确认者信息）。"""
+    declaration = question.get("source_declaration")
+    declaration = declaration if isinstance(declaration, dict) else {}
+    payload = {}
+    for key in ("url", "original_author", "license_basis", "rights_scope", "attribution",
+                "reference", "page_no", "question_no"):
+        text = str(declaration.get(key) or "").strip()
+        if text:
+            payload[key] = text[:200]
+    return payload
+
+
+def format_seed_question_material(question: dict) -> str:
+    """把平台精选题投影成大纲 prompt 素材（题面/选项/答案要点/来源声明，遵守公开可见性）。"""
+    question = question if isinstance(question, dict) else {}
+    public_id = str(question.get("public_id") or "").strip()
+    subject = str(question.get("subject") or "").strip()
+    grade = str(question.get("grade") or "").strip()
+    review_label = str(question.get("review_status_label") or "").strip()
+    lines = [
+        "标题：平台精选%s · 公开编号 %s" % (
+            (" · " + subject) if subject else "",
+            public_id or "（缺失）",
+        ),
+        "审核状态：%s（引用时保留公开编号与来源标签）" % (review_label or "平台精选"),
+    ]
+    meta = " / ".join(item for item in (subject, grade) if item)
+    if meta:
+        lines.append("学科/学段：%s" % meta)
+    tags = [str(tag) for tag in (question.get("knowledge_tags") or []) if str(tag).strip()]
+    if tags:
+        lines.append("知识点：%s" % "、".join(tags[:8]))
+    lines.append("题面：%s" % str(question.get("stem_plain") or "").strip())
+    options = question.get("options") if isinstance(question.get("options"), list) else []
+    if options:
+        option_lines = []
+        for option in options[:12]:
+            if not isinstance(option, dict):
+                continue
+            option_lines.append("%s. %s" % (
+                str(option.get("label") or "").strip(), str(option.get("text") or "").strip(),
+            ))
+        if option_lines:
+            lines.append("选项：" + "；".join(option_lines))
+    answer = question.get("answer") if isinstance(question.get("answer"), dict) else {}
+    answer_text = str(answer.get("text") or question.get("answer_text") or "").strip()
+    if answer_text:
+        lines.append("参考答案（仅供备课设计，不要直接写进学生题目文字）：%s" % answer_text[:1200])
+    solution = str(question.get("solution") or "").strip()
+    if solution:
+        lines.append("解析要点（仅供备课设计）：%s" % solution[:1500])
+    declaration = _official_declaration_payload(question)
+    if declaration:
+        declaration_text = "；".join("%s=%s" % (key, value) for key, value in declaration.items())
+        lines.append("来源声明：%s" % declaration_text[:600])
+    notice = str(question.get("notice") or "").strip()
+    if notice:
+        lines.append("公开提示：%s" % notice[:300])
+    return "\n".join(lines)[:OFFICIAL_SEED_PROMPT_MAX_CHARS]
+
+
+def official_source_entry(question: dict, index: int = 1) -> dict:
+    """``outline.sources`` 中的平台精选来源条目（导出/回看保留公开编号与版本）。"""
+    question = question if isinstance(question, dict) else {}
+    public_id = str(question.get("public_id") or "").strip()
+    subject = str(question.get("subject") or "").strip()
+    review_status = str(question.get("review_status") or "").strip()
+    review_label = str(question.get("review_status_label") or "").strip()
+    version = question.get("published_version")
+    try:
+        version = int(version) if version is not None else 1
+    except (TypeError, ValueError):
+        version = 1
+    declaration = _official_declaration_payload(question)
+    summary_parts = ["审核状态：%s" % (review_label or review_status or "平台精选")]
+    if version:
+        summary_parts.append("精选版本：v%s" % version)
+    if declaration.get("license_basis"):
+        summary_parts.append("来源声明：%s" % declaration["license_basis"])
+    if declaration.get("attribution"):
+        summary_parts.append(str(declaration["attribution"]))
+    return {
+        "index": int(index),
+        "kind": "official",
+        "title": "平台精选%s（公开编号 %s）" % (
+            (" · " + subject) if subject else "", public_id or "（缺失）",
+        ),
+        "url": "",
+        "site": "平台精选",
+        "date": "",
+        "summary": "；".join(summary_parts)[:SOURCE_SUMMARY_MAX_CHARS],
+        "question_ref": "official:%s" % public_id if public_id else "",
+        "public_id": public_id,
+        "published_version": version,
+        "review_status": review_status,
+        "review_status_label": review_label,
+        "subject": subject,
+        "grade": str(question.get("grade") or ""),
+        "source_declaration": declaration,
+    }
+
+
+def seed_source_config(question: dict) -> dict:
+    """课程 ``config.seed_source``：记录本次建课使用的平台精选题来源（可回看）。"""
+    question = question if isinstance(question, dict) else {}
+    public_id = str(question.get("public_id") or "").strip()
+    return {
+        "source_ref": "official:%s" % public_id if public_id else "",
+        "public_id": public_id,
+        "published_version": question.get("published_version"),
+        "review_status": question.get("review_status") or "",
+        "review_status_label": question.get("review_status_label") or "",
+        "title": "平台精选%s" % (
+            (" · " + str(question.get("subject") or "")) if question.get("subject") else ""
+        ),
+    }
+
 
 
 def _ai_search():
@@ -262,7 +461,11 @@ def _sources_from_search(result: dict) -> list[dict]:
 
 
 def outline_sources(outline: dict) -> list[dict]:
-    """读取/清洗 ``outline.sources``（缺失或损坏时返回空列表，不抛错）。"""
+    """读取/清洗 ``outline.sources``（缺失或损坏时返回空列表，不抛错）。
+
+    来源分两类：``kind="web"``（联网检索，含标题/链接/站点/摘要）与 ``kind="official"``
+    （平台精选题素材，含公开编号/精选版本/审核状态/来源声明）；两类都随课程落库与导出保留。
+    """
     sources = (outline or {}).get("sources") if isinstance(outline, dict) else None
     cleaned: list[dict] = []
     for index, item in enumerate(sources if isinstance(sources, list) else [], 1):
@@ -272,29 +475,62 @@ def outline_sources(outline: dict) -> list[dict]:
         title = str(item.get("title") or "").strip()
         if not url and not title:
             continue
-        cleaned.append({
+        kind = str(item.get("kind") or "web").strip() or "web"
+        entry = {
             "index": _int(item.get("index"), index) or index,
+            "kind": kind,
             "title": (title or url)[:200],
             "url": url[:600],
             "site": str(item.get("site") or "").strip()[:80],
             "date": str(item.get("date") or "").strip()[:32],
             "summary": str(item.get("summary") or "").strip()[:SOURCE_SUMMARY_MAX_CHARS],
-        })
+        }
+        if kind == "official":
+            declaration = item.get("source_declaration")
+            entry.update({
+                "question_ref": str(item.get("question_ref") or "").strip()[:160],
+                "public_id": str(item.get("public_id") or "").strip()[:120],
+                "published_version": _int(item.get("published_version"), 0) or None,
+                "review_status": str(item.get("review_status") or "").strip()[:40],
+                "review_status_label": str(item.get("review_status_label") or "").strip()[:40],
+                "subject": str(item.get("subject") or "").strip()[:40],
+                "grade": str(item.get("grade") or "").strip()[:40],
+                "source_declaration": (
+                    {str(key): str(value)[:200] for key, value in declaration.items()
+                     if str(value).strip()}
+                    if isinstance(declaration, dict) else {}
+                ),
+            })
+        cleaned.append(entry)
     return cleaned
 
 
 def format_sources_for_prompt(sources: list[dict], *, max_chars: int = SCENE_SOURCES_MAX_CHARS) -> str:
-    """把落库来源格式化为场景 prompt 片段（每场景最多 3000 字，带编号与链接）。"""
+    """把落库来源格式化为场景 prompt 片段（每场景最多 3000 字，带编号与出处）。"""
     lines: list[str] = []
     used = 0
     for item in sources or []:
-        block = "[%d] %s（%s%s）\n链接：%s\n摘要：%s" % (
-            _int(item.get("index")), item.get("title") or "未命名",
-            item.get("site") or "",
-            (" · " + item["date"]) if item.get("date") else "",
-            item.get("url") or "",
-            str(item.get("summary") or "").strip(),
-        )
+        if str(item.get("kind") or "web") == "official":
+            meta = " · ".join(
+                part for part in (
+                    ("精选版本 v%s" % item.get("published_version")
+                     if item.get("published_version") else ""),
+                    str(item.get("review_status_label") or ""),
+                ) if part
+            )
+            block = "[%d] %s%s\n摘要：%s" % (
+                _int(item.get("index")), item.get("title") or "平台精选题",
+                ("（%s）" % meta) if meta else "",
+                str(item.get("summary") or "").strip(),
+            )
+        else:
+            block = "[%d] %s（%s%s）\n链接：%s\n摘要：%s" % (
+                _int(item.get("index")), item.get("title") or "未命名",
+                item.get("site") or "",
+                (" · " + item["date"]) if item.get("date") else "",
+                item.get("url") or "",
+                str(item.get("summary") or "").strip(),
+            )
         if used + len(block) > max_chars:
             break
         lines.append(block)
@@ -414,22 +650,57 @@ def _resolve_web_search_config(checkpoint: dict, course: dict, outline: dict) ->
     return _web_search_config({"enabled": False, "skipped": "本次生成未开启联网查找资料"})
 
 
+def _outline_sources_split(outline: dict) -> tuple[list[dict], list[dict]]:
+    """把 ``outline.sources`` 拆成（联网资料, 平台精选素材）两类。"""
+    sources = outline_sources(outline)
+    web = [item for item in sources if str(item.get("kind") or "web") == "web"]
+    official = [item for item in sources if str(item.get("kind") or "") == "official"]
+    return web, official
+
+
+def _official_source_result_fields(outline: dict) -> dict:
+    """任务结果里的平台精选素材字段（公开编号/版本/审核状态，不含内部 ID）。"""
+    _web, official = _outline_sources_split(outline)
+    items = []
+    for entry in official:
+        items.append({
+            "source_ref": entry.get("question_ref") or (
+                "official:%s" % entry.get("public_id") if entry.get("public_id") else ""
+            ),
+            "public_id": entry.get("public_id") or "",
+            "published_version": entry.get("published_version"),
+            "review_status": entry.get("review_status") or "",
+            "review_status_label": entry.get("review_status_label") or "",
+            "title": entry.get("title") or "",
+            "summary": entry.get("summary") or "",
+            "source_declaration": entry.get("source_declaration") or {},
+        })
+    return {
+        "official_source_count": len(items),
+        "official_sources": items,
+    }
+
+
 def _web_search_result_fields(web_config: dict, outline: dict) -> dict:
     """任务结果里的联网字段：来源条数以实际落库来源为准（不沿用可能过期的计数）。"""
     config = dict(web_config) if isinstance(web_config, dict) else {}
-    count = len(outline_sources(outline))
-    config["count"] = count
-    config["used"] = bool(count)
+    sources = outline_sources(outline)
+    web_sources, _official = _outline_sources_split(outline)
+    config["count"] = len(web_sources)
+    config["used"] = bool(web_sources)
     return {
         "web_search": config,
-        "source_count": count,
+        "source_count": len(sources),
+        "web_source_count": len(web_sources),
         "web_search_skipped": str(config.get("skipped") or ""),
+        **_official_source_result_fields(outline),
     }
 
 
 def _web_search_summary_suffix(web_config: dict, outline: dict) -> str:
-    """任务 summary 追加来源说明：有来源写条数，启用但没拿到写原因（明确标注未使用）。"""
-    count = len(outline_sources(outline))
+    """任务 summary 追加来源说明：有联网来源写条数，启用但没拿到写原因（明确标注未使用）。"""
+    web_sources, _official = _outline_sources_split(outline)
+    count = len(web_sources)
     if count:
         return "；已使用 %d 条联网资料（来源已随课程保存）" % count
     config = web_config if isinstance(web_config, dict) else {}
@@ -437,6 +708,21 @@ def _web_search_summary_suffix(web_config: dict, outline: dict) -> str:
         reason = str(config.get("skipped") or "").strip() or "未检索到可用资料"
         return "；未使用联网资料（%s）" % reason[:120]
     return ""
+
+
+def _official_summary_suffix(outline: dict) -> str:
+    """任务 summary 追加平台精选素材说明（公开编号 + 精选版本，便于回看）。"""
+    _web, official = _outline_sources_split(outline)
+    parts = []
+    for entry in official[:3]:
+        label = str(entry.get("public_id") or "").strip()
+        version = entry.get("published_version")
+        if not label:
+            continue
+        parts.append("平台精选 %s%s" % (label, ("（v%s）" % version) if version else ""))
+    if not parts:
+        return ""
+    return "；课程素材来源：%s" % "、".join(parts)
 
 
 def _append_scene_sources(prompt: str, sources_text: str) -> str:
@@ -944,7 +1230,8 @@ def _load_outline_from_checkpoint(checkpoint: dict, course: dict, *, scene_count
 
 async def _generate_outline(*, provider, model: str, data, course: dict, scene_count: int,
                             scene_types: list[str], depth: str, material_text: str,
-                            web_search_text: str = "") -> tuple[dict, dict]:
+                            web_search_text: str = "",
+                            seed_question_text: str = "") -> tuple[dict, dict]:
     user_id = course["user_id"]
     job_id = _current_job_id()
     documents_material = _document_material(user_id, (getattr(data, "document_ids", None) or [])[:6]) \
@@ -961,6 +1248,7 @@ async def _generate_outline(*, provider, model: str, data, course: dict, scene_c
         material_text=material_text or documents_material,
         course_title=course.get("title") or "",
         web_search_text=web_search_text,
+        seed_question_text=seed_question_text,
     )
 
     def validator(raw):
@@ -1451,6 +1739,19 @@ async def _run_course_job_inner(job_id, user_id, data, provider, verifier):
             "interactive_mode": _interactive_mode(course),
         })
     elif stage in ("outline", "all") and not outline:
+        # 平台精选素材（source_ref=official:<public_id>）：按查询时可见性读取，撤回/争议 404。
+        seed_question = None
+        seed_text = ""
+        seed_entry = None
+        raw_seed_ref = seed_source_ref(params)
+        if raw_seed_ref:
+            try:
+                seed_question = resolve_seed_question(raw_seed_ref)
+            except HTTPException as exc:
+                # 任务执行器里把 4xx 转成中文 ValueError（任务失败原因可读，不落 500）。
+                raise ValueError(str(exc.detail or "平台精选素材当前不可见")) from None
+            seed_text = format_seed_question_material(seed_question)
+            seed_entry = official_source_entry(seed_question, index=1)
         # P3：生成大纲前联网检索（无搜索连接/检索失败一律降级，记录原因后继续生成）。
         web_payload = await _run_web_search(
             job_id=job_id, course=course,
@@ -1463,10 +1764,16 @@ async def _run_course_job_inner(job_id, user_id, data, provider, verifier):
             scene_count=scene_count, scene_types=scene_types, depth=depth,
             material_text=str(params.get("material_text") or "")[:12000],
             web_search_text=str(web_payload.get("prompt_text") or ""),
+            seed_question_text=seed_text,
         )
-        if web_payload.get("sources"):
-            outline["sources"] = list(web_payload["sources"])
+        outline_sources_list = list(web_payload.get("sources") or [])
+        if seed_entry is not None:
+            seed_entry["index"] = len(outline_sources_list) + 1
+            outline_sources_list.append(seed_entry)
+        if outline_sources_list:
+            outline["sources"] = outline_sources_list
         web_config = _web_search_config(web_payload)
+        seed_config = seed_source_config(seed_question) if seed_question else None
         calls.append(call_meta)
         _save_course_outline(
             course, outline,
@@ -1475,12 +1782,14 @@ async def _run_course_job_inner(job_id, user_id, data, provider, verifier):
                 "prompt_version": prompts.PROMPT_VERSION,
                 "interactive_mode": _interactive_mode(course),
                 "web_search": web_config,
+                **({"seed_source": seed_config} if seed_config else {}),
             },
         )
         checkpoint.update({
             "course_id": course_id, "stage": stage, "outline": outline,
             "calls": calls, "prompt_version": prompts.PROMPT_VERSION,
             "web_search": web_config,
+            **({"seed_source": seed_config} if seed_config else {}),
         })
         _checkpoint_set(job_id, checkpoint)
     web_config = _resolve_web_search_config(checkpoint, course, outline)
@@ -1507,7 +1816,8 @@ async def _run_course_job_inner(job_id, user_id, data, provider, verifier):
             "course_title": outline.get("title") or course.get("title"),
             "scene_count": len(outline.get("scenes") or []),
             "summary": ("课程大纲已确认并保存"
-                        + _web_search_summary_suffix(web_config, outline) + "。"),
+                        + _web_search_summary_suffix(web_config, outline)
+                        + _official_summary_suffix(outline) + "。"),
             "prompt_version": prompts.PROMPT_VERSION,
             "classroom_prompt_version": prompts.PROMPT_VERSION,
             "calls": calls,
@@ -1558,7 +1868,8 @@ async def _generate_scenes(*, job_id: int, course: dict, outline: dict, scene_id
             "course_id": course["id"], "course_title": outline.get("title") or course.get("title"),
             "scene_count": total_scenes, "generated_scene_count": 0, "failed_scene_ids": [],
             "summary": ("所有场景都已生成，无需重新生成"
-                        + _web_search_summary_suffix(web_config or {}, outline) + "。"),
+                        + _web_search_summary_suffix(web_config or {}, outline)
+                        + _official_summary_suffix(outline) + "。"),
             "prompt_version": prompts.PROMPT_VERSION,
             "classroom_prompt_version": prompts.PROMPT_VERSION,
             "calls": calls,
@@ -1595,6 +1906,7 @@ async def _generate_scenes(*, job_id: int, course: dict, outline: dict, scene_id
     if roster_fields["roster_warnings"] and not roster_fields["roster_generated"]:
         summary += "；角色名册自动生成失败，可稍后手动生成"
     summary += _web_search_summary_suffix(web_config or {}, outline)
+    summary += _official_summary_suffix(outline)
     return {
         "course_id": course["id"],
         "course_title": outline.get("title") or course.get("title"),
@@ -1628,6 +1940,12 @@ def validate_course_job(data, user) -> None:
     stage = str(params.get("stage") or "all")
     if stage not in STAGES:
         raise HTTPException(422, "生成阶段只能是 outline / scenes / all")
+    # 平台精选题素材（source_ref/seed_question）：格式非法 422；未发布/撤回/争议 404。
+    # 只有真正要生成新大纲时才校验可见性——已有大纲的续跑/单场景重生成不重新引用素材，
+    # 因此题目后续撤回不影响既有课程与导出（来源标记随 outline.sources 保留）。
+    seed_ref = seed_source_ref(params)
+    if seed_ref and stage in ("outline", "all") and not _course_outline(course):
+        resolve_seed_question(seed_ref)
     scene_count = params.get("scene_count")
     if scene_count is not None:
         value = _int(scene_count, -1)
@@ -1688,6 +2006,9 @@ def validate_course_job(data, user) -> None:
 __all__ = [
     "MAX_INTERACTIVE_SCENES", "MIN_INTERACTIVE_SCENES", "STAGES",
     "MAX_WEB_SEARCH_LIMIT", "MIN_WEB_SEARCH_LIMIT", "DEFAULT_WEB_SEARCH_LIMIT",
-    "build_web_search_query", "outline_sources", "parse_confirmed_outline",
-    "run_course_job", "validate_course_job",
+    "OFFICIAL_SEED_PROMPT_MAX_CHARS", "SEED_QUESTION_SOURCES",
+    "build_web_search_query", "format_seed_question_material", "format_sources_for_prompt",
+    "normalize_seed_source_ref", "official_source_entry", "outline_sources",
+    "parse_confirmed_outline", "resolve_seed_question", "run_course_job",
+    "seed_source_ref", "validate_course_job",
 ]

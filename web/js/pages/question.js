@@ -95,6 +95,119 @@ function officialPublicIdOf(q) {
   return qid.startsWith('official:') ? qid.slice('official:'.length) : '';
 }
 
+/* ---------------------------------------------------------------------------
+ * 平台精选公开配图（WS26 契约）：payload.images[] 每项
+ * `{index, role, alt, accessible, url, asset, media_type, reason}`。
+ * 只有 accessible && url 的条目可渲染；撤回/争议后公开图接口即时 404，
+ * 不可公开的图用 figure_notice 提示，绝不拼接私有存储路径。
+ * 旧/未来 payload 兼容 figure_urls（数组或对象，元素为 URL 或 {url}）。
+ * ------------------------------------------------------------------------- */
+
+// 只允许站内相对路径与 http(s)，避免把任意字符串当地址加载。
+function isRenderableImageUrl(url) {
+  const value = String(url || '').trim();
+  return Boolean(value) && (value.startsWith('/') ? !value.startsWith('//') : /^https?:\/\//i.test(value));
+}
+
+function officialFigureUrlOf(entry) {
+  if (typeof entry === 'string') return entry.trim();
+  if (!entry || typeof entry !== 'object') return '';
+  if (entry.accessible === false) return '';
+  return String(entry.url || entry.src || entry.href || '').trim();
+}
+
+/** 收集可渲染的精选公开配图；role=formula 的图与 [公式N] 占位对应。 */
+function officialFigures(q) {
+  const figures = [];
+  const seen = new Set();
+  const push = (entry, fallbackRole) => {
+    const url = officialFigureUrlOf(entry);
+    if (!isRenderableImageUrl(url) || seen.has(url)) return;
+    seen.add(url);
+    const object = entry && typeof entry === 'object' ? entry : {};
+    const role = String(object.role || fallbackRole || 'figure');
+    figures.push({
+      url,
+      role: role === 'formula' ? 'formula' : 'figure',
+      alt: String(object.alt || ''),
+    });
+  };
+  for (const image of Array.isArray(q?.images) ? q.images : []) push(image, 'figure');
+  const figureUrls = q?.figure_urls;
+  if (!figures.length && Array.isArray(figureUrls)) figureUrls.forEach(entry => push(entry, 'figure'));
+  else if (!figures.length && figureUrls && typeof figureUrls === 'object') {
+    Object.values(figureUrls).forEach(entry => push(entry, 'figure'));
+  }
+  return figures;
+}
+
+function officialFigureNode(entry, index, q) {
+  const alt = entry.alt || t('question.source.figureAlt', { v1: index + 1 });
+  const node = el('img', {
+    class: 'bank-image official-figure',
+    src: entry.url,
+    alt,
+    loading: 'lazy',
+    decoding: 'async',
+    'data-official-figure': String(index + 1),
+    'data-public-id': officialPublicIdOf(q),
+    onClick: () => showImage(entry.url, alt),
+  });
+  node.addEventListener('error', () => {
+    node.replaceWith(el('span', { class: 'image-error' }, t('question.source.figureLoadFailed')));
+  });
+  return node;
+}
+
+/** 题干 [图N]/[公式N] 占位 → 精选公开图节点；找不到对应图时保留可读占位。 */
+function officialTextNode(text, figures = [], { tag = 'div', className = 'question-text', q = null } = {}) {
+  const node = el(tag, { class: className });
+  const pools = {
+    figure: figures.filter(item => item.role !== 'formula'),
+    formula: figures.filter(item => item.role === 'formula'),
+  };
+  const used = new Set();
+  for (const part of String(text || '').split(/(\[(?:图|公式)\d+\])/g)) {
+    const match = part.match(/^\[(图|公式)(\d+)\]$/);
+    if (!match) {
+      node.append(document.createTextNode(part));
+      continue;
+    }
+    const role = match[1] === '公式' ? 'formula' : 'figure';
+    const index = Number(match[2]) - 1;
+    const figure = pools[role][index];
+    if (figure && !used.has(figure.url)) {
+      used.add(figure.url);
+      node.append(officialFigureNode(figure, index, q));
+    } else {
+      node.append(el('span', { class: 'muted' },
+        t(role === 'formula' ? 'question.sourceFormula' : 'question.sourceFigure')));
+    }
+  }
+  return { node, used };
+}
+
+function officialFigureGallery(q, figures) {
+  if (!figures.length) return null;
+  return el('div', { class: 'official-figures', 'data-official-figures': String(figures.length) },
+    ...figures.map((entry, index) => el('figure', { class: 'official-figure-item' },
+      officialFigureNode(entry, index, q),
+      entry.alt ? el('figcaption', {}, entry.alt) : null)));
+}
+
+/** 精选题干：正文占位内联配图 + 未被占位引用的配图画廊 + figure_notice 降级。 */
+function officialStemNode(q, figures) {
+  const rendered = officialTextNode(q.stem_plain || q.stem || '', figures, { q });
+  const remaining = figures.filter(item => !rendered.used.has(item.url));
+  const nodes = [rendered.node, officialFigureGallery(q, remaining)];
+  const figureNotice = String(q.figure_notice || '').trim();
+  if (figureNotice) nodes.push(notice(figureNotice, 'warning'));
+  else if (!figures.length && Array.isArray(q.images) && q.images.length) {
+    nodes.push(notice(t('question.source.figureUnavailable'), 'warning'));
+  }
+  return nodes.filter(Boolean);
+}
+
 // 「已收录」的本地会话缓存：收录接口按 source_ref 幂等（重复收录返回已有条目），
 // 没有按题库 qid 反查的只读接口；本标签页内记住成功结果，跨会话由点击时的
 // already_collected 响应纠正（幂等，不会重复建题）。
@@ -276,6 +389,13 @@ function optionContentNode(q, item, keyword, context) {
     const node = el('div', { class: 'option-content option-blocks' }, questionBlocks(blocks, q.subject, keyword, context));
     if (node.childNodes.length) return node;
   }
+  // 平台精选题：选项文本里的 [图N]/[公式N] 用公开图渲染，不再套题库配图门禁。
+  if (isOfficialQuestion(q)) {
+    return el('span', { class: 'option-content' },
+      officialTextNode(String(item.text || ''), officialFigures(q), {
+        tag: 'span', className: 'option-content-text', q,
+      }).node);
+  }
   return el('span', { class: 'option-content' }, questionText(item.text || '', q.images || [], q.subject, keyword, context));
 }
 
@@ -337,6 +457,73 @@ function openIssueDialog(q) {
     el('div', { class: 'row between', style: 'margin-top:12px' },
       el('p', { class: 'help' }, t('question.reportingAnIssueDoesNotAffectYour')), submit),
     resultBox);
+  document.body.append(dialog);
+  dialog.addEventListener('close', () => dialog.remove());
+  dialog.addEventListener('click', event => { if (event.target === dialog) dialog.close(); });
+  dialog.showModal();
+}
+
+/* ---------------------------------------------------------------------------
+ * 平台精选纠错（WS28 契约：POST /api/plaza/questions/{public_id}/issues
+ * {field, description}，字段白名单 stem/options/answer/explanation/figure/
+ * source/other，描述 2–4000 字；只有当前公开可见的精选可提交）。
+ * 未登录引导登录；接口未就绪/题目不可见时用 toast 明确提示，不崩页。
+ * ------------------------------------------------------------------------- */
+
+const OFFICIAL_ISSUE_FIELDS = ['stem', 'options', 'answer', 'explanation', 'figure', 'source', 'other'];
+
+function openOfficialIssueDialog(q, publicId) {
+  if (!publicId) {
+    // 旧/不完整 payload（无公开编号）：保留占位提示，不伪造接口调用。
+    toast(t('question.source.reportPlaceholder'));
+    return;
+  }
+  if (!state.user) {
+    toast(t('question.source.issueLoginRequired'));
+    go('home');
+    return;
+  }
+  const fieldSel = select(OFFICIAL_ISSUE_FIELDS.map(value => ({
+    value, label: t(`question.source.issue.field.${value}`),
+  })), 'answer', { 'aria-label': t('question.source.issueFieldLabel') });
+  const description = el('textarea', {
+    rows: 4,
+    maxlength: '4000',
+    placeholder: t('question.source.issueDescriptionPlaceholder'),
+    'aria-label': t('question.source.issueDescriptionLabel'),
+  });
+  const resultBox = el('div', { class: 'issue-result', 'data-no-i18n': 'true' });
+  const submit = button(t('question.source.issueSubmit'), event => busy(event.currentTarget, async () => {
+    const text = String(description.value || '').trim();
+    if (text.length < 2) throw new Error(t('question.source.issueDescriptionRequired'));
+    const response = await api(`/plaza/questions/${encodeURIComponent(publicId)}/issues`, {
+      method: 'POST',
+      data: { field: fieldSel.value, description: text },
+    });
+    const message = response?.message || t('question.source.issueSubmitted');
+    resultBox.replaceChildren(notice(message));
+    toast(message);
+    // 与广场纠错弹层一致：提交成功后自动关闭，避免重复提交同一问题。
+    dialog.close();
+  }), '', 'check');
+  const dialog = el('dialog', {
+    class: 'issue-dialog',
+    'data-official-issue-dialog': publicId,
+    'aria-label': t('question.source.issueTitle'),
+  },
+  el('div', { class: 'row between' },
+    el('h3', {}, icon('edit'), t('question.source.issueTitle')),
+    el('button', {
+      type: 'button', class: 'close-dialog', 'aria-label': t('common.close'),
+      onClick: () => dialog.close(),
+    }, icon('close'))),
+  el('p', { class: 'help', 'data-no-i18n': 'true' }, t('question.source.issueHint', { v1: publicId })),
+  el('div', { class: 'form-grid' }, field(t('question.source.issueFieldLabel'), fieldSel)),
+  field(t('question.source.issueDescriptionLabel'), description,
+    t('question.source.issueDescriptionHint')),
+  el('div', { class: 'row between', style: 'margin-top:12px' },
+    el('p', { class: 'help' }, t('question.source.issuePrivacyHint')), submit),
+  resultBox);
   document.body.append(dialog);
   dialog.addEventListener('close', () => dialog.remove());
   dialog.addEventListener('click', event => { if (event.target === dialog) dialog.close(); });
@@ -444,16 +631,19 @@ export function renderQuestion(
         ? t('question.presentationModeRevealTheAnswerAndSolution')
         : t('question.submitYourOwnAnswerFirstPresentationMode'),
     }),
-    // 报错入口保留：平台精选题先按占位提示（平台举报/纠错接口由后续工作台接入），
-    // 高考题库题沿用既有报错弹窗。
+    // 报错入口：平台精选题接入广场纠错接口（POST /plaza/questions/{public_id}/issues），
+    // 高考题库题沿用既有题库报错弹窗；个人题无此入口。
     isApp ? null
       : button(t('question.reportAnIssue'), () => {
         if (isOfficial) {
-          toast(t('question.source.reportPlaceholder'));
+          openOfficialIssueDialog(q, officialPublicId);
           return;
         }
         openIssueDialog(q);
-      }, 'ghost small', 'edit'),
+      }, 'ghost small', 'edit', isOfficial ? {
+        'data-official-issue': 'true',
+        'data-public-id': officialPublicId,
+      } : {}),
     collectButton,
     isOfficial
       ? button(t('question.collect.unavailable'), () => toast(t('question.source.collectUnavailable')), 'ghost small', 'lock')
@@ -469,6 +659,12 @@ export function renderQuestion(
       q.published_version ? t('question.source.featuredVersion', { v1: q.published_version }) : '',
     ].filter(Boolean).join(' · ');
     if (publicLine) container.append(el('p', { class: 'help', 'data-no-i18n': 'true' }, publicLine));
+    // 精选编号直达广场公开详情（#/plaza?id=public_id）；缺失公开编号时降级不渲染链接。
+    if (officialPublicId) {
+      container.append(el('div', { class: 'row official-actions', style: 'margin:0 0 8px' },
+        button(t('question.source.openInPlaza'), () => go('plaza', null, { id: officialPublicId }),
+          'soft small', 'layers', { 'data-official-plaza-link': officialPublicId })));
+    }
     container.append(notice(t('question.source.officialNotice')));
     // 后端可见性提示（例如历史引用的题已撤回/暂停展示）原样展示，不伪造结论。
     const backendNotice = String(q.notice || '').trim();
@@ -588,8 +784,12 @@ export function renderQuestion(
         questionBlocks(member.blocks, q.subject, keyword, assetContext))));
   }
 
-  // ---- 题干与选项
-  container.append(questionStemNode(q, keyword, assetContext));
+  // ---- 题干与选项（平台精选题渲染广场公开配图；题库/个人题沿用题库配图门禁）
+  if (isOfficial) {
+    container.append(...officialStemNode(q, officialFigures(q)));
+  } else {
+    container.append(questionStemNode(q, keyword, assetContext));
+  }
 
   const options = q.options || [];
   const optionInputs = [];

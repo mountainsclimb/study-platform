@@ -114,6 +114,13 @@ QUALITY_SAMPLING_MODE = "initial_100"
 QUALITY_SAMPLING_REQUIRED = True
 #: 抽检队列状态口径（pending=尚无抽检记录；passed/issues=最新一次抽检结论）。
 QUALITY_QUEUE_STATUSES = ("all", "pending", "checked", "passed", "issues")
+#: 抽检阶段：post_publish=发布后抽检（既有口径）；pre_publish=签发前抽检（门禁要求）。
+QUALITY_CHECK_PHASES = ("post_publish", "pre_publish")
+#: 可做「签发前抽检」的投稿状态（社区核验通过/待平台发布）；community_review 仍 409。
+QUALITY_PRE_PUBLISH_STATUSES = ("verified", "pending_release")
+#: 质量门禁模式（与 :mod:`app.plaza.gate` 保持一致，只追加）。
+QUALITY_GATE_MODES = ("off", "initial_100", "always")
+QUALITY_GATE_DEFAULT_MODE = "initial_100"
 
 #: 反馈处理状态：pending 待处理 / resolved 已处理 / rejected 已驳回。
 FEEDBACK_STATUSES = ("pending", "resolved", "rejected")
@@ -154,6 +161,8 @@ NOTIFICATION_KINDS = (
     "report_rejected",
     "appeal_resolved",
     "appeal_rejected",
+    # Phase 4 质量运营闭环：一键恢复（作者 + 收藏者沿用 favorite_restored）。
+    "release_restored",
 )
 
 #: 试点评审阈值（方案 §5）：同版 ≥5 位独立评审、≥4 通过、其中 ≥2 位学科复核员通过，
@@ -349,6 +358,38 @@ CREATE INDEX IF NOT EXISTS plaza_quality_checks_submission
     ON plaza_quality_checks(submission_id, id);
 CREATE INDEX IF NOT EXISTS plaza_quality_checks_decision
     ON plaza_quality_checks(decision, severity);
+
+-- 抽检门禁留痕：签发前判定结果（blocked=阻断 / override=显式放行 / passed=通过）。
+-- 与事件链分开存放：被阻断的签发请求事务会回滚，审计需要独立事务落库。
+CREATE TABLE IF NOT EXISTS plaza_quality_gate_log (
+    id INTEGER PRIMARY KEY,
+    submission_id INTEGER,
+    version INTEGER NOT NULL DEFAULT 0,
+    mode TEXT NOT NULL DEFAULT '',
+    outcome TEXT NOT NULL DEFAULT '',
+    actor_id INTEGER,
+    reason TEXT NOT NULL DEFAULT '',
+    created_at TEXT NOT NULL
+);
+CREATE INDEX IF NOT EXISTS plaza_quality_gate_log_submission
+    ON plaza_quality_gate_log(submission_id, id);
+CREATE INDEX IF NOT EXISTS plaza_quality_gate_log_outcome
+    ON plaza_quality_gate_log(outcome, id);
+
+-- 编辑台批量处理：每次批量动作一行（部分成功语义与运营量指标）。
+CREATE TABLE IF NOT EXISTS plaza_ops_batches (
+    id INTEGER PRIMARY KEY,
+    kind TEXT NOT NULL DEFAULT '',
+    action TEXT NOT NULL DEFAULT '',
+    requested INTEGER NOT NULL DEFAULT 0,
+    updated INTEGER NOT NULL DEFAULT 0,
+    skipped INTEGER NOT NULL DEFAULT 0,
+    actor_id INTEGER,
+    reason TEXT NOT NULL DEFAULT '',
+    created_at TEXT NOT NULL
+);
+CREATE INDEX IF NOT EXISTS plaza_ops_batches_kind
+    ON plaza_ops_batches(kind, id);
 
 -- 题目纠错：任意登录用户可提交，编辑端受理；只对外展示脱敏反馈人。
 CREATE TABLE IF NOT EXISTS plaza_issues (
@@ -699,7 +740,11 @@ __all__ = [
     "PUBLIC_SOURCES",
     "PUBLIC_STATUSES",
     "QUALITY_AUTO_WITHDRAW_SEVERITIES",
+    "QUALITY_CHECK_PHASES",
     "QUALITY_DECISIONS",
+    "QUALITY_GATE_DEFAULT_MODE",
+    "QUALITY_GATE_MODES",
+    "QUALITY_PRE_PUBLISH_STATUSES",
     "QUALITY_QUEUE_STATUSES",
     "QUALITY_SAMPLING_MODE",
     "QUALITY_SAMPLING_REQUIRED",

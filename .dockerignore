@@ -1,0 +1,50 @@
+# 镜像构建上下文收敛（方案 §7「分发与运维」）：
+# 只带运行所需源码与随包分发的 vendored 资源；本地数据库、备份、依赖缓存与验收产物不进镜像。
+# 注意：web/editor（编辑器构建产物）、web/vendor、web/locales、editor/vendor（vendored 源码）
+# 与 app/migrations（数据库迁移）必须保留在上下文中，不要在此排除。
+
+# --- 本地运行时数据 / 备份 / 密钥：绝不进镜像 ---
+data/
+backups/
+*.sqlite3
+*.sqlite3-wal
+*.sqlite3-shm
+api-key.key
+.env
+.env.*
+!.env.example
+
+# --- 版本库、依赖与缓存 ---
+.git/
+.gitignore
+.pytest_cache/
+.ruff_cache/
+.mypy_cache/
+__pycache__/
+*.pyc
+*.pyo
+node_modules/
+editor/node_modules/
+
+# --- 验收 / 截图 / 日志等本地产物 ---
+screenshots/
+*.log
+accept-*.json
+accept-*.log
+pytest-*.log
+*.zip
+.omx/
+.playwright-cli/
+
+# --- 编辑/测试用的本地产物目录 ---
+eval/runs/
+editor/dist/
+
+# 保留（显式声明，避免将来误加排除规则）：
+#   web/**            主站前端（含 web/js 脚本、样式与 index.html）
+#   web/editor/**     编辑器构建产物（页面直接引用）
+#   web/vendor/**     KaTeX / markdown-it 等随包第三方运行时
+#   web/locales/**    语言包
+#   editor/vendor/**  vendored 上游源码与 VENDORED.json（溯源与再构建）
+#   editor/src/**     编辑器源码
+#   app/migrations/** 数据库迁移 SQL

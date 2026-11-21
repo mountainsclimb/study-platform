@@ -34,6 +34,51 @@ function inlineStat(value, label) {
     el('span', {}, label));
 }
 
+/* 平台精选学情口径（WS26 契约）：`/api/insight/home` 顶层 official 对象
+ * （practice_pool / practiced / wrong_count 等，撤回/争议题不计入）；`/api/stats`
+ * 同样下发顶层 official（既有平铺 official_* 字段保持兼容）。字段缺失即未就绪：
+ * 整卡不渲染，绝不写死数字。 */
+function officialCaliberOf(stats, homeStats) {
+  const official = homeStats?.official || stats?.official;
+  if (!official || typeof official !== 'object') return null;
+  const firstNumber = (...values) => values.find(value =>
+    value !== null && value !== undefined && Number.isFinite(Number(value)));
+  const values = {
+    pool: firstNumber(official.practice_pool, official.total_questions,
+      homeStats?.bank?.official_practice_pool),
+    practiced: firstNumber(official.practiced),
+    wrong: firstNumber(official.wrong_count),
+  };
+  if ([values.pool, values.practiced, values.wrong].every(value => value === undefined)) return null;
+  return { ...values, note: String(official.caliber || official.note || '').trim() };
+}
+
+function officialCaliberCard(stats, homeStats) {
+  const caliber = officialCaliberOf(stats, homeStats);
+  if (!caliber) return null;
+  const items = [];
+  if (caliber.pool !== undefined) {
+    items.push(inlineStat(t('home.featured.value', { count: number(caliber.pool) }),
+      t('home.featured.practiceLabel')));
+  }
+  if (caliber.practiced !== undefined) {
+    items.push(inlineStat(t('home.featured.value', { count: number(caliber.practiced) }),
+      t('home.official.practicedLabel')));
+  }
+  if (caliber.wrong !== undefined) {
+    items.push(inlineStat(t('home.featured.value', { count: number(caliber.wrong) }),
+      t('home.official.wrongLabel')));
+  }
+  return el('section', { class: 'card home-official-caliber', 'data-official-caliber': 'true' },
+    el('div', { class: 'pg-card-head' },
+      el('div', {},
+        el('h2', {}, t('home.official.title')),
+        el('p', { class: 'pg-card-sub' }, caliber.note || t('home.official.sub'))),
+      button(t('home.featured.goPractice'), () => go('practice', null, { source: 'official' }),
+        'ghost small', 'layers')),
+    el('div', { class: 'pg-inline-stats', 'aria-label': t('home.official.aria') }, ...items));
+}
+
 /* 首屏三动作主卡（方案 §1）：拍题入库 / 我的题库 / 错题复习。
  * 计数全部来自 /api/insight/home 的真实统计（题库只读库 + 应用库），接口失败时
  * 显示「暂不可用」并保留入口，不在前端估算或写死数字。 */
@@ -785,6 +830,8 @@ export async function renderHome(container, version) {
   if (!current(version)) return;
   const personal = homeStats?.personal || null;
   const bank = homeStats?.bank || null;
+  // 精选学情口径卡：字段未就绪（旧后端）时返回 null，不占据首屏、不显示 0 假数字。
+  const officialCard = officialCaliberCard(stats, homeStats);
   const dueItems = reviews.items || [];
   const next = resolveNextStep(stats, dueItems, personal);
   const recent = (stats.recent_attempts || []).slice(0, 4);
@@ -846,7 +893,8 @@ export async function renderHome(container, version) {
 
   const workbench = createWorkbench({ version, stats });
 
-  container.replaceChildren(
+  // replaceChildren 不能直接接收 null（会被转成文本节点「null」）：精选口径卡未就绪时过滤掉。
+  const pageSections = [
     heading('LEARNING OVERVIEW', t('home.greeting', { greet, name: state.user.username }),
       t('home.subheading')),
     actionCards(personal, bank),
@@ -855,7 +903,10 @@ export async function renderHome(container, version) {
     workbench.node,
     el('div', { class: 'pg-grid-2' }, weakKnowledgeCard(personal), notesCard),
     bankCaliberCard(bank, featuredPractice),
-    shortcutsCard);
+    officialCard,
+    shortcutsCard,
+  ].filter(Boolean);
+  container.replaceChildren(...pageSections);
 
   if (stats.subject_progress?.length) {
     const rows = stats.subject_progress

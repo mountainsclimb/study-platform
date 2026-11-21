@@ -412,6 +412,48 @@ class FeedbackHandleInput(BaseModel):
     reason: str = Field(default="", max_length=2000)
 
 
+def _apply_feedback(con, kind: str, row: dict, action: str, reason: str,
+                    user: dict) -> dict:
+    """执行单条处理（CAS 更新 + 事件 + 通知），返回脱敏条目与目标状态。
+
+    调用方负责 pending 校验与驳回原因校验；这里只做 CAS 与副作用，批量处理复用。
+    """
+    target = "resolved" if action == "resolve" else "rejected"
+    now = utcnow()
+    changed = con.execute(
+        f"UPDATE {_TABLES[kind]} SET status=?, resolution=?, handled_by=?, "
+        "updated_at=?, resolved_at=? WHERE id=? AND status='pending'",
+        (target, reason[:2000], int(user["id"]), now, now, int(row["id"])),
+    ).rowcount
+    if not changed:
+        raise HTTPException(409, "该记录已被其他操作处理，请刷新后重试")
+    submission_id = int(row.get("submission_id") or 0)
+    public_id = str(row.get("public_id") or "")
+    db.record_event(
+        con, submission_id, int(user["id"]), f"{kind}_{target}", "pending", target,
+        reason=reason[:2000],
+        payload={
+            _ID_KEY[kind]: int(row["id"]),
+            "public_id": public_id,
+            "resolution": reason[:2000],
+        },
+    )
+    target_user = int(row.get("user_id") or 0)
+    label = _KIND_LABELS[kind]
+    title = f"{label}处理结果：{'已处理' if target == 'resolved' else '已驳回'}"
+    body = f"你提交的{label}已由平台编辑处理。"
+    if reason:
+        body += f"处理说明：{reason[:500]}"
+    link = notify.public_link(public_id) if public_id else notify.submission_link(submission_id)
+    notify.notify(
+        con, target_user, f"{kind}_{target}", title, body,
+        submission_id=submission_id or None, public_id=public_id, link=link,
+        payload={_ID_KEY[kind]: int(row["id"]), "status": target},
+    )
+    fresh = _load_feedback(con, kind, int(row["id"])) or row
+    return {"item": feedback_item(con, kind, fresh), "target": target}
+
+
 def _handle_feedback(con, kind: str, item_id: int, data: FeedbackHandleInput,
                      user: dict) -> dict:
     row = _load_feedback(con, kind, item_id)
@@ -428,42 +470,11 @@ def _handle_feedback(con, kind: str, item_id: int, data: FeedbackHandleInput,
     reason = data.reason.strip()
     if target == "rejected" and len(reason) < 2:
         raise HTTPException(422, "驳回必须填写原因（便于反馈人/作者理解）")
-    now = utcnow()
-    changed = con.execute(
-        f"UPDATE {_TABLES[kind]} SET status=?, resolution=?, handled_by=?, "
-        "updated_at=?, resolved_at=? WHERE id=? AND status='pending'",
-        (target, reason[:2000], int(user["id"]), now, now, int(item_id)),
-    ).rowcount
-    if not changed:
-        raise HTTPException(409, "该记录已被其他操作处理，请刷新后重试")
-    submission_id = int(row.get("submission_id") or 0)
-    public_id = str(row.get("public_id") or "")
-    db.record_event(
-        con, submission_id, int(user["id"]), f"{kind}_{target}", "pending", target,
-        reason=reason[:2000],
-        payload={
-            _ID_KEY[kind]: int(item_id),
-            "public_id": public_id,
-            "resolution": reason[:2000],
-        },
-    )
-    target_user = int(row.get("user_id") or 0)
-    label = _KIND_LABELS[kind]
-    title = f"{label}处理结果：{'已处理' if target == 'resolved' else '已驳回'}"
-    body = f"你提交的{label}已由平台编辑处理。"
-    if reason:
-        body += f"处理说明：{reason[:500]}"
-    link = notify.public_link(public_id) if public_id else notify.submission_link(submission_id)
-    notify.notify(
-        con, target_user, f"{kind}_{target}", title, body,
-        submission_id=submission_id or None, public_id=public_id, link=link,
-        payload={_ID_KEY[kind]: int(item_id), "status": target},
-    )
-    fresh = _load_feedback(con, kind, item_id) or row
+    result = _apply_feedback(con, kind, row, data.action, reason, user)
     return {
-        kind: feedback_item(con, kind, fresh),
+        kind: result["item"],
         "action": data.action,
-        "message": f"{label}已{'处理' if target == 'resolved' else '驳回'}",
+        "message": f"{_KIND_LABELS[kind]}已{'处理' if target == 'resolved' else '驳回'}",
     }
 
 
@@ -503,10 +514,138 @@ def handle_appeal(
         return _handle_feedback(con, _APPEAL, appeal_id, data, user)
 
 
+# ---------------------------------------------------------------------------
+# 编辑台批量处理（WS28）：单批 ≤50，逐条校验，部分成功返回 updated/skipped
+# ---------------------------------------------------------------------------
+
+MAX_BATCH_ITEMS = 50
+
+
+class FeedbackBatchInput(BaseModel):
+    ids: list[int] = Field(min_length=1, max_length=MAX_BATCH_ITEMS)
+    action: str = Field(pattern="^(resolve|reject)$")
+    reason: str = Field(default="", max_length=2000)
+
+
+def _run_batch(con, kind: str, data: FeedbackBatchInput, user: dict) -> dict:
+    """逐条处理反馈（同一事务）：部分成功语义 + 批量审计行 + 指标可查。"""
+    label = _KIND_LABELS[kind]
+    target = "resolved" if data.action == "resolve" else "rejected"
+    reason = data.reason.strip()
+    if target == "rejected" and len(reason) < 2:
+        raise HTTPException(422, "批量驳回必须填写原因（便于反馈人/作者理解）")
+    ordered: list[int] = []
+    for raw in data.ids:
+        try:
+            number = int(raw)
+        except (TypeError, ValueError):
+            continue
+        if number > 0 and number not in ordered:
+            ordered.append(number)
+    if not ordered:
+        raise HTTPException(422, {"message": "请提供要处理的记录 ids", "field": "ids"})
+    if len(ordered) > MAX_BATCH_ITEMS:
+        raise HTTPException(422, {
+            "message": f"单次最多批量处理 {MAX_BATCH_ITEMS} 条",
+            "max_items": MAX_BATCH_ITEMS,
+        })
+    updated: list[dict] = []
+    skipped: list[dict] = []
+    for item_id in ordered:
+        row = _load_feedback(con, kind, item_id)
+        if row is None:
+            skipped.append({
+                "id": item_id, "reason": "not_found",
+                "message": f"未找到该{label}记录",
+            })
+            continue
+        current = str(row.get("status") or "")
+        if current != "pending":
+            skipped.append({
+                "id": item_id, "reason": "already_handled", "status": current,
+                "status_label": db.feedback_status_label(current),
+                "message": f"该{label}已处理，不能重复处理",
+            })
+            continue
+        try:
+            result = _apply_feedback(con, kind, row, data.action, reason, user)
+        except HTTPException as exc:
+            skipped.append({
+                "id": item_id, "reason": "conflict",
+                "message": str(exc.detail),
+            })
+            continue
+        updated.append(result["item"])
+    batch_id = db.insert_row(con, "plaza_ops_batches", {
+        "kind": kind,
+        "action": data.action,
+        "requested": len(ordered),
+        "updated": len(updated),
+        "skipped": len(skipped),
+        "actor_id": int(user["id"]),
+        "reason": reason[:2000],
+        "created_at": utcnow(),
+    })
+    return {
+        "kind": kind,
+        "kind_label": label,
+        "action": data.action,
+        "target_status": target,
+        "requested": len(ordered),
+        "updated": updated,
+        "updated_ids": [int(item.get("id") or 0) for item in updated],
+        "updated_count": len(updated),
+        "skipped": skipped,
+        "skipped_count": len(skipped),
+        "batch_id": batch_id,
+        "max_items": MAX_BATCH_ITEMS,
+        "message": f"批量{label}处理完成：成功 {len(updated)} 条，跳过 {len(skipped)} 条",
+    }
+
+
+@router.post("/admin/issues/batch")
+def batch_issues(
+    data: FeedbackBatchInput,
+    user=Depends(service.require_plaza_role("editor")),
+):
+    """批量处理纠错（≤50 条；部分成功返回 updated/skipped）。"""
+    db.ensure_tables()
+    with connection() as con:
+        write_lock(con, "plaza-write")
+        return _run_batch(con, _ISSUE, data, user)
+
+
+@router.post("/admin/reports/batch")
+def batch_reports(
+    data: FeedbackBatchInput,
+    user=Depends(service.require_plaza_role("editor")),
+):
+    """批量处理举报（≤50 条；部分成功返回 updated/skipped）。"""
+    db.ensure_tables()
+    with connection() as con:
+        write_lock(con, "plaza-write")
+        return _run_batch(con, _REPORT, data, user)
+
+
+@router.post("/admin/appeals/batch")
+def batch_appeals(
+    data: FeedbackBatchInput,
+    user=Depends(service.require_plaza_role("editor")),
+):
+    """批量处理作者申诉（≤50 条；部分成功返回 updated/skipped）。"""
+    db.ensure_tables()
+    with connection() as con:
+        write_lock(con, "plaza-write")
+        return _run_batch(con, _APPEAL, data, user)
+
+
 __all__ = [
     "admin_appeal_queue",
     "admin_issue_queue",
     "admin_report_queue",
+    "batch_appeals",
+    "batch_issues",
+    "batch_reports",
     "create_appeal",
     "create_issue",
     "create_report",

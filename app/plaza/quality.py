@@ -5,9 +5,13 @@
 * 试点首批对正式发布题做 **100% 独立抽检**（``QUALITY_SAMPLING_MODE=initial_100``），
   稳定后可由运营改为常规抽检 10%、高风险 100%；
 * 抽检结论 ``pass`` / ``issue``；``issue`` 必须给严重度与问题清单；
+* 抽检分两个阶段共用同一接口：``post_publish``（已发布，既有口径，``high`` 自动撤回）
+  与 ``pre_publish``（``verified`` / ``pending_release``，签发前抽检——抽检门禁要求
+  通过后才能签发，见 :mod:`app.plaza.gate`）；``community_review`` 等其它状态仍 409；
 * ``high`` 严重问题（严重错题、隐私/版权阻断）**自动撤回**当前发布（复用
   :func:`app.plaza.release.withdraw_active_release`，同一事务写发布指针、投稿状态、
   ``plaza_events`` 与通知作者/收藏者），并返回 ``auto_withdrawn=true``；
+* 同一版本可多次抽检（记录只增不删），签发门禁按**最新一次**记录判定，避免歧义；
 * 抽检员回避本人投稿；队列只对编辑/管理员开放，抽检员身份脱敏展示。
 """
 from __future__ import annotations
@@ -15,8 +19,9 @@ from __future__ import annotations
 from fastapi import APIRouter, Depends, HTTPException, Query
 from pydantic import BaseModel, Field
 
+from ..auth import require_admin
 from ..db import connection, utcnow, write_lock
-from . import db, favorites, notify, release, service
+from . import db, favorites, gate, notify, release, service
 
 router = APIRouter()
 
@@ -34,12 +39,14 @@ def check_public(row: dict) -> dict:
     findings = db.json_load(row.get("findings_json"), [])
     if not isinstance(findings, list):
         findings = []
+    release_id = row.get("release_id")
     return {
         "id": int(row.get("id") or 0),
         "submission_id": int(row.get("submission_id") or 0),
         "public_id": str(row.get("public_id") or "") or None,
         "version": int(row.get("version") or 1),
-        "release_id": row.get("release_id"),
+        "release_id": release_id,
+        "phase": "pre_publish" if not release_id else "post_publish",
         "decision": str(row.get("decision") or ""),
         "severity": str(row.get("severity") or ""),
         "severity_label": _SEVERITY_LABELS.get(str(row.get("severity") or ""), ""),
@@ -138,6 +145,12 @@ def quality_queue(
                 snapshot = {}
             current = latest.get(int(row["id"]))
             current_status = _check_status(current)
+            if current is not None:
+                publish_phase = "pre_publish" if not current.get("release_id") else "post_publish"
+            elif str(row.get("status") or "") == "published":
+                publish_phase = "post_publish"
+            else:
+                publish_phase = ""
             items.append({
                 "submission_id": int(row["id"]),
                 "public_id": row.get("public_id"),
@@ -150,6 +163,7 @@ def quality_queue(
                 "status_label": db.STATUS_LABELS.get(str(row.get("status") or ""), ""),
                 "published_at": published_times.get(int(row["id"]), ""),
                 "check_status": current_status,
+                "publish_phase": publish_phase,
                 "latest_check": check_public(current) if current else None,
                 "checks_count": checks_counts.get(int(row["id"]), 0),
                 "auto_withdrawn": int(row["id"]) in auto_ids,
@@ -185,17 +199,28 @@ def quality_queue(
         )
         total = len(filtered)
         page_items = filtered[(page - 1) * page_size: page * page_size]
-        published_total = counts["pending"] + counts["checked"]
+        # 首批 100% 抽检覆盖率只统计「已签发过」的题（含被抽检自动撤回的题）：
+        # 签发前抽检（pre_publish）的待发布题不计入发布基数，避免覆盖率虚低。
+        sampling_items = [
+            item for item in items
+            if item["status"] == "published" or item["publish_phase"] == "post_publish"
+        ]
+        sampling_pending = sum(
+            1 for item in sampling_items if item["check_status"] == "pending"
+        )
+        sampling_checked = len(sampling_items) - sampling_pending
+        published_total = len(sampling_items)
         sampling = {
             "mode": db.QUALITY_SAMPLING_MODE,
             "required": bool(db.QUALITY_SAMPLING_REQUIRED),
             "label": "试点首批 100% 独立抽检",
             "published_total": published_total,
-            "checked_total": counts["checked"],
-            "pending_total": counts["pending"],
-            "coverage_rate": round(counts["checked"] / published_total, 4)
+            "checked_total": sampling_checked,
+            "pending_total": sampling_pending,
+            "coverage_rate": round(sampling_checked / published_total, 4)
             if published_total else 0.0,
         }
+        gate_state = gate.state(con)
     return {
         "items": page_items,
         "total": total,
@@ -204,6 +229,7 @@ def quality_queue(
         "status_filter": status,
         "counts": counts,
         "sampling": sampling,
+        "gate": gate_state,
     }
 
 
@@ -235,7 +261,13 @@ def _normalize_findings(raw) -> list[str]:
 @router.post("/admin/quality/checks", status_code=201)
 def create_quality_check(data: QualityCheckInput,
                          user=Depends(service.require_plaza_role("editor"))):
-    """记录抽检结论；``issue`` 必填严重度与问题清单，``high`` 自动撤回当前发布。"""
+    """记录抽检结论；``issue`` 必填严重度与问题清单，发布后 ``high`` 自动撤回。
+
+    抽检阶段（同一接口）：``post_publish``=已发布且活跃发布（既有口径，``high``
+    自动撤回）；``pre_publish``=``verified`` / ``pending_release`` 的签发前抽检，
+    通过（pass）后编辑才能签发（见 :mod:`app.plaza.gate`）；其它状态 409。
+    ``community_review`` 仍不可抽检（保持既有语义）。
+    """
     db.ensure_tables()
     user_id = int(user["id"])
     with connection() as con:
@@ -262,9 +294,17 @@ def create_quality_check(data: QualityCheckInput,
             "ORDER BY id DESC LIMIT 1",
             (int(submission["id"]),),
         ).fetchone()
-        if status != "published" or release_row is None:
+        if status == "published" and release_row is not None:
+            phase = "post_publish"
+        elif status in db.QUALITY_PRE_PUBLISH_STATUSES and release_row is None:
+            # 签发前抽检：社区核验通过/待平台发布，尚未有活跃发布。
+            phase = "pre_publish"
+        else:
             raise HTTPException(409, {
-                "message": "仅已发布（有活跃发布）的题目可抽检",
+                "message": (
+                    "仅已发布（有活跃发布）的题目可做发布后抽检，"
+                    "或社区核验通过（待签发）的题目可做签发前抽检"
+                ),
                 "status": status,
                 "status_label": db.STATUS_LABELS.get(status, status),
             })
@@ -283,10 +323,11 @@ def create_quality_check(data: QualityCheckInput,
             findings = []
         version = int(submission.get("current_version") or 1)
         public_id = str(submission.get("public_id") or "")
+        release_id = int(release_row["id"]) if release_row is not None else None
         check_id = db.insert_row(con, "plaza_quality_checks", {
             "submission_id": int(submission["id"]),
             "version": version,
-            "release_id": int(release_row["id"]),
+            "release_id": release_id,
             "public_id": public_id,
             "checker_id": user_id,
             "decision": data.decision,
@@ -307,12 +348,15 @@ def create_quality_check(data: QualityCheckInput,
                 "findings": findings,
                 "version": version,
                 "public_id": public_id,
+                "phase": phase,
             },
         )
         auto_withdrawn = False
         withdraw_payload = None
         notified = {"author": False, "favoriters": 0}
-        if data.decision == "issue" and severity in db.QUALITY_AUTO_WITHDRAW_SEVERITIES:
+        if (data.decision == "issue"
+                and severity in db.QUALITY_AUTO_WITHDRAW_SEVERITIES
+                and phase == "post_publish" and release_row is not None):
             withdraw_payload = release.withdraw_active_release(
                 con, dict(release_row), public_id=public_id, actor_id=user_id,
                 reason=(
@@ -346,17 +390,22 @@ def create_quality_check(data: QualityCheckInput,
             notified["author"] = bool(notify.notify(
                 con, int(submission["author_id"]), "quality_issue",
                 f"抽检发现问题（严重度：{_SEVERITY_LABELS.get(severity, severity)}）",
-                "平台抽检发现该题存在问题，请尽快在投稿台查看并修订。"
-                "问题：" + "；".join(findings[:3]),
+                (
+                    "平台抽检发现该题存在问题，请尽快在投稿台查看并修订。"
+                    if phase == "post_publish" else
+                    "平台签发前抽检发现该题存在问题，已暂缓签发，请修订后重新送审。"
+                ) + "问题：" + "；".join(findings[:3]),
                 submission_id=int(submission["id"]), public_id=public_id,
                 link=notify.submission_link(int(submission["id"])),
                 payload={"quality_check_id": check_id, "severity": severity,
-                         "findings": findings},
+                         "findings": findings, "version": version,
+                         "phase": phase},
             ))
         fresh_submission = db.load_submission(con, int(submission["id"])) or submission
         fresh_check = con.execute(
             "SELECT * FROM plaza_quality_checks WHERE id=?", (check_id,),
         ).fetchone()
+        gate_info = gate.evaluate(con, fresh_submission, version)
         response_payload = {
             "check": check_public(dict(fresh_check)) if fresh_check else {"id": check_id},
             "submission": {
@@ -370,17 +419,75 @@ def create_quality_check(data: QualityCheckInput,
                 "public_visible": str(fresh_submission.get("status") or "")
                 in db.PUBLIC_STATUSES,
             },
+            "phase": phase,
             "auto_withdrawn": auto_withdrawn,
             "withdraw": withdraw_payload,
             "notified": notified,
+            "gate": {
+                "mode": gate_info["mode"],
+                "mode_label": gate_info["mode_label"],
+                "mode_source": gate_info["mode_source"],
+                "armed": bool(gate_info["armed"]),
+                "enforced": bool(gate_info["enforced"]),
+                "required": bool(gate_info["required"]),
+                "blocking": bool(gate_info.get("blocking")),
+                # 签发前抽检通过后即可签发；发布后抽检不改变发布状态。
+                "publish_ready": bool(
+                    phase == "pre_publish" and not gate_info.get("blocking")
+                ),
+                "guidance": str(gate_info.get("guidance") or ""),
+                "override_guidance": gate.OVERRIDE_GUIDANCE,
+            },
             "message": (
                 "抽检发现严重问题，已自动撤回该题发布并通知作者与收藏者"
                 if auto_withdrawn else
-                ("抽检结论已记录" if data.decision == "pass"
-                 else "抽检问题已记录，已通知作者")
+                (
+                    "签发前抽检已记录，该版本已满足抽检门禁，可签发"
+                    if phase == "pre_publish" and data.decision == "pass" else
+                    "抽检结论已记录" if data.decision == "pass"
+                    else "抽检问题已记录，已通知作者"
+                )
             ),
         }
     return response_payload
 
 
-__all__ = ["check_public", "create_quality_check", "quality_queue"]
+# ---------------------------------------------------------------------------
+# 抽检门禁：状态查询与管理员设置（模式 DB 设置 > 环境变量 > 默认 initial_100）
+# ---------------------------------------------------------------------------
+
+@router.get("/admin/quality/gate")
+def get_quality_gate(user=Depends(service.require_plaza_role("editor"))):
+    """抽检门禁当前状态（模式/是否已激活/试点窗口/审计计数/最近判定）。"""
+    db.ensure_tables()
+    with connection() as con:
+        return gate.state(con)
+
+
+class QualityGateUpdateInput(BaseModel):
+    mode: str | None = Field(default=None, pattern="^(off|initial_100|always)$")
+    armed: bool | None = None
+    pilot_limit: int | None = Field(default=None, ge=0, le=1000000)
+    reset: bool = False
+
+
+@router.put("/admin/quality/gate")
+def update_quality_gate(data: QualityGateUpdateInput, user=Depends(require_admin)):
+    """管理员修改抽检门禁：``{mode?, armed?, pilot_limit?, reset?}``，立即生效。"""
+    db.ensure_tables()
+    try:
+        return gate.update_settings(
+            mode=data.mode, armed=data.armed,
+            pilot_limit=data.pilot_limit, reset=bool(data.reset),
+        )
+    except ValueError as exc:
+        raise HTTPException(422, str(exc)) from None
+
+
+__all__ = [
+    "check_public",
+    "create_quality_check",
+    "get_quality_gate",
+    "quality_queue",
+    "update_quality_gate",
+]

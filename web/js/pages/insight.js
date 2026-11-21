@@ -284,6 +284,45 @@ function masteryStatCard(counts) {
       MASTERY_LEVELS.map(level => `${masteryShort(level)} ${number(safe[level] || 0)}`).join(' · ')));
 }
 
+/* ------------------------------------------------------------------------- *
+ * 平台精选学情口径（WS26 契约：GET /api/insight/home 顶层 official 对象）
+ * 字段：practice_pool / total_questions / practiced / wrong_count 等；
+ * 撤回/争议题不计入该口径。接口未就绪或字段缺失时整块不渲染，绝不写死数字。
+ * ------------------------------------------------------------------------- */
+
+function officialCaliber(homeStats) {
+  const official = homeStats?.official;
+  if (!official || typeof official !== 'object') return null;
+  const firstNumber = (...values) => values.find(value =>
+    value !== null && value !== undefined && Number.isFinite(Number(value)));
+  const values = {
+    pool: firstNumber(official.practice_pool, official.total_questions,
+      homeStats?.bank?.official_practice_pool),
+    practiced: firstNumber(official.practiced),
+    wrong: firstNumber(official.wrong_count),
+  };
+  if ([values.pool, values.practiced, values.wrong].every(value => value === undefined)) return null;
+  return { ...values, note: String(official.note || official.caliber || '').trim() };
+}
+
+function officialCaliberCards(homeStats) {
+  const caliber = officialCaliber(homeStats);
+  if (!caliber) return [];
+  const unit = t('insight.unit.questions');
+  const caption = t('insight.official.caption');
+  const cards = [];
+  if (caliber.pool !== undefined) {
+    cards.push(statCard(t('insight.official.pool'), number(caliber.pool), unit, caption, 'layers'));
+  }
+  if (caliber.practiced !== undefined) {
+    cards.push(statCard(t('insight.official.practiced'), number(caliber.practiced), unit, caption, 'book'));
+  }
+  if (caliber.wrong !== undefined) {
+    cards.push(statCard(t('insight.official.wrong'), number(caliber.wrong), unit, caption, 'notes'));
+  }
+  return cards;
+}
+
 function summaryCards(report, homeStats) {
   const summary = report.summary || {};
   const windowDays = report.range?.days || days;
@@ -304,6 +343,7 @@ function summaryCards(report, homeStats) {
         t('insight.summary.pendingCaption'), 'clock'),
     ]
     : [];
+  const caliber = officialCaliber(homeStats);
   return el('div', { class: 'ins-summary', 'aria-label': t('insight.summary.aria') },
     statCard(t('insight.summary.attempts'), number(summary.attempts || 0), t('insight.unit.times'),
       t('insight.summary.attemptsCaption', { graded: number(summary.graded_attempts || 0), days: windowDays })),
@@ -313,7 +353,9 @@ function summaryCards(report, homeStats) {
     statCard(t('insight.summary.due'), number(summary.due_reviews || 0), t('insight.unit.questions'), t('insight.summary.dueCaption'), 'repeat'),
     statCard(t('insight.summary.wrong'), number(summary.wrong_count || 0), t('insight.unit.questions'), t('insight.summary.wrongCaption'), 'notes'),
     statCard(t('insight.summary.ai'), number(summary.ai_jobs || 0), t('insight.unit.items'), t('insight.summary.aiCaption', { days: windowDays }), 'sparkle'),
-    ...extraCards);
+    ...extraCards,
+    ...officialCaliberCards(homeStats),
+    caliber?.note ? el('p', { class: 'help ins-official-note', 'data-no-i18n': '' }, caliber.note) : null);
 }
 
 /* ------------------------------------------------------------------------- *

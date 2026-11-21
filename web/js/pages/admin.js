@@ -834,6 +834,291 @@ function adminAiUsageCard() {
 }
 
 // ---------------------------------------------------------------------------
+// 运维监控（WS27 / 方案 §7「分发与运维」）：GET /api/admin/monitor 的
+// 任务 / AI / 渲染 / 数据 / 广场五组只读检查。单组异常由后端标 warn/error 并在组内提示；
+// 接口整体不可用时只降级为提示与重试按钮，不影响其它管理分区；刷新按钮显式绕过服务端短缓存。
+// ---------------------------------------------------------------------------
+
+const MONITOR_GROUP_KEYS = ['tasks', 'ai', 'media', 'data', 'plaza'];
+
+const MONITOR_STATUS_META = {
+  ok: { label: 'admin.monitor.status.ok', tone: 'teal' },
+  warn: { label: 'admin.monitor.status.warn', tone: 'amber' },
+  error: { label: 'admin.monitor.status.error', tone: 'red' },
+};
+
+function monitorStatusBadge(status) {
+  const meta = MONITOR_STATUS_META[status] || MONITOR_STATUS_META.warn;
+  return badge(t(meta.label), meta.tone);
+}
+
+function monitorGroupTitle(key) {
+  return t(`admin.monitor.group.${key}`);
+}
+
+function monitorDurationText(seconds) {
+  const value = Number(seconds);
+  if (seconds === null || seconds === undefined || !Number.isFinite(value) || value < 0) return '—';
+  if (value < 60) return t('admin.monitor.duration.seconds', { v1: Math.round(value) });
+  if (value < 3600) return t('admin.monitor.duration.minutes', { v1: Math.round(value / 6) / 10 });
+  if (value < 86_400) return t('admin.monitor.duration.hours', { v1: Math.round(value / 360) / 10 });
+  return t('admin.monitor.duration.days', { v1: Math.round(value / 864) / 10 });
+}
+
+function monitorBytesText(bytes) {
+  const value = Number(bytes);
+  if (bytes === null || bytes === undefined || !Number.isFinite(value) || value < 0) return '—';
+  if (value < 1024) return `${Math.round(value)} B`;
+  if (value < 1024 * 1024) return `${(value / 1024).toFixed(1)} KB`;
+  if (value < 1024 * 1024 * 1024) return `${(value / (1024 * 1024)).toFixed(1)} MB`;
+  return `${(value / (1024 * 1024 * 1024)).toFixed(2)} GB`;
+}
+
+function monitorMetricLine(parts) {
+  const items = parts.filter(Boolean);
+  if (!items.length) return null;
+  return el('div', { class: 'settings-usage-summary', style: 'margin-top:8px' },
+    ...items.map(part => el('span', {}, part)));
+}
+
+function monitorKindTable(rows) {
+  const items = (Array.isArray(rows) ? rows : []).slice(0, 8);
+  if (!items.length) return null;
+  return el('div', { class: 'table-wrap', style: 'margin-top:10px' },
+    el('table', {},
+      el('thead', {}, el('tr', {},
+        el('th', {}, t('admin.monitor.tasks.headKind')),
+        el('th', {}, t('admin.monitor.tasks.headQueued')),
+        el('th', {}, t('admin.monitor.tasks.headRunning')),
+        el('th', {}, t('admin.monitor.tasks.headFailed')),
+        el('th', {}, t('admin.monitor.tasks.headOldest')))),
+      el('tbody', {}, ...items.map(row => el('tr', {},
+        el('td', {}, row.label || aiUsageKindLabel(row.kind)),
+        el('td', {}, number(row.queued || 0)),
+        el('td', {}, number((row.running || 0) + (row.cancel_requested || 0))),
+        el('td', {}, number((row.failed || 0) + (row.interrupted || 0))),
+        el('td', {}, monitorDurationText(row.oldest_queued_seconds)))))));
+}
+
+function monitorTasksExtras(check) {
+  const totals = check.totals || {};
+  return [
+    monitorMetricLine([
+      t('admin.monitor.tasks.queue', { count: number(totals.queued || 0) }),
+      t('admin.monitor.tasks.running', { count: number((totals.running || 0) + (totals.cancel_requested || 0)) }),
+      t('admin.monitor.tasks.failed', { count: number(totals.failed || 0) }),
+      t('admin.monitor.tasks.reclaimed', { count: number(check.reclaimed || 0) }),
+      t('admin.monitor.tasks.oldestQueue', { value: monitorDurationText(check.oldest_queued_seconds) }),
+      t('admin.monitor.tasks.timeout', { count: number(check.timed_out || 0) }),
+    ]),
+    monitorKindTable(check.by_kind),
+  ];
+}
+
+function monitorAiExtras(check) {
+  const totals = check.totals || {};
+  const ocr = check.ocr || {};
+  const costText = aiUsageMoneyText(totals.cost_micro);
+  return [
+    monitorMetricLine([
+      t('admin.monitor.ai.window', { days: number(check.window_days || 0) }),
+      t('admin.monitor.ai.jobs', { count: number(totals.jobs || 0) }),
+      t('admin.monitor.ai.failed', { rate: aiUsageRateText(totals.failure_rate) }),
+      t('admin.monitor.ai.tokens', {
+        input: number(totals.tokens_in || 0), output: number(totals.tokens_out || 0),
+      }),
+      costText === null ? t('admin.monitor.ai.costUnknown') : t('admin.monitor.ai.cost', { amount: costText }),
+      t('admin.monitor.ai.modelCalls', {
+        count: check.model_calls === null || check.model_calls === undefined ? '—' : number(check.model_calls),
+      }),
+    ]),
+    monitorMetricLine([
+      t('admin.monitor.ai.ocr', {
+        jobs: number(ocr.jobs || 0),
+        p50: aiUsageDurationText(ocr.duration_p50_ms),
+        p95: aiUsageDurationText(ocr.duration_p95_ms),
+        rate: aiUsageRateText(ocr.failure_rate),
+      }),
+    ]),
+  ];
+}
+
+function monitorMediaExtras(check) {
+  const totals = check.totals || {};
+  const caps = check.capabilities || {};
+  const assets = check.assets || {};
+  const courses = check.courses || {};
+  const assetKinds = assets.by_kind || {};
+  return [
+    monitorMetricLine([
+      t('admin.monitor.media.line', {
+        queue: number(totals.queued || 0),
+        running: number((totals.running || 0) + (totals.cancel_requested || 0)),
+        failed: number((totals.failed || 0) + (totals.interrupted || 0)),
+        oldest: monitorDurationText(check.oldest_queued_seconds),
+      }),
+      t('admin.monitor.media.capability', {
+        pdf: caps.pdf?.available ? t('admin.monitor.capability.yes') : t('admin.monitor.capability.no'),
+        video: caps.video?.available ? t('admin.monitor.capability.yes') : t('admin.monitor.capability.no'),
+      }),
+      t('admin.monitor.media.assets', {
+        video: number(assetKinds.video || 0),
+        tts: number(assetKinds.tts || 0),
+        recent: number(assets.recent || 0),
+      }),
+      t('admin.monitor.media.courses', {
+        failed: number(courses.failed || 0),
+        generating: number((courses.generating || 0) + (courses.outline_ready || 0)),
+        ready: number(courses.ready || 0),
+      }),
+    ]),
+    monitorKindTable(check.by_kind),
+  ];
+}
+
+function monitorDataExtras(check) {
+  const info = check.database || {};
+  const bank = check.bank || {};
+  const backups = check.backups || {};
+  const latest = backups.latest;
+  return [
+    monitorMetricLine([
+      t('admin.monitor.data.database', {
+        engine: info.engine || '—',
+        size: monitorBytesText(info.size_bytes),
+        wal: monitorBytesText(info.wal_bytes),
+        wait: aiUsageDurationText(info.wait_ms),
+      }),
+      t('admin.monitor.data.bank', {
+        version: bank.version || '—',
+        questions: bank.questions === null || bank.questions === undefined ? '—' : number(bank.questions),
+      }),
+    ]),
+    latest
+      ? monitorMetricLine([
+        t('admin.monitor.data.backup', {
+          name: latest.name || '—',
+          age: monitorDurationText(latest.age_seconds),
+          files: number(latest.file_count || 0),
+        }),
+      ])
+      : notice(t('admin.monitor.data.noBackup'), ''),
+  ];
+}
+
+function monitorPlazaExtras(check) {
+  if (!check.initialized) return [notice(t('admin.monitor.plaza.uninitialized'), '')];
+  const feedback = check.feedback || {};
+  const withdrawn = check.withdrawn || {};
+  return [
+    monitorMetricLine([
+      t('admin.monitor.plaza.feedback', {
+        issues: number(feedback.issues || 0),
+        reports: number(feedback.reports || 0),
+        appeals: number(feedback.appeals || 0),
+        total: number(feedback.total_pending || 0),
+      }),
+      t('admin.monitor.plaza.withdrawn', {
+        checked: number(withdrawn.checked || 0),
+        leaked: number(withdrawn.leaked || 0),
+        orphan: number(withdrawn.orphan_active || 0),
+      }),
+    ]),
+  ];
+}
+
+const MONITOR_EXTRAS = {
+  tasks: monitorTasksExtras,
+  ai: monitorAiExtras,
+  media: monitorMediaExtras,
+  data: monitorDataExtras,
+  plaza: monitorPlazaExtras,
+};
+
+function monitorGroupNode(key, check) {
+  const alerts = Array.isArray(check.alerts) ? check.alerts : [];
+  const extraFn = MONITOR_EXTRAS[key];
+  const extras = extraFn ? extraFn(check) : [];
+  return el('div', { class: 'mini-item' },
+    el('div', { class: 'mini-item-content' },
+      el('div', { class: 'row between' },
+        el('strong', {}, monitorGroupTitle(key)),
+        monitorStatusBadge(check.status)),
+      el('p', { class: 'help' }, check.detail || ''),
+      ...extras.filter(Boolean),
+      ...alerts.slice(0, 8).map(alert => notice(alert, check.status === 'error' ? 'error' : 'warning'))));
+}
+
+function adminMonitorCard() {
+  const content = el('div');
+  const state = { payload: null, error: null, seq: 0 };
+
+  function renderFailure() {
+    content.replaceChildren(
+      notice(t('admin.monitor.unavailable', { message: state.error }), 'warning'),
+      el('div', { class: 'row', style: 'margin-top:12px' },
+        button(t('admin.monitor.reload'), e => busy(e.currentTarget, () => load(true)),
+          'secondary small', 'repeat')));
+  }
+
+  function render() {
+    if (state.error) {
+      renderFailure();
+      return;
+    }
+    const payload = state.payload || {};
+    const checks = payload.checks || {};
+    const degraded = Array.isArray(payload.degraded) ? payload.degraded : [];
+    const summary = el('div', { class: 'settings-usage-summary' },
+      el('span', {}, t('admin.monitor.generatedAt', { time: dateText(payload.generated_at) })),
+      el('span', {}, t('admin.monitor.duration', { value: aiUsageDurationText(payload.duration_ms) })),
+      el('span', {}, t('admin.monitor.build', {
+        build: payload.build?.build_id || '—',
+        bank: payload.build?.bank_version || '—',
+      })),
+      el('span', {}, payload.cache?.cached
+        ? t('admin.monitor.cache.hit', { seconds: Number(payload.cache.age_seconds || 0).toFixed(1) })
+        : t('admin.monitor.cache.miss')),
+      degraded.length
+        ? el('span', { class: 'settings-usage-warn' },
+          t('admin.monitor.degradedGroups', {
+            names: degraded.map(monitorGroupTitle).join(t('common.listSeparator')),
+          }))
+        : null);
+    const groups = MONITOR_GROUP_KEYS.map(key => monitorGroupNode(
+      key, checks[key] || { status: 'warn', detail: '', alerts: [] }));
+    content.replaceChildren(summary, el('div', { class: 'mini-list', style: 'margin-top:6px' }, ...groups));
+  }
+
+  async function load(refresh = false) {
+    const mine = ++state.seq;
+    content.replaceChildren(loading(t('admin.monitor.loading')));
+    const res = await api(`/admin/monitor${refresh ? '?refresh=1' : ''}`)
+      .catch(error => ({ error: error.message }));
+    if (mine !== state.seq) return;
+    if (res.error) {
+      state.error = res.error;
+      state.payload = null;
+    } else {
+      state.error = null;
+      state.payload = res;
+    }
+    render();
+  }
+
+  const card = el('section', { class: 'card admin-monitor-card', style: 'margin-top:22px' },
+    el('div', { class: 'card-header' },
+      el('h2', {}, t('admin.monitor.section')),
+      el('div', { class: 'row' },
+        badge(t('admin.monitor.badge')),
+        button(t('admin.monitor.refresh'), e => busy(e.currentTarget, () => load(true)),
+          'secondary small', 'repeat'))),
+    content);
+  load();
+  return card;
+}
+
+// ---------------------------------------------------------------------------
 // 内容管理主页面：三个分区按 Tab 懒加载，切换后缓存；操作只做卡片级局部刷新。
 // ---------------------------------------------------------------------------
 export async function renderAdmin(container, version) {
@@ -971,6 +1256,7 @@ export async function renderAdmin(container, version) {
 
     panel.replaceChildren(
       readinessCard(healthRes),
+      adminMonitorCard(),
       opsCard,
       adminAiUsageCard(),
       registrationCard(registrationRes),

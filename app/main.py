@@ -25,6 +25,47 @@ health_log = logging.getLogger("zhixu.health")
 VERSION = "0.1.0"
 
 
+#: 构建指纹覆盖范围（方案 §7「分发与运维」）：源码、数据库迁移、提示词、前端 JS、
+#: 语言包、样式、编辑器构建产物与 vendored 运行时/源码。改任一关键文件都应让旧页面、
+#: 旧进程与验收留痕可识别；``STUDY_BUILD_ID`` 可显式覆盖（容器镜像写入提交号）。
+BUILD_FINGERPRINT_PATTERNS = (
+    "app/**/*.py",
+    "app/migrations/**/*.sql",
+    "app/ai/prompts/**/*.yaml",
+    "web/js/**/*.js",
+    "web/locales/*.json",
+    "web/styles*.css",
+    "web/index.html",
+    # 编辑器构建产物（web/editor）与随包分发的第三方运行时（web/vendor）。
+    "web/editor/**/*",
+    "web/vendor/**/*",
+    # 编辑器源码与 vendored 上游源码：web/editor 由它们构建，未重构建也应改变指纹。
+    "editor/src/**/*",
+    "editor/vendor/**/*",
+)
+#: 指纹扫描跳过的目录片段（缓存/依赖/版本库不参与构建指纹）。
+BUILD_FINGERPRINT_SKIP_PARTS = frozenset({"__pycache__", "node_modules", ".git"})
+
+
+def _iter_build_fingerprint_files(root: Path):
+    """按固定模式枚举构建指纹文件（去重、跳过缓存目录、返回 ``(路径, 相对路径)``）。"""
+    seen: set[str] = set()
+    for pattern in BUILD_FINGERPRINT_PATTERNS:
+        for path in root.glob(pattern):
+            if not path.is_file():
+                continue
+            if any(part in BUILD_FINGERPRINT_SKIP_PARTS for part in path.parts):
+                continue
+            try:
+                relative = path.relative_to(root).as_posix()
+            except ValueError:  # 极端情况下 glob 越界（符号链接），直接跳过
+                continue
+            if relative in seen:
+                continue
+            seen.add(relative)
+            yield path, relative
+
+
 def _compute_build_id() -> str:
     """应用构建号：内容指纹（源码 + 前端资源），同一份代码稳定、改代码即变化。
 
@@ -36,22 +77,10 @@ def _compute_build_id() -> str:
         return override
     digest = hashlib.sha256()
     root = Path(__file__).resolve().parents[1]
-    patterns = [
-        "app/**/*.py",
-        "app/ai/prompts/**/*.yaml",
-        "web/js/**/*.js",
-        "web/styles.css",
-        "web/styles-pages.css",
-        "web/index.html",
-    ]
-    files = []
-    for pattern in patterns:
-        files.extend(root.glob(pattern))
-    for path in sorted(files):
-        if "__pycache__" in path.parts:
-            continue
+    entries = list(_iter_build_fingerprint_files(root))
+    for path, relative in sorted(entries, key=lambda item: item[1]):
         try:
-            digest.update(path.relative_to(root).as_posix().encode("utf-8"))
+            digest.update(relative.encode("utf-8"))
             digest.update(path.read_bytes())
         except OSError:
             continue
@@ -622,7 +651,7 @@ def admin_eval_runs(user=Depends(auth.require_admin)):
     }
 
 
-from . import ai, practice  # noqa: E402
+from . import ai, monitor, practice  # noqa: E402
 
 
 @app.get("/api/bank-image", include_in_schema=False)
@@ -674,6 +703,8 @@ app.include_router(assistant.router)
 app.include_router(focus.router)
 # 广场（Phase 2）：公开只读、投稿、评审与发布；本轮只接后端，前端下一轮接入。
 app.include_router(plaza.router)
+# 运维监控（WS27 / 方案 §7「分发与运维」）：只读聚合，管理员或部署探针口令可读。
+app.include_router(monitor.router)
 
 app.mount("/static", StaticFiles(directory=str(WEB_DIR)), name="static")
 

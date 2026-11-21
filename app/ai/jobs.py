@@ -958,6 +958,15 @@ async def cancel_job(job_id: int, user=Depends(current_user)):
                 "WHERE id=? AND status IN ('running','cancel_requested')",
                 ("已收到取消请求，正在停止任务", now, now, job_id),
             )
+        elif status == "awaiting_outline":
+            # 等待人工确认提纲：执行进程已退出，没有正在运行的协程可取消，直接落定。
+            # 否则任务会永久停在 awaiting_outline，既无法取消也无法释放该用户的任务槽。
+            con.execute(
+                "UPDATE ai_jobs SET status='cancelled',stage='cancelled',cancelled=1,error=?,updated_at=?,"
+                "cancel_requested_at=COALESCE(cancel_requested_at,?),finished_at=? "
+                "WHERE id=? AND status='awaiting_outline'",
+                ("用户已取消等待确认的提纲任务", now, now, now, job_id),
+            )
     t = _running_by_id.get(job_id)
     if t and not t.done():
         t.cancel()
