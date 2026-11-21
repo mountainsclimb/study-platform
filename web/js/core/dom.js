@@ -1,4 +1,7 @@
 import { renderMath, sanitizeMath } from './markdown.js';
+// P8 i18n：日期/数字格式与题型/作答结果等共享语义标签跟随界面语言；
+// 页面标题、按钮等各页自有的界面文案仍由各页面用 t() 替换。
+import { t, formatNumber as intlNumber, formatDate as intlDate } from './i18n.js';
 
 export const $ = (selector, root = document) => root.querySelector(selector);
 
@@ -67,7 +70,21 @@ const ICON_PATHS = {
   history: ['M3 12a9 9 0 1 0 3-6.7L3 8', 'M3 3v5h5', 'M12 7v5l3 2'],
   tag: ['M20.59 13.41l-7.17 7.17a2 2 0 0 1-2.83 0L2 12V2h10l8.59 8.59a2 2 0 0 1 0 2.82z', 'M7 7h.01'],
   compass: ['M21 12a9 9 0 1 1-18 0 9 9 0 0 1 18 0', 'm16 8-2.6 5.4L8 16l2.6-5.4L16 8Z'],
+  atom: ['M12 12m-1.6 0a1.6 1.6 0 1 0 3.2 0a1.6 1.6 0 1 0-3.2 0', 'M2.5 12a9.5 5 0 1 0 19 0a9.5 5 0 1 0-19 0', 'M6.2 5.1a5.1 9.6 0 1 0 11.6 13.8a5.1 9.6 0 1 0-11.6-13.8'],
+  message: ['M21 11.5a8.4 8.4 0 0 1-8.5 8.3 9 9 0 0 1-3.9-.9L3 21l1.9-4.6a8.1 8.1 0 0 1-1.4-4.9A8.4 8.4 0 0 1 12 3.2a8.4 8.4 0 0 1 9 8.3Z', 'M8.5 11.5h7M8.5 15h4.5'],
+  presentation: ['M3 4h18v12H3z', 'M12 16v4M8 21l4-5 4 5'],
+  printer: ['M6 9V3h12v6', 'M6 18H4v-7h16v7h-2', 'M6 14h12v7H6z'],
+  layers: ['m12 3 9 5-9 5-9-5 9-5Z', 'm3 13 9 5 9-5', 'm3 17 9 5 9-5'],
+  timer: ['M12 8v5l3 2', 'M9 2h6', 'M21 13a9 9 0 1 1-18 0 9 9 0 0 1 18 0'],
+  flame: ['M12 22c4.4 0 7-2.9 7-6.5 0-3.1-2.2-5.6-4.2-7.9C13.4 6 12.3 4.1 12 2c-.3 2.1-1.4 4-2.8 5.6C7.2 9.9 5 12.4 5 15.5 5 19.1 7.6 22 12 22Z', 'M12 17.5c1.7 0 2.8-1.2 2.8-2.6 0-2.2-2.8-4.4-2.8-4.4s-2.8 2.2-2.8 4.4c0 1.4 1.1 2.6 2.8 2.6Z'],
   university: ['m3 9 9-6 9 6v11H3z', 'M8 20v-6h8v6', 'M12 3v4'],
+  play: ['M8 5l11 7-11 7V5Z'],
+  pause: ['M9 5v14M15 5v14'],
+  star: ['m12 3 2.9 6.3 6.9.8-5.1 4.7 1.4 6.8L12 18.2 5.9 21.6l1.4-6.8L2.2 10.1l6.9-.8L12 3Z'],
+  'star-off': ['m12 3 2.9 6.3 6.9.8-5.1 4.7 1.4 6.8L12 18.2 5.9 21.6l1.4-6.8L2.2 10.1l6.9-.8L12 3Z', 'M3 3l18 18'],
+  // P8 暗色主题切换按钮使用：浅色=太阳、暗色=月亮。
+  sun: ['M12 8a4 4 0 1 0 0 8 4 4 0 0 0 0-8Z', 'M12 2v2M12 20v2M4.93 4.93l1.41 1.41M17.66 17.66l1.41 1.41M2 12h2M20 12h2M4.93 19.07l1.41-1.41M17.66 6.34l1.41-1.41'],
+  moon: ['M21 12.8A8.5 8.5 0 1 1 11.2 3 6.8 6.8 0 0 0 21 12.8Z'],
 };
 
 export function icon(name) {
@@ -107,7 +124,7 @@ export async function busy(node, action) {
   try {
     return await action();
   } catch (error) {
-    toast(error.message || '操作未完成，请重试。', true);
+    toast(error.message || t('common.actionFailed'), true);
   } finally {
     // 提交/保存后页面可能已重建按钮：旧节点已脱离文档时不要再改它（否则会
     // 把重建后的同名按钮状态还原成旧值），只恢复仍在页面上的那个按钮。
@@ -118,7 +135,7 @@ export async function busy(node, action) {
   }
 }
 
-export function loading(text = '正在加载…') {
+export function loading(text = t('common.loading')) {
   return el('div', { class: 'loading' }, el('span', { class: 'spinner' }), text);
 }
 
@@ -185,31 +202,35 @@ export function query(values) {
 }
 
 export function dateText(value) {
-  if (!value) return '尚无记录';
-  const date = new Date(value);
-  return Number.isNaN(date.getTime())
-    ? String(value)
-    : date.toLocaleString('zh-CN', { month: '2-digit', day: '2-digit', hour: '2-digit', minute: '2-digit' });
+  if (!value) return t('common.noRecord');
+  return intlDate(value, { month: '2-digit', day: '2-digit', hour: '2-digit', minute: '2-digit' });
 }
 
 export function number(value) {
-  return Number(value || 0).toLocaleString('zh-CN');
+  return intlNumber(Number(value || 0));
 }
 
 export function sourceOf(q) {
-  return [q.year ? `${q.year} 年` : null, q.province, q.paper_name].filter(Boolean).join(' · ');
+  return [q.year ? t('common.yearLabel', { year: q.year }) : null, q.province, q.paper_name].filter(Boolean).join(' · ');
 }
 
 export function typeLabel(q, catalog = null) {
-  return q.type_label || catalog?.type_labels?.[q.type] || ({
+  const fallback = q.type_label || catalog?.type_labels?.[q.type] || ({
     single_choice: '单选题', multi_choice: '多选题', fill_blank: '填空题',
     calculation: '计算题', short_answer: '简答题', sub_short_answer: '材料子题',
     material_group: '材料题', essay: '作文', unknown: '其他',
   })[q.type] || q.type || '未分类';
+  // 有后端/题库提供的 type_label 时优先使用（数据内容不翻译）；否则按题型枚举本地化。
+  if (q.type_label || catalog?.type_labels?.[q.type]) return fallback;
+  const translated = t(`question.type.${q.type || 'unclassified'}`);
+  return translated.startsWith('question.type.') ? fallback : translated;
 }
 
 export function resultLabel(result) {
-  return ({ correct: '回答正确', incorrect: '需要再练', pending: '待核验', ungraded: '待核验' })[result] || '尚未作答';
+  if (!result) return t('question.result.unanswered');
+  const translated = t(`question.result.${result}`);
+  if (!translated.startsWith('question.result.')) return translated;
+  return ({ correct: '回答正确', incorrect: '需要再练', pending: '待核验', ungraded: '待核验' })[result] || t('question.result.unanswered');
 }
 
 export function resultBadge(result) {
@@ -226,7 +247,7 @@ export function statCard(label, value, unit, caption, name) {
 export function showImage(url, alt) {
   const dialog = el('dialog', { class: 'image-dialog' },
     el('img', { src: url, alt }),
-    el('button', { class: 'close-dialog', type: 'button', 'aria-label': '关闭图片', onClick: () => dialog.close() }, icon('close')));
+    el('button', { class: 'close-dialog', type: 'button', 'aria-label': t('common.closeImage'), onClick: () => dialog.close() }, icon('close')));
   document.body.append(dialog);
   dialog.addEventListener('close', () => dialog.remove());
   dialog.addEventListener('click', event => { if (event.target === dialog) dialog.close(); });
@@ -234,7 +255,7 @@ export function showImage(url, alt) {
 }
 
 export function bankImage(subject, image, context = {}) {
-  if (!image?.file) return el('span', { class: 'image-error' }, '[图片信息缺失]');
+  if (!image?.file) return el('span', { class: 'image-error' }, t('question.imageMissing'));
   // 契约 §6.1：素材按题库版本、当前小题与素材 ID 校验读权限；答案/解析图在作答后放行。
   const params = { subject, file: image.file };
   if (context.qid) params.qid = context.qid;
@@ -246,21 +267,21 @@ export function bankImage(subject, image, context = {}) {
   const node = el('img', {
     class: `bank-image ${isFormula ? 'formula' : ''}`,
     src: url,
-    alt: isFormula ? '题目公式' : '题目配图',
+    alt: isFormula ? t('question.sourceFormula') : t('question.sourceFigure'),
     loading: 'lazy',
     tabindex: '0',
     role: 'button',
-    'aria-label': isFormula ? '放大查看公式' : '放大查看题目配图',
-    onClick: () => showImage(url, isFormula ? '公式' : '题目配图'),
+    'aria-label': isFormula ? t('question.zoomFormula') : t('question.zoomFigure'),
+    onClick: () => showImage(url, isFormula ? t('question.formula') : t('question.figure')),
     onKeydown: event => {
       if (event.key === 'Enter' || event.key === ' ') {
         event.preventDefault();
-        showImage(url, isFormula ? '公式' : '题目配图');
+        showImage(url, isFormula ? t('question.formula') : t('question.figure'));
       }
     },
   });
   node.addEventListener('error', () => {
-    node.replaceWith(el('span', { class: 'image-error' }, isFormula ? '[公式暂时无法加载]' : '[图片暂时无法加载]'));
+    node.replaceWith(el('span', { class: 'image-error' }, isFormula ? t('question.formulaLoadFailed') : t('question.imageLoadFailed')));
   });
   return node;
 }
@@ -296,7 +317,7 @@ export function questionText(text, images = [], subject = '', keyword = '', cont
     }
     const role = match[1] === '公式' ? 'formula' : 'figure';
     const image = images.filter(i => i.role === role)[Number(match[2]) - 1];
-    node.append(image ? bankImage(subject, image, context) : el('span', { class: 'image-error' }, `${part} 暂缺`));
+    node.append(image ? bankImage(subject, image, context) : el('span', { class: 'image-error' }, t('question.partMissing', { part })));
   }
   return node;
 }
@@ -315,10 +336,10 @@ function summaryBlockText(block) {
   const kind = blockKindOf(block);
   if (kind === 'math') {
     if (typeof block.text === 'string' && block.text.trim()) return block.text.trim();
-    return '〔公式〕';
+    return t('question.formulaPlaceholder');
   }
-  if (kind === 'image') return '〔图〕';
-  if (kind === 'table') return typeof block.text === 'string' && block.text.trim() ? block.text.trim() : '〔表格〕';
+  if (kind === 'image') return t('question.figurePlaceholder');
+  if (kind === 'table') return typeof block.text === 'string' && block.text.trim() ? block.text.trim() : t('question.tablePlaceholder');
   return typeof block.text === 'string' ? block.text : '';
 }
 
@@ -342,8 +363,8 @@ export function readableSummary(question, limit = 120) {
     text = String(question || '');
   }
   text = text
-    .replace(SUMMARY_FORMULA_RE, '〔公式〕')
-    .replace(SUMMARY_FIGURE_RE, '〔图〕')
+    .replace(SUMMARY_FORMULA_RE, t('question.formulaPlaceholder'))
+    .replace(SUMMARY_FIGURE_RE, t('question.figurePlaceholder'))
     .replace(/\s+/g, ' ')
     .trim();
   if (limit > 0 && text.length > limit) text = `${text.slice(0, limit)}…`;
@@ -417,7 +438,7 @@ function textBlockNode(block, keyword) {
 
 function imageBlockNode(block, subject, context = {}) {
   const asset = blockAssetOf(block.asset);
-  if (!asset) return el('span', { class: 'block block-image' }, el('span', { class: 'image-error' }, '[图片信息缺失]'));
+  if (!asset) return el('span', { class: 'block block-image' }, el('span', { class: 'image-error' }, t('question.imageMissing')));
   return el('span', { class: 'block block-image' }, bankImage(subject, asset, context));
 }
 
@@ -451,7 +472,7 @@ function mathBlockNode(block, subject, keyword, context = {}) {
   if (readable.trim()) {
     return el('span', { class: 'block block-math block-math-text' }, markedText(readable, keyword));
   }
-  return el('span', { class: 'block block-math' }, el('span', { class: 'image-error' }, '[公式暂缺]'));
+  return el('span', { class: 'block block-math' }, el('span', { class: 'image-error' }, t('question.formulaMissing')));
 }
 
 function tableCellText(cell) {
@@ -532,6 +553,16 @@ export function downloadText(filename, content, mime = 'text/markdown;charset=ut
   setTimeout(() => URL.revokeObjectURL(url), 1000);
 }
 
+/** 下载二进制内容（如 .apkg 牌组）：Blob 需要更长的回收延迟，避免下载被提前取消。 */
+export function downloadBlob(blob, filename) {
+  const url = URL.createObjectURL(blob);
+  const link = el('a', { href: url, download: filename.replace(/[\\/:*?"<>|]/g, '_') });
+  document.body.append(link);
+  link.click();
+  link.remove();
+  setTimeout(() => URL.revokeObjectURL(url), 4000);
+}
+
 export function wireTabKeyboard(tabBar) {
   tabBar.addEventListener('keydown', event => {
     if (!['ArrowLeft', 'ArrowRight', 'Home', 'End'].includes(event.key)) return;
@@ -551,12 +582,12 @@ export function wireTabKeyboard(tabBar) {
 
 export function copyText(text) {
   if (navigator.clipboard?.writeText) {
-    return navigator.clipboard.writeText(text).then(() => toast('已复制到剪贴板。'));
+    return navigator.clipboard.writeText(text).then(() => toast(t('common.copied')));
   }
   const ta = el('textarea', { value: text, style: 'position:fixed;opacity:0' });
   document.body.append(ta);
   ta.select();
   document.execCommand('copy');
   ta.remove();
-  toast('已复制到剪贴板。');
+  toast(t('common.copied'));
 }

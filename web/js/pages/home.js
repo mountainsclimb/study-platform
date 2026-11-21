@@ -4,6 +4,29 @@ import {
   el, icon, button, heading, number, dateText, resultLabel, resultBadge, readableSummary,
 } from '../core/dom.js';
 import { go, current } from '../core/router.js';
+import { taskNames, statusNames } from '../core/jobs.js';
+import { t } from '../core/i18n.js';
+
+// 平台精选（WS19 `/api/questions?source=`）能力探测 + 可练数量。
+// 用合法 official 请求探测：旧后端忽略未知参数、响应体没有 official_total → 未就绪，
+// 首页不显示平台精选计数（不伪造数字）。避免用非法 source 触发 4xx 控制台错误。
+let featuredPracticePromise = null;
+
+function detectFeaturedPractice() {
+  if (!featuredPracticePromise) {
+    featuredPracticePromise = (async () => {
+      try {
+        const data = await api('/questions?page=1&page_size=1&source=official');
+        if (!data || typeof data !== 'object' || !('official_total' in data)) return null;
+        const total = Number(data.official_total);
+        return Number.isFinite(total) ? total : null;
+      } catch {
+        return null;
+      }
+    })();
+  }
+  return featuredPracticePromise;
+}
 
 function inlineStat(value, label) {
   return el('div', { class: 'pg-inline-stat' },
@@ -11,47 +34,232 @@ function inlineStat(value, label) {
     el('span', {}, label));
 }
 
-// 按实际活动决定首屏主操作：未完成的待核验作答 → 到期错题 → 新账号 → 常规继续。
-function resolveNextStep(stats, dueItems) {
+/* 首屏三动作主卡（方案 §1）：拍题入库 / 我的题库 / 错题复习。
+ * 计数全部来自 /api/insight/home 的真实统计（题库只读库 + 应用库），接口失败时
+ * 显示「暂不可用」并保留入口，不在前端估算或写死数字。 */
+function actionCard({ title, text, meta, iconName, onOpen, countText, actionLabel }) {
+  return el('section', { class: 'pg-focus home-action', 'data-action': iconName },
+    el('p', { class: 'pg-kicker' }, t('home.action.kicker')),
+    el('h2', {}, title),
+    countText ? el('p', { class: 'home-action-count', 'data-no-i18n': '' }, countText) : null,
+    el('p', {}, text),
+    el('div', { class: 'pg-focus-actions' },
+      button(actionLabel || t('home.action.open'), onOpen, '', iconName)),
+    el('p', { class: 'pg-focus-meta' }, meta || ''));
+}
+
+function actionCards(personal, bank) {
+  const library = personal?.library || {};
+  const due = personal ? Number(personal.due_reviews || 0) : null;
+  const pendingReview = personal ? Number(library.pending_review || 0) : null;
+  const bankCountText = personal
+    ? t('home.action.mybank.count', { count: number(library.questions || 0) })
+    : null;
+  const dueCountText = personal
+    ? (due > 0 ? t('home.action.review.count', { count: number(due) }) : t('home.action.review.none'))
+    : null;
+  return el('section', { class: 'pg-focus-grid', 'aria-label': t('home.action.aria') },
+    actionCard({
+      title: t('home.action.upload.title'),
+      text: t('home.action.upload.text'),
+      meta: t('home.action.upload.meta'),
+      iconName: 'scan',
+      actionLabel: t('home.action.upload.label'),
+      onOpen: () => go('upload'),
+    }),
+    actionCard({
+      title: t('home.action.mybank.title'),
+      text: t('home.action.mybank.text'),
+      meta: personal
+        ? (pendingReview > 0
+          ? t('home.action.mybank.pending', { count: number(pendingReview) })
+          : t('home.action.mybank.nonePending'))
+        : t('common.unavailable'),
+      iconName: 'tag',
+      countText: bankCountText,
+      actionLabel: t('home.action.mybank.label'),
+      onOpen: () => go('mybank'),
+    }),
+    actionCard({
+      title: t('home.action.review.title'),
+      text: t('home.action.review.text'),
+      meta: personal && due > 0 ? t('home.action.review.dueMeta', { count: number(due) }) : t('home.action.review.meta'),
+      iconName: 'repeat',
+      countText: dueCountText,
+      actionLabel: t('home.action.review.label'),
+      onOpen: () => go('wrongbook'),
+    }));
+}
+
+/* 学习统计行：待复习 / 今日练习 / 首次正确率 / 当前最弱知识点（带真实样本数）。 */
+function learningStats(personal) {
+  if (!personal) {
+    return el('div', { class: 'pg-inline-stats', 'aria-label': t('home.stat.aria') },
+      inlineStat('—', t('home.stats.unavailable')));
+  }
+  const first = personal.first_attempt || {};
+  const weak = (personal.weak_knowledge || [])[0];
+  const today = personal.today || {};
+  return el('div', { class: 'pg-inline-stats', 'aria-label': t('home.stat.aria') },
+    inlineStat(
+      t('home.stats.dueValue', { count: number(personal.due_reviews || 0) }),
+      t('home.stats.dueLabel')),
+    inlineStat(
+      t('home.stats.todayValue', { count: number(today.total || 0) }),
+      t('home.stats.todayLabel', { practice: number(today.practice || 0), paper: number(today.paper || 0), classroom: number(today.classroom || 0) })),
+    inlineStat(
+      first.samples ? `${Math.round(Number(first.accuracy) || 0)}%` : '—',
+      first.samples
+        ? t('home.stats.firstAccuracyLabel', { samples: number(first.samples) })
+        : t('home.stats.firstAccuracyNone')),
+    inlineStat(
+      weak ? weak.title : t('home.stats.weakNone'),
+      weak
+        ? t('home.stats.weakLabel', { count: number(weak.graded_attempts || 0), pct: Math.round(Number(weak.accuracy) || 0) })
+        : t('home.stats.weakLabelEmpty')));
+}
+
+/* 题库全局口径：可练 / 可自动判分 / 待核验，来自只读题库与练习同一套门禁；
+ * 平台精选可练数量：/api/insight/home 已下发 official 口径时优先使用，否则用
+ * `/api/questions?source=official` 能力探测（未就绪时 featurePractice 为 null，不显示）。 */
+function bankCaliberCard(bank, featuredPractice = null) {
+  const available = Boolean(bank?.available);
+  const featuredValue = bank?.official_practice_pool ?? bank?.featured_practice_pool ?? featuredPractice;
+  const featuredKnown = featuredValue !== null && featuredValue !== undefined
+    && Number.isFinite(Number(featuredValue));
+  const card = el('section', { class: 'card home-bank-caliber', 'aria-labelledby': 'home-bank-title' },
+    el('div', { class: 'pg-card-head' },
+      el('div', {},
+        el('h2', { id: 'home-bank-title' }, t('home.bank.title')),
+        el('p', { class: 'pg-card-sub' },
+          available
+            ? t('home.bank.sub', { version: bank.bank_version || t('home.bank.versionUnknown') })
+            : (bank?.note || t('home.bank.unavailable')))),
+      el('div', { class: 'row' },
+        featuredKnown
+          ? button(t('home.featured.goPractice'), () => go('practice', null, { source: 'official' }), 'ghost small', 'layers')
+          : null,
+        button(t('home.bank.goPractice'), () => go('practice'), 'ghost small', 'book'))));
+  if (!available) return card;
+  const gates = bank.gates || {};
+  card.append(
+    el('div', { class: 'pg-inline-stats', 'aria-label': t('home.bank.aria') },
+      inlineStat(t('home.bank.totalValue', { count: number(bank.total_questions || 0) }), t('home.bank.totalLabel')),
+      inlineStat(t('home.bank.practiceValue', { count: number(bank.practice_pool || 0) }), t('home.bank.practiceLabel')),
+      inlineStat(t('home.bank.autoValue', { count: number(bank.auto_gradable || 0) }), t('home.bank.autoLabel')),
+      inlineStat(t('home.bank.pendingValue', { count: number(bank.pending_verification || 0) }), t('home.bank.pendingLabel')),
+      featuredKnown
+        ? inlineStat(t('home.featured.value', { count: number(featuredValue) }), t('home.featured.practiceLabel'))
+        : null),
+    el('p', { class: 'pg-card-sub' },
+      t('home.bank.caliberLine', {
+        excluded: number(bank.excluded_by_gates || 0),
+        figures: number(gates.missing_figure || 0),
+        missingAnswer: number(gates.missing_answer || 0),
+        isolated: number(gates.isolated || 0),
+      })));
+  return card;
+}
+
+function weakKnowledgeCard(personal) {
+  const weak = personal?.weak_knowledge || [];
+  const card = el('section', { class: 'pg-card', 'aria-labelledby': 'home-weak-title' },
+    el('div', { class: 'pg-card-head' },
+      el('div', {},
+        el('h2', { id: 'home-weak-title' }, t('home.weak.title')),
+        el('p', { class: 'pg-card-sub' }, t('home.weak.sub'))),
+      button(t('home.weak.all'), () => go('insight'), 'ghost small')));
+  if (!personal) {
+    card.append(el('div', { class: 'pg-empty' }, el('p', {}, t('common.unavailable'))));
+    return card;
+  }
+  if (!weak.length) {
+    card.append(el('div', { class: 'pg-empty' }, el('p', {}, personal.weak_note || t('home.weak.empty'))));
+    return card;
+  }
+  card.append(el('div', { class: 'pg-due-list' }, ...weak.map(item => el('button', {
+    type: 'button',
+    class: 'pg-due-item',
+    onClick: () => go('practice', null, { kp_id: String(item.kp_id) }),
+  },
+  el('span', { class: 'pg-due-subject', 'data-no-i18n': '' },
+    [item.subject, t('home.weak.sample', { count: number(item.graded_attempts || 0) })].filter(Boolean).join(' · ')),
+  el('span', { class: 'pg-due-stem', 'data-no-i18n': '' },
+    `${item.title} · ${Math.round(Number(item.accuracy) || 0)}%`),
+  icon('chevron')))));
+  if (personal.weak_note) {
+    card.append(el('p', { class: 'pg-card-sub' }, personal.weak_note));
+  }
+  return card;
+}
+
+
+// 按实际活动决定首屏主操作：未完成的待核验作答 → 到期错题 → 新账号 →
+// 继续上次练习（题库题/个人题，直达原题）→ 继续上次整卷 → 常规继续。
+function resolveNextStep(stats, dueItems, personal) {
   const attempts = stats.recent_attempts || [];
-  const pending = attempts.find(item => item.result === 'pending' || item.result === 'ungraded');
+  const last = personal?.continue?.last_attempt || attempts[0] || null;
+  const pending = (last && (last.result === 'pending' || last.result === 'ungraded') ? last : null)
+    || attempts.find(item => item.result === 'pending' || item.result === 'ungraded');
   if (pending) {
     return {
-      title: '继续上次的练习',
-      text: `最近一次作答（${dateText(pending.created_at)}）结果为「${resultLabel(pending.result)}」，回到原题核对步骤与答案。`,
-      label: '继续练习',
+      title: t('home.next.pending.title'),
+      text: t('home.next.pending.text', { date: dateText(pending.created_at), result: resultLabel(pending.result) }),
+      label: t('home.next.continue'),
       icon: 'book',
       run: () => go('practice', pending.qid),
-      meta: `待核验作答：${dateText(pending.created_at)} · 作答记录会保留`,
+      meta: t('home.next.pending.meta', { date: dateText(pending.created_at) }),
     };
   }
   if (!Number(stats.practiced) && !Number(stats.attempts)) {
     return {
-      title: '从选一个学科开始',
-      text: '新账号还没有作答记录。先挑学科和年份，从一道真题开始建立自己的学习记录。',
-      label: '去选学科',
+      title: t('home.next.new.title'),
+      text: t('home.next.new.text'),
+      label: t('home.next.new.label'),
       icon: 'book',
       run: () => go('practice'),
-      meta: '题库共 ' + number(stats.total_questions) + ' 道真题，支持按学科、年份和题型筛选。',
+      meta: t('home.next.new.meta', { count: number(stats.total_questions) }),
     };
   }
-  if (Number(stats.due_count) > 0 || dueItems.length) {
+  if (Number(personal?.due_reviews ?? stats.due_count) > 0 || dueItems.length) {
     return {
-      title: '先把到期的错题过一遍',
-      text: `错题本里有 ${number(stats.due_count)} 道到期。先回顾错因，再回到题库继续新题。`,
-      label: '开始复习',
+      title: t('home.next.due.title'),
+      text: t('home.next.due.text', { count: number(personal?.due_reviews ?? stats.due_count) }),
+      label: t('home.next.due.label'),
       icon: 'repeat',
       run: () => go('wrongbook'),
-      meta: '连续复习会按掌握度自动调整下次出现时间。',
+      meta: t('home.next.due.meta'),
+    };
+  }
+  // 「继续上次练习」直达：优先比最近一次作答与最近一次整卷练习哪个更新。
+  const lastPaper = personal?.continue?.last_paper || null;
+  if (lastPaper && timeMs(lastPaper.finished_at) > timeMs(last?.created_at)) {
+    return {
+      title: t('home.next.paper.title', { title: trimText(lastPaper.title || t('home.ai.unnamedPaper'), 18) }),
+      text: t('home.next.paper.text', { score: number(lastPaper.score), max: number(lastPaper.max_score) }),
+      label: t('home.next.paper.label'),
+      icon: 'printer',
+      run: () => go('paperlab', null, { tab: 'papers', paper: lastPaper.paper_id }),
+      meta: t('home.next.paper.meta', { time: dateText(lastPaper.finished_at) }),
+    };
+  }
+  if (last?.qid) {
+    return {
+      title: t('home.next.last.title'),
+      text: t('home.next.last.text', { result: resultLabel(last.result), date: dateText(last.created_at) }),
+      label: t('home.next.last.label'),
+      icon: 'book',
+      run: () => go('practice', last.qid),
+      meta: t('home.next.last.meta'),
     };
   }
   return {
-    title: '继续练习，保持手感',
-    text: `已经练过 ${number(stats.practiced)} 道题。接着上次的节奏，从题库里再挑一题。`,
-    label: '继续练习',
+    title: t('home.next.regular.title'),
+    text: t('home.next.regular.text', { count: number(stats.practiced) }),
+    label: t('home.next.continue'),
     icon: 'book',
     run: () => go('practice'),
-    meta: '每道题都可以先独立作答，再对照答案与解析。',
+    meta: t('home.next.regular.meta'),
   };
 }
 
@@ -62,8 +270,8 @@ function dueQuestionButton(item) {
     class: 'pg-due-item',
     onClick: () => go('practice', q.qid || item.qid),
   },
-    el('span', { class: 'pg-due-subject' }, [q.subject, q.number_label ? `原卷第${q.number_label}题` : null].filter(Boolean).join(' · ') || '到期错题'),
-    el('span', { class: 'pg-due-stem' }, readableSummary(q, 60) || '打开题目重新练习'),
+    el('span', { class: 'pg-due-subject' }, [q.subject, q.number_label ? t('question.originalNumber', { label: q.number_label }) : null].filter(Boolean).join(' · ') || t('home.dueItemFallback')),
+    el('span', { class: 'pg-due-stem' }, readableSummary(q, 60) || t('home.openQuestion')),
     icon('chevron'));
 }
 
@@ -73,10 +281,10 @@ function recentAttemptButton(attempt) {
     type: 'button',
     class: 'pg-recent-item',
     onClick: () => go('practice', attempt.qid),
-    'aria-label': `打开这道题：${resultLabel(attempt.result)}`,
+    'aria-label': t('home.openAttemptAria', { result: resultLabel(attempt.result) }),
   },
     el('span', { class: 'pg-recent-main' },
-      el('strong', {}, answer ? `作答 ${answer.slice(0, 24)}` : '图片作答'),
+      el('strong', {}, answer ? t('home.answeredText', { text: answer.slice(0, 24) }) : t('home.imageAnswer')),
       el('small', {}, `${dateText(attempt.created_at)} · ${resultLabel(attempt.result)}`)),
     resultBadge(attempt.result));
 }
@@ -89,7 +297,7 @@ function noteLink(item) {
   },
     el('span', { class: 'pg-note-link-main' },
       el('strong', {}, item.title),
-      el('small', {}, `${item.origin === 'official' ? '官方知识清单' : '私有笔记'} · ${dateText(item.updated_at || item.created_at)}`)),
+      el('small', {}, `${item.origin === 'official' ? t('home.noteOfficial') : t('home.notePrivate')} · ${dateText(item.updated_at || item.created_at)}`)),
     icon('chevron'));
 }
 
@@ -100,19 +308,491 @@ function shortcutCard(title, text, name, run) {
     el('small', {}, text));
 }
 
+/* =========================================================================
+ * AI 工作台：把整合进来的课堂/试卷工坊/我的题库/错题巩固卷/助手/任务中心
+ * 汇总成 6 个真实计数入口 + 最近动态。数据全部来自各模块真实只读 API，
+ * 单个接口失败只降级该卡片（显示「暂不可用」并保留入口），不伪造计数。
+ * ========================================================================= */
+
+// 枚举标签：渲染时按当前语言取 t()（模块加载时读会固定成首屏语言）。
+function enumLabel(prefix, value) {
+  const raw = String(value || '');
+  if (!raw) return '';
+  const key = `${prefix}.${raw}`;
+  const translated = t(key);
+  return translated === key ? raw : translated;
+}
+const paperKindLabel = kind => enumLabel('home.paperKind', kind);
+const importStatusLabel = status => enumLabel('home.importStatus', status);
+const conversationStatusLabel = status => enumLabel('home.conversationStatus', status);
+const RUNNING_JOB_STATUSES = new Set(['queued', 'running', 'cancel_requested']);
+
+function trimText(value, limit) {
+  const text = String(value ?? '').replace(/\s+/g, ' ').trim();
+  if (!limit || text.length <= limit) return text;
+  return `${text.slice(0, limit)}…`;
+}
+
+function timeMs(value) {
+  const parsed = Date.parse(String(value || ''));
+  return Number.isFinite(parsed) ? parsed : 0;
+}
+
+function settledEntry(result) {
+  return result.status === 'fulfilled'
+    ? { ok: true, value: result.value }
+    : { ok: false, error: result.reason };
+}
+
+function listItems(entry) {
+  if (!entry.ok) return [];
+  const items = entry.value?.items;
+  return Array.isArray(items) ? items : [];
+}
+
+function listTotal(entry) {
+  if (!entry.ok) return null;
+  const total = entry.value?.total;
+  if (Number.isFinite(Number(total))) return Number(total);
+  return listItems(entry).length;
+}
+
+function degradedCard(reason) {
+  return {
+    degraded: true,
+    countText: t('common.unavailable'),
+    meta: reason || t('home.ai.degradedReason'),
+  };
+}
+
+function runningJobCount(jobsEntry) {
+  if (!jobsEntry.ok) return null;
+  return listItems(jobsEntry).filter(job => RUNNING_JOB_STATUSES.has(String(job.status || ''))).length;
+}
+
+const AI_CARD_SPECS = [
+  {
+    key: 'classroom',
+    get title() { return t('home.ai.classroom.title'); },
+    icon: 'presentation',
+    get desc() { return t('home.ai.classroom.desc'); },
+    build({ sources }) {
+      const entry = sources.classroom;
+      if (!entry.ok) return degradedCard(t('home.ai.classroom.degraded'));
+      const latest = listItems(entry)[0];
+      const total = listTotal(entry) || 0;
+      return {
+        countText: t('home.ai.classroom.count', { count: number(total) }),
+        meta: latest
+          ? t('home.ai.latest', { name: trimText(latest.title || latest.topic || t('home.ai.unnamedCourse'), 16), time: dateText(latest.updated_at) })
+          : t('home.ai.classroom.empty'),
+      };
+    },
+    open() { go('classroom'); },
+  },
+  {
+    key: 'paperlab',
+    get title() { return t('home.ai.paperlab.title'); },
+    icon: 'printer',
+    get desc() { return t('home.ai.paperlab.desc'); },
+    build({ sources }) {
+      const papers = sources.papers;
+      const imports = sources.imports;
+      if (!papers.ok && !imports.ok) return degradedCard(t('home.ai.paperlab.degraded'));
+      const parts = [];
+      const missing = [];
+      const paperTotal = listTotal(papers);
+      const importTotal = listTotal(imports);
+      if (paperTotal !== null) parts.push(t('home.ai.papers.count', { count: number(paperTotal) }));
+      else missing.push(t('home.ai.field.papers'));
+      if (importTotal !== null) parts.push(t('home.ai.imports.count', { count: number(importTotal) }));
+      else missing.push(t('home.ai.field.imports'));
+      // 部分接口失败时仍展示可用的真实计数，但明确标注哪一部分「暂不可用」。
+      const countText = parts.length
+        ? (missing.length ? t('home.ai.partialUnavailable', { parts: parts.join(' · '), missing: missing.join('/') }) : parts.join(' · '))
+        : t('common.unavailable');
+      const latestImport = listItems(imports)[0];
+      const latestPaper = listItems(papers)[0];
+      const meta = latestImport
+        ? t('home.ai.latestImport', { name: trimText(latestImport.title || t('home.ai.unnamedImport'), 14), time: dateText(latestImport.updated_at) })
+        : latestPaper
+          ? t('home.ai.latestPaper', { name: trimText(latestPaper.title || t('home.ai.unnamedPaper'), 14), time: dateText(latestPaper.updated_at) })
+          : t('home.ai.paperlab.empty');
+      return {
+        countText,
+        meta,
+        degraded: !papers.ok || !imports.ok,
+      };
+    },
+    open() { go('paperlab'); },
+  },
+  {
+    key: 'mybank',
+    get title() { return t('home.ai.mybank.title'); },
+    icon: 'tag',
+    get desc() { return t('home.ai.mybank.desc'); },
+    build({ sources }) {
+      const total = sources.bankTotal;
+      const pending = sources.bankPending;
+      if (!total.ok) return degradedCard(t('home.ai.mybank.degraded'));
+      const totalCount = listTotal(total) || 0;
+      const pendingText = pending.ok
+        ? t('home.ai.mybank.pending', { count: number(listTotal(pending) || 0) })
+        : t('home.ai.mybank.pendingUnavailable');
+      return {
+        countText: t('common.countQuestions', { count: number(totalCount) }),
+        meta: t('home.ai.mybank.meta', { pending: pendingText }),
+        degraded: !pending.ok,
+      };
+    },
+    open() { go('mybank'); },
+  },
+  {
+    key: 'revision',
+    get title() { return t('home.ai.revision.title'); },
+    icon: 'repeat',
+    get desc() { return t('home.ai.revision.desc'); },
+    build({ stats }) {
+      const wrongCount = Number(stats?.wrong_count || 0);
+      const dueCount = Number(stats?.due_count || 0);
+      return {
+        countText: t('home.ai.revision.count', { count: number(wrongCount) }),
+        meta: dueCount ? t('home.ai.revision.due', { count: number(dueCount) }) : t('home.ai.revision.emptyMeta'),
+      };
+    },
+    open() { go('paperlab', null, { tab: 'revision' }); },
+  },
+  {
+    key: 'assistant',
+    get title() { return t('home.ai.assistant.title'); },
+    icon: 'message',
+    get desc() { return t('home.ai.assistant.desc'); },
+    build({ sources }) {
+      const entry = sources.assistant;
+      if (!entry.ok) return degradedCard(t('home.ai.assistant.degraded'));
+      const latest = listItems(entry)[0];
+      const total = listTotal(entry) || 0;
+      return {
+        countText: t('home.ai.assistant.count', { count: number(total) }),
+        meta: latest
+          ? t('home.ai.latest', { name: trimText(latest.title || t('home.ai.assistant.newConversation'), 16), time: dateText(latest.updated_at) })
+          : t('home.ai.assistant.empty'),
+      };
+    },
+    open({ sources }) {
+      const latest = listItems(sources.assistant)[0];
+      if (latest?.id) state.assistantConversationId = latest.id;
+      go('assistant');
+    },
+  },
+  {
+    key: 'tasks',
+    get title() { return t('home.ai.tasks.title'); },
+    icon: 'history',
+    get desc() { return t('home.ai.tasks.desc'); },
+    build({ sources }) {
+      const jobs = sources.jobs;
+      if (!jobs.ok) return degradedCard(t('home.ai.tasks.degraded'));
+      const items = listItems(jobs);
+      const running = items.filter(job => RUNNING_JOB_STATUSES.has(String(job.status || ''))).length;
+      const latest = items[0];
+      return {
+        countText: running ? t('home.ai.tasks.runningCount', { count: number(running) }) : t('home.ai.tasks.totalCount', { count: number(items.length) }),
+        meta: latest
+          ? t('home.ai.tasks.latest', { task: taskNames[latest.task] || latest.task || t('home.ai.tasks.aiTask'), status: statusNames[latest.status] || latest.status, time: dateText(latest.updated_at || latest.created_at) })
+          : t('home.ai.tasks.empty'),
+        active: running > 0,
+      };
+    },
+    open() { go('tasks'); },
+  },
+];
+
+function aiCardNode(spec, info, sources) {
+  const countText = info.countText || '—';
+  const node = el('button', {
+    type: 'button',
+    class: `home-ai-card${info.degraded ? ' is-degraded' : ''}${info.active ? ' is-active' : ''}`,
+    'data-card': spec.key,
+    'aria-label': t('home.ai.cardAria', { title: spec.title, count: countText, desc: spec.desc }),
+    onClick: () => spec.open({ sources }),
+  },
+    el('span', { class: 'home-ai-card-head' },
+      el('span', { class: 'home-ai-icon', 'aria-hidden': 'true' }, icon(spec.icon)),
+      el('span', { class: 'home-ai-title' }, spec.title),
+      el('span', { class: 'home-ai-arrow', 'aria-hidden': 'true' }, icon('chevron'))),
+    el('span', { class: 'home-ai-count', 'data-count': countText }, countText),
+    el('span', { class: 'home-ai-desc' }, spec.desc),
+    el('span', { class: 'home-ai-meta' }, info.meta || ''));
+  return node;
+}
+
+function collectActivities(sources) {
+  const items = [];
+  if (sources.classroom.ok) {
+    for (const course of listItems(sources.classroom).slice(0, 4)) {
+      items.push({
+        type: 'course',
+        icon: 'presentation',
+        title: course.title || course.topic || t('home.activity.course'),
+        desc: [t('nav.classroom'), course.subject, course.scene_count ? t('home.activity.scenes', { count: course.scene_count }) : null]
+          .filter(Boolean).join(' · '),
+        time: course.updated_at || course.created_at,
+        run: () => go('classroom', null, { course: course.id }),
+      });
+    }
+  }
+  if (sources.papers.ok) {
+    for (const paper of listItems(sources.papers).slice(0, 3)) {
+      items.push({
+        type: 'paper',
+        icon: 'printer',
+        title: paper.title || t('home.ai.unnamedPaper'),
+        desc: [t('nav.paperlab'), paperKindLabel(paper.kind), paper.item_count ? t('home.activity.items', { count: paper.item_count }) : null]
+          .filter(Boolean).join(' · '),
+        time: paper.updated_at || paper.created_at,
+        run: () => go('paperlab', null, { tab: 'papers', paper: paper.id }),
+      });
+    }
+  }
+  if (sources.imports.ok) {
+    for (const importRow of listItems(sources.imports).slice(0, 3)) {
+      items.push({
+        type: 'import',
+        icon: 'upload',
+        title: importRow.title || t('home.activity.import'),
+        desc: [t('home.activity.importLabel'), importStatusLabel(importRow.status)]
+          .filter(Boolean).join(' · '),
+        time: importRow.updated_at || importRow.created_at,
+        run: () => go('paperlab', null, { import: importRow.id }),
+      });
+    }
+  }
+  if (sources.jobs.ok) {
+    for (const job of listItems(sources.jobs).slice(0, 4)) {
+      const label = taskNames[job.task] || job.task || t('home.ai.tasks.aiTask');
+      const status = statusNames[job.status] || job.status || '';
+      items.push({
+        type: 'job',
+        icon: 'history',
+        title: label,
+        desc: [t('home.activity.jobLabel'), status, job.request?.model].filter(Boolean).join(' · '),
+        time: job.updated_at || job.created_at,
+        run: () => {
+          state.tasksTaskFilter = job.task || '';
+          go('tasks', null, job.task ? { task: job.task } : null);
+        },
+      });
+    }
+  }
+  if (sources.assistant.ok) {
+    for (const conversation of listItems(sources.assistant).slice(0, 3)) {
+      items.push({
+        type: 'assistant',
+        icon: 'message',
+        title: conversation.title || t('home.activity.assistantConv'),
+        desc: [t('nav.assistant'), conversationStatusLabel(conversation.status),
+          conversation.message_count ? t('home.activity.messages', { count: conversation.message_count }) : null]
+          .filter(Boolean).join(' · '),
+        time: conversation.updated_at,
+        run: () => {
+          state.assistantConversationId = conversation.id;
+          go('assistant');
+        },
+      });
+    }
+  }
+  if (sources.docs.ok) {
+    for (const doc of listItems(sources.docs).slice(0, 2)) {
+      items.push({
+        type: 'document',
+        icon: 'file',
+        title: doc.title || t('home.activity.doc'),
+        desc: [t('home.activity.library'), doc.pages ? t('common.countPages', { count: doc.pages }) : null].filter(Boolean).join(' · '),
+        time: doc.created_at,
+        run: () => go('notes'),
+      });
+    }
+  }
+  return items
+    .filter(item => item.title)
+    .sort((a, b) => timeMs(b.time) - timeMs(a.time))
+    .slice(0, 6);
+}
+
+function activityNode(item) {
+  return el('button', {
+    type: 'button',
+    class: `home-activity-item home-activity-${item.type}`,
+    'aria-label': t('home.activity.aria', { title: item.title }),
+    onClick: item.run,
+  },
+    el('span', { class: 'home-activity-icon', 'aria-hidden': 'true' }, icon(item.icon)),
+    el('span', { class: 'home-activity-main' },
+      el('strong', {}, trimText(item.title, 40)),
+      el('small', {}, item.desc || '')),
+    el('span', { class: 'home-activity-time' }, item.time ? dateText(item.time) : ''));
+}
+
+function renderSummary(summaryHost, sources) {
+  const chips = [];
+  const running = runningJobCount(sources.jobs);
+  if (running !== null) {
+    chips.push({
+      text: running > 0 ? t('home.summary.running', { count: number(running) }) : t('home.summary.noneRunning'),
+      tone: running > 0 ? 'amber' : '',
+    });
+  }
+  if (sources.insight.ok) {
+    const aiJobs = sources.insight.value?.summary?.ai_jobs;
+    chips.push({ text: t('home.summary.jobs90', { count: number(aiJobs || 0) }), tone: '' });
+  }
+  if (sources.docs.ok) {
+    chips.push({ text: t('home.summary.docs', { count: number(listItems(sources.docs).length) }), tone: '' });
+  }
+  if (sources.assistant.ok) {
+    chips.push({ text: t('home.summary.assistant', { count: number(listTotal(sources.assistant) || 0) }), tone: '' });
+  }
+  summaryHost.replaceChildren();
+  for (const chip of chips) {
+    summaryHost.append(el('span', { class: `home-ai-chip${chip.tone ? ` ${chip.tone}` : ''}` }, chip.text));
+  }
+}
+
+function renderStatus(statusHost, sources, retry) {
+  const failures = [];
+  const labels = {
+    classroom: t('home.status.classroom'), papers: t('home.status.papers'), imports: t('home.status.imports'), bankTotal: t('home.status.bankTotal'),
+    bankPending: t('home.status.bankPending'), assistant: t('home.status.assistant'), jobs: t('home.status.jobs'), insight: t('home.status.insight'), docs: t('home.status.docs'),
+  };
+  for (const [key, entry] of Object.entries(sources)) {
+    if (entry && entry.ok === false) failures.push(labels[key] || key);
+  }
+  statusHost.replaceChildren();
+  if (failures.length) {
+    statusHost.append(
+      el('span', { class: 'home-ai-status-text warning' },
+        t('home.status.failed', { items: failures.join(t('common.listSeparator')) })),
+      button(t('home.status.retry'), retry, 'secondary small', 'repeat'));
+    return;
+  }
+  statusHost.append(
+    el('span', { class: 'home-ai-status-text' },
+      t('home.status.updated', { time: dateText(new Date().toISOString()) })));
+}
+
+function skeletonNode(className, lines) {
+  const node = el('div', { class: className });
+  for (let index = 0; index < lines; index += 1) node.append(el('span', { class: 'home-skeleton-line' }));
+  return node;
+}
+
+function createWorkbench({ version, stats }) {
+  const grid = el('div', { class: 'home-ai-grid', 'aria-busy': 'true' });
+  const activityHost = el('div', { class: 'home-activity-list' });
+  const summaryHost = el('div', { class: 'home-ai-summary' });
+  const statusHost = el('div', { class: 'home-ai-status' });
+  const retryBtn = { node: null };
+  const titleEl = el('h2', { id: 'home-ai-title' }, t('home.ai.title'));
+  const subEl = el('p', { class: 'pg-card-sub' }, t('home.ai.sub'));
+  const head = el('div', { class: 'pg-card-head home-ai-head' },
+    el('div', {}, titleEl, subEl),
+    summaryHost);
+  const body = el('div', { class: 'home-ai-body' },
+    el('div', { class: 'home-ai-main' },
+      el('h3', { class: 'home-ai-subtitle' }, t('home.ai.quickEntries')),
+      grid),
+    el('div', { class: 'home-activity' },
+      el('h3', { class: 'home-ai-subtitle' }, t('home.ai.recent')),
+      activityHost));
+  const section = el('section', { class: 'card home-ai', 'aria-labelledby': 'home-ai-title' },
+    head, body, statusHost);
+
+  let loading = false;
+
+  function showSkeleton() {
+    grid.setAttribute('aria-busy', 'true');
+    grid.replaceChildren(...AI_CARD_SPECS.map(() => skeletonNode('home-ai-card is-loading', 4)));
+    activityHost.replaceChildren(...[0, 1, 2, 3].map(() => skeletonNode('home-activity-item is-loading', 2)));
+    summaryHost.replaceChildren(el('span', { class: 'home-ai-chip' }, t('common.loadingData')));
+    statusHost.replaceChildren(el('span', { class: 'home-ai-status-text' }, t('home.loadingParallel')));
+  }
+
+  async function load() {
+    if (loading) return;
+    loading = true;
+    showSkeleton();
+    const results = await Promise.allSettled([
+      api('/classroom/courses?page_size=8'),
+      api('/paperlab/papers?page_size=8'),
+      api('/paperlab/questions?page_size=1'),
+      api('/paperlab/questions?verify_status=pending&page_size=1'),
+      api('/paperlab/imports?page_size=8'),
+      api('/assistant/conversations?page_size=8'),
+      api('/ai/jobs'),
+      api('/insight/overview'),
+      api('/documents'),
+    ]);
+    loading = false;
+    if (!current(version) || !section.isConnected) return;
+    const [
+      classroom, papers, bankTotal, bankPending, imports,
+      assistant, jobs, insight, docs,
+    ] = results.map(settledEntry);
+    const sources = {
+      classroom, papers, bankTotal, bankPending, imports, assistant, jobs, insight, docs,
+    };
+    grid.setAttribute('aria-busy', 'false');
+    grid.replaceChildren(...AI_CARD_SPECS.map(spec => {
+      let info;
+      try {
+        info = spec.build({ sources, stats });
+      } catch {
+        info = degradedCard(t('home.ai.degradedReason'));
+      }
+      return aiCardNode(spec, info, sources);
+    }));
+    const activities = collectActivities(sources);
+    if (activities.length) {
+      activityHost.replaceChildren(...activities.map(activityNode));
+    } else {
+      activityHost.replaceChildren(el('div', { class: 'home-activity-empty' },
+        el('p', {}, sources.jobs.ok || sources.classroom.ok
+          ? t('home.activity.empty')
+          : t('home.activity.unavailable')),
+        el('div', { class: 'pg-actions' },
+          button(t('home.activity.goClassroom'), () => go('classroom'), 'soft small', 'presentation'),
+          button(t('home.activity.goPaperlab'), () => go('paperlab'), 'secondary small', 'printer'))));
+    }
+    renderSummary(summaryHost, sources);
+    renderStatus(statusHost, sources, load);
+  }
+
+  return { node: section, load };
+}
+
 export async function renderHome(container, version) {
-  const [stats, reviews, notes] = await Promise.all([api('/stats'), api('/reviews'), api('/notes')]);
+  const [stats, reviews, notes, homeStats, featuredPractice] = await Promise.all([
+    api('/stats'),
+    api('/reviews'),
+    api('/notes'),
+    // 首页统计口径（题库全局 + 个人首次正确率/今日练习/薄弱知识点）。
+    // 接口失败时只降级这一块，主操作与既有 AI 工作台入口不丢失。
+    api('/insight/home', { latest: true, latestKey: 'home-stats' }).catch(() => null),
+    // 题库口径卡片的「平台精选」可练数量：能力探测失败/未就绪时为 null（不显示该计数）。
+    detectFeaturedPractice(),
+  ]);
   if (!current(version)) return;
+  const personal = homeStats?.personal || null;
+  const bank = homeStats?.bank || null;
   const dueItems = reviews.items || [];
-  const next = resolveNextStep(stats, dueItems);
+  const next = resolveNextStep(stats, dueItems, personal);
   const recent = (stats.recent_attempts || []).slice(0, 4);
-  const greet = new Date().getHours() < 12 ? '上午好' : new Date().getHours() < 18 ? '下午好' : '晚上好';
-  const mastered = stats.mastery_counts
-    ? Number(stats.mastery_counts['比较掌握'] || 0) + Number(stats.mastery_counts['熟练掌握'] || 0)
-    : Number(stats.mastered || 0);
+  const greet = new Date().getHours() < 12 ? t('home.greet.morning') : new Date().getHours() < 18 ? t('home.greet.afternoon') : t('home.greet.evening');
+  const dueCount = Number(personal?.due_reviews ?? stats.due_count ?? dueItems.length);
 
   const focusPrimary = el('section', { class: 'pg-focus pg-focus--primary', 'aria-labelledby': 'home-next-title' },
-    el('p', { class: 'pg-kicker' }, '下一步 · NEXT STEP'),
+    el('p', { class: 'pg-kicker' }, t('home.next.kicker')),
     el('h2', { id: 'home-next-title' }, next.title),
     el('p', {}, next.text),
     el('p', { class: 'pg-focus-meta' }, next.meta),
@@ -120,61 +800,62 @@ export async function renderHome(container, version) {
       button(next.label, next.run, '', next.icon)));
 
   const dueCard = el('section', { class: 'pg-focus', 'aria-labelledby': 'home-due-title' },
-    el('p', { class: 'pg-kicker' }, '到期复习'),
-    el('h2', { id: 'home-due-title' }, dueItems.length ? `${number(stats.due_count || dueItems.length)} 道待复习` : '暂无到期错题'),
+    el('p', { class: 'pg-kicker' }, t('home.due.kicker')),
+    el('h2', { id: 'home-due-title' }, dueItems.length ? t('home.due.count', { count: number(dueCount) }) : t('home.due.none')),
     dueItems.length
       ? el('div', { class: 'pg-due-list' }, ...dueItems.slice(0, 3).map(dueQuestionButton))
-      : el('p', {}, '完成练习后，答错的题会按掌握度安排复习，到期后出现在这里。'),
+      : el('p', {}, t('home.due.emptyText')),
     el('div', { class: 'pg-focus-actions' },
       dueItems.length
-        ? button('开始复习', () => go('wrongbook'), 'secondary small', 'repeat')
-        : button('去练习', () => go('practice'), 'secondary small', 'book')));
+        ? button(t('home.due.startReview'), () => go('wrongbook'), 'secondary small', 'repeat')
+        : button(t('home.due.goPractice'), () => go('practice'), 'secondary small', 'book')));
 
+  const pendingGrading = Number(personal?.pending_grading?.questions || 0);
+  const recentMeta = stats.graded_attempts
+    ? t('home.recent.gradedStat', { count: number(stats.graded_attempts), percent: Math.round(Number(stats.accuracy)) })
+    : t('home.recent.noneGraded');
   const recentCard = el('section', { class: 'pg-focus', 'aria-labelledby': 'home-recent-title' },
-    el('p', { class: 'pg-kicker' }, '近况'),
-    el('h2', { id: 'home-recent-title' }, recent.length ? '最近作答' : '还没有作答记录'),
+    el('p', { class: 'pg-kicker' }, t('home.recent.kicker')),
+    el('h2', { id: 'home-recent-title' }, recent.length ? t('home.recent.title') : t('home.recent.none')),
     recent.length
       ? el('div', { class: 'pg-recent' }, ...recent.map(recentAttemptButton))
-      : el('p', {}, '完成第一道题后，最近几次作答与结果会显示在这里。'),
+      : el('p', {}, t('home.recent.emptyText')),
     el('p', { class: 'pg-focus-meta' },
-      stats.graded_attempts
-        ? `已判定 ${number(stats.graded_attempts)} 次 · 正确率 ${Math.round(Number(stats.accuracy))}%`
-        : '暂无已判定的作答'));
-
-  const secondaryStats = el('div', { class: 'pg-inline-stats', 'aria-label': '学习统计' },
-    inlineStat(`${number(stats.practiced)} 道`, '已练习题目'),
-    inlineStat(`${number(stats.attempts)} 次`, '真实作答'),
-    inlineStat(stats.graded_attempts ? `${Math.round(Number(stats.accuracy))}%` : '—', '正确率（已判定）'),
-    inlineStat(`${number(stats.wrong_count)} 道`, `错题本 · 到期 ${number(stats.due_count)} 道`),
-    inlineStat(`${number(mastered)} 道`, '已掌握（比较/熟练）'));
+      pendingGrading > 0 ? `${recentMeta} · ${t('home.recent.pendingMeta', { count: number(pendingGrading) })}` : recentMeta));
 
   const notesCard = el('section', { class: 'pg-card', 'aria-labelledby': 'home-notes-title' },
     el('div', { class: 'pg-card-head' },
       el('div', {},
-        el('h2', { id: 'home-notes-title' }, '知识积累'),
-        el('p', { class: 'pg-card-sub' }, '把资料与错题整理成可复习的知识清单。')),
-      button('全部笔记', () => go('notes'), 'ghost small')));
+        el('h2', { id: 'home-notes-title' }, t('home.notes.title')),
+        el('p', { class: 'pg-card-sub' }, t('home.notes.sub'))),
+      button(t('home.notes.all'), () => go('notes'), 'ghost small')));
   if (notes.items?.length) {
     notesCard.append(el('div', { class: 'pg-card-list' }, ...notes.items.slice(0, 3).map(noteLink)));
   } else {
     notesCard.append(el('div', { class: 'pg-empty' },
-      el('p', {}, '还没有知识笔记。上传学习资料，或用错题本生成个人易错清单。'),
-      el('div', { class: 'pg-actions' }, button('整理我的资料', () => go('notes'), 'soft small', 'notes'))));
+      el('p', {}, t('home.notes.empty')),
+      el('div', { class: 'pg-actions' }, button(t('home.notes.organize'), () => go('notes'), 'soft small', 'notes'))));
   }
 
   const shortcutsCard = el('section', { class: 'pg-card', 'aria-labelledby': 'home-shortcuts-title' },
-    el('h2', { id: 'home-shortcuts-title', style: 'margin:0 0 14px;font-size:19px' }, '其他学习入口'),
+    el('h2', { id: 'home-shortcuts-title', style: 'margin:0 0 14px;font-size:19px' }, t('home.shortcuts.title')),
     el('div', { class: 'pg-shortcut-row' },
-      shortcutCard('拍题讲解', '拍照识别 → 核对题干 → 讲解', 'scan', () => go('upload')),
-      shortcutCard('错题回访', '连续复习 · 错因与知识点聚合', 'repeat', () => go('wrongbook')),
-      shortcutCard('整理知识清单', '资料库 · 方格提示词 · 多模型核验', 'notes', () => go('notes'))));
+      shortcutCard(t('home.shortcuts.upload.title'), t('home.shortcuts.upload.desc'), 'scan', () => go('upload')),
+      shortcutCard(t('home.shortcuts.wrongbook.title'), t('home.shortcuts.wrongbook.desc'), 'repeat', () => go('wrongbook')),
+      shortcutCard(t('home.shortcuts.notes.title'), t('home.shortcuts.notes.desc'), 'notes', () => go('notes'))));
+
+  const workbench = createWorkbench({ version, stats });
 
   container.replaceChildren(
-    heading('LEARNING OVERVIEW', `${greet}，${state.user.username}`,
-      '先完成下一件小事：继续练习、到期复习，或看看最近的进展。'),
-    el('section', { class: 'pg-focus-grid', 'aria-label': '下一步学习任务' }, focusPrimary, dueCard, recentCard),
-    secondaryStats,
-    el('div', { class: 'pg-grid-2' }, notesCard, shortcutsCard));
+    heading('LEARNING OVERVIEW', t('home.greeting', { greet, name: state.user.username }),
+      t('home.subheading')),
+    actionCards(personal, bank),
+    learningStats(personal),
+    el('section', { class: 'pg-focus-grid', 'aria-label': t('home.next.aria') }, focusPrimary, dueCard, recentCard),
+    workbench.node,
+    el('div', { class: 'pg-grid-2' }, weakKnowledgeCard(personal), notesCard),
+    bankCaliberCard(bank, featuredPractice),
+    shortcutsCard);
 
   if (stats.subject_progress?.length) {
     const rows = stats.subject_progress
@@ -183,17 +864,20 @@ export async function renderHome(container, version) {
         const total = Number(item.total) || 0;
         const done = Number(item.practiced || item.attempted || 0);
         return el('div', { class: 'pg-subject-row' },
-          el('div', { class: 'row' }, el('strong', {}, item.subject), el('span', { class: 'pg-card-sub' }, `${number(done)} / ${number(total)}`)),
+          el('div', { class: 'row' }, el('strong', { 'data-no-i18n': '' }, item.subject), el('span', { class: 'pg-card-sub' }, `${number(done)} / ${number(total)}`)),
           el('div', { class: 'pg-progress-track' }, el('span', { style: `width:${total ? Math.min(100, done / total * 100) : 0}%` })));
       });
     if (rows.length) {
       container.append(el('section', { class: 'card pg-fold-card' },
         el('details', { class: 'pg-advanced' },
-          el('summary', {}, `各学科练习进度（${rows.length} 个学科，按实际作答记录）`),
+          el('summary', {}, t('home.subjectProgress.summary', { count: rows.length })),
           el('div', { class: 'pg-advanced-body' }, el('div', { class: 'pg-subject-progress' }, ...rows)))));
     }
   }
 
   container.append(el('div', { class: 'footer-note' },
-    '学习记录来自你的真实作答。AI 提供学习辅助，原卷答案、平台标注与 AI 生成内容分别标明来源。'));
+    t('home.footer')));
+
+  // 骨架先出现在页面上，再并行读取各模块真实接口；单接口失败只降级对应卡片。
+  workbench.load();
 }

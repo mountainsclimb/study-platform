@@ -7,40 +7,66 @@ import {
 import { current, renderRoute } from '../core/router.js';
 import { groupedModelOptions } from '../components/modelPicker.js';
 import { renderJobHistory } from './upload.js';
+import { t } from '../core/i18n.js';
 
+// 任务名用 getter 形式按当前语言取 t()：模块加载时读取会固定成首屏语言。
 const TASK_LABELS = {
-  explain: 'AI 讲解',
-  grade: '答题判分',
-  judge: '独立裁判模型',
-  notes: '知识清单整理',
-  ocr: '拍题 / OCR 识别',
-  upload: '拍题求解',
-  tagging: '批量知识点打标',
+  get explain() { return t('settings.task.explain'); },
+  get grade() { return t('settings.task.grade'); },
+  get judge() { return t('settings.task.judge'); },
+  get notes() { return t('settings.task.notes'); },
+  get ocr() { return t('settings.task.ocr'); },
+  get upload() { return t('settings.task.upload'); },
+  get tagging() { return t('settings.task.tagging'); },
+  // 整合模块新增任务（task-13）：与任务中心/各功能页的任务名保持一致。
+  get course() { return t('settings.task.course'); },
+  get 'paper-import'() { return t('settings.task.paper-import'); },
+  get 'paper-enrich'() { return t('settings.task.paper-enrich'); },
+  get 'paper-compose'() { return t('settings.task.paper-compose'); },
+  get 'paper-revision'() { return t('settings.task.paper-revision'); },
+  get 'insight-report'() { return t('settings.task.insight-report'); },
+  get 'assistant-turn'() { return t('settings.task.assistant-turn'); },
 };
 
-const TASK_ORDER = ['explain', 'grade', 'judge', 'notes', 'ocr', 'upload', 'tagging'];
+const TASK_ORDER = [
+  'explain', 'grade', 'judge', 'notes', 'ocr', 'upload', 'tagging',
+  'course', 'paper-import', 'paper-enrich', 'paper-compose', 'paper-revision',
+  'insight-report', 'assistant-turn',
+];
 
+// 主模型 / 核验模型 / 裁判模型的适用范围（行内提示；核验与裁判都要选「独立连接 + 独立模型」）。
 const TASK_HINTS = {
-  explain: '讲解、知识清单等页面在没有单题选择时使用这里的默认模型。',
-  grade: '判分任务缺省复用讲解模型；需要更严格的判分时可在右侧单独指定核验模型。',
-  judge: '三模型交叉核验时由模型 C 定位分歧步骤，不由主模型自判。',
+  get explain() { return t('settings.taskHint.explain'); },
+  get grade() { return t('settings.taskHint.grade'); },
+  get judge() { return t('settings.taskHint.judge'); },
+  get notes() { return t('settings.taskHint.notes'); },
+  get ocr() { return t('settings.taskHint.ocr'); },
+  get upload() { return t('settings.taskHint.upload'); },
+  get tagging() { return t('settings.taskHint.tagging'); },
+  get course() { return t('settings.taskHint.course'); },
+  get 'paper-import'() { return t('settings.taskHint.paper-import'); },
+  get 'paper-enrich'() { return t('settings.taskHint.paper-enrich'); },
+  get 'paper-compose'() { return t('settings.taskHint.paper-compose'); },
+  get 'paper-revision'() { return t('settings.taskHint.paper-revision'); },
+  get 'insight-report'() { return t('settings.taskHint.insight-report'); },
+  get 'assistant-turn'() { return t('settings.taskHint.assistant-turn'); },
 };
 
 const KIND_LABELS = {
-  openai: 'OpenAI 兼容接口',
-  anthropic: 'Claude 原生接口',
-  gemini: 'Gemini 兼容接口',
-  gemini_native: 'Gemini 原生接口',
-  azure_openai: 'Azure OpenAI',
+  get openai() { return t('settings.kind.openai'); },
+  get anthropic() { return t('settings.kind.anthropic'); },
+  get gemini() { return t('settings.kind.gemini'); },
+  get gemini_native() { return t('settings.kind.gemini_native'); },
+  'azure_openai': 'Azure OpenAI',
 };
 
 const AUTH_MODE_LABELS = {
-  auto: '自动（按接口类型选择鉴权头）',
-  bearer: 'Authorization: Bearer <key>',
-  'x-api-key': 'x-api-key（Claude / 部分中转）',
-  'api-key': 'api-key（Azure OpenAI）',
-  query_key: 'URL 查询参数 ?key=（Gemini 原生）',
-  none: '无鉴权（本地模型可留空 Key）',
+  get auto() { return t('settings.authMode.auto'); },
+  get bearer() { return t('settings.authMode.bearer'); },
+  get 'x-api-key'() { return t('settings.authMode.x-api-key'); },
+  get 'api-key'() { return t('settings.authMode.api-key'); },
+  get query_key() { return t('settings.authMode.query_key'); },
+  get none() { return t('settings.authMode.none'); },
 };
 
 const MAX_EXTRA_HEADERS = 8;
@@ -48,61 +74,61 @@ const MAX_EXTRA_HEADERS = 8;
 // 「常用自定义与本地」分组：比官方预设更贴近中转站 / 本地模型场景。
 const CUSTOM_PRESETS = [
   {
-    group: '常用自定义与本地',
-    name: '自定义 OpenAI 兼容 / 中转站',
+    get group() { return t('settings.wizard.customGroup'); },
+    get name() { return t('settings.wizard.presetOpenaiCompat'); },
     kind: 'openai',
     base_url: 'https://',
     models: [],
     auth_mode: 'auto',
-    hint: 'One-API / New-API / OpenRouter / 企业网关等任意 OpenAI 兼容地址',
+    get hint() { return t('settings.wizard.presetOpenaiCompatHint'); },
   },
   {
-    group: '常用自定义与本地',
-    name: '本地 Ollama',
+    get group() { return t('settings.wizard.customGroup'); },
+    get name() { return t('settings.wizard.presetOllama'); },
     kind: 'openai',
     base_url: 'http://127.0.0.1:11434/v1',
     models: ['llama3.2', 'qwen2.5', 'qwen2.5-vl', 'deepseek-r1', 'nomic-embed-text'],
     auth_mode: 'none',
     local: true,
-    hint: '本地无鉴权服务：API Key 可留空',
+    get hint() { return t('settings.wizard.presetOllamaHint'); },
   },
   {
-    group: '常用自定义与本地',
-    name: '本地 LM Studio / vLLM',
+    get group() { return t('settings.wizard.customGroup'); },
+    get name() { return t('settings.wizard.presetLmStudio'); },
     kind: 'openai',
     base_url: 'http://127.0.0.1:1234/v1',
     models: ['local-model'],
     auth_mode: 'none',
     local: true,
-    hint: 'LM Studio 默认 :1234，vLLM 默认 :8000；API Key 可留空',
+    get hint() { return t('settings.wizard.presetLmStudioHint'); },
   },
   {
-    group: '常用自定义与本地',
+    get group() { return t('settings.wizard.customGroup'); },
     name: 'Azure OpenAI',
     kind: 'azure_openai',
     base_url: 'https://YOUR-RESOURCE.openai.azure.com/openai/deployments/YOUR-DEPLOYMENT',
     models: ['gpt-4o', 'gpt-4.1-mini'],
     auth_mode: 'api-key',
     compat: { api_version: '2024-10-21' },
-    hint: '地址填到 deployment；在高级选项里填写 api-version',
+    get hint() { return t('settings.wizard.presetAzureHint'); },
   },
   {
-    group: '常用自定义与本地',
-    name: '自定义 Claude 中转',
+    get group() { return t('settings.wizard.customGroup'); },
+    get name() { return t('settings.wizard.presetClaudeRelay'); },
     kind: 'anthropic',
     base_url: 'https://',
     models: ['claude-sonnet-4-5', 'claude-3-5-haiku-latest'],
     auth_mode: 'auto',
-    hint: 'Claude 原生协议，可额外加 anthropic-beta 等自定义请求头',
+    get hint() { return t('settings.wizard.presetClaudeRelayHint'); },
   },
   {
-    group: '常用自定义与本地',
-    name: 'Gemini 原生接口',
+    get group() { return t('settings.wizard.customGroup'); },
+    get name() { return t('settings.wizard.presetGeminiNative'); },
     kind: 'gemini_native',
     base_url: 'https://generativelanguage.googleapis.com/v1beta',
     models: ['gemini-2.5-flash', 'gemini-2.5-pro'],
     auth_mode: 'query_key',
-    hint: 'Gemini 原生 generateContent 协议，Key 以 ?key= 传递',
+    get hint() { return t('settings.wizard.presetGeminiNativeHint'); },
   },
 ];
 
@@ -148,7 +174,7 @@ function providerById(id) {
 }
 
 function providerKindLabel(kind) {
-  return KIND_LABELS[kind] || kind || '未知接口';
+  return KIND_LABELS[kind] || kind || t('settings.unknownKind');
 }
 
 function authModeOf(provider) {
@@ -194,24 +220,43 @@ function taskDefaultProviderText(task, def) {
   const model = isJudge ? def?.judge_model : def?.primary_model;
   const vpid = def?.verify_provider_id;
   if (!model) {
-    if (task === 'grade') return '跟随讲解模型（可单独指定）';
-    if (isJudge) return '未固定（分歧时由核验模型 B 裁定）';
-    return '跟随页面模型选择器';
+    if (task === 'grade') return t('settings.followExplain');
+    if (isJudge) return t('settings.judgeUnfixed');
+    return t('settings.followPicker');
   }
   const provider = providerById(pid);
-  if (!provider) return '原连接已删除，请重新选择';
+  if (!provider) return t('settings.providerDeleted');
   const parts = [provider.name];
   if (vpid && verifySelectionOf(def)) {
     const vProvider = providerById(vpid);
-    parts.push(`核验：${vProvider ? vProvider.name : '原连接已删除'}`);
+    parts.push(t('settings.verifyWith', { name: vProvider ? vProvider.name : t('settings.providerDeleted') }));
   }
-  parts.push(def?.mode === 'accurate' ? '精确模式' : '快速模式');
+  parts.push(def?.mode === 'accurate' ? t('settings.mode.accurate') : t('settings.mode.fast'));
   return parts.join(' · ');
 }
 
 function groupedOptions() {
   const { groups } = groupedModelOptions();
   return groups;
+}
+
+/** 费用展示：元（人民币），极小金额保留 4 位小数，避免全被舍入成 0。 */
+function moneyText(value) {
+  const numeric = Number(value);
+  if (!Number.isFinite(numeric)) return '—';
+  if (numeric === 0) return '0.00';
+  if (Math.abs(numeric) < 0.01) return numeric.toFixed(4);
+  return numeric.toFixed(2);
+}
+
+/** 模型单价展示（元/百万 tokens）；任一单价缺失即视为未配置，不做 0 元假设。 */
+function priceLabel(row) {
+  const inputPrice = row?.input_price;
+  const outputPrice = row?.output_price;
+  if (inputPrice === null || inputPrice === undefined || outputPrice === null || outputPrice === undefined) {
+    return t('tasks.priceUnset');
+  }
+  return t('settings.pricePerMillion', { input: moneyText(inputPrice), output: moneyText(outputPrice) });
 }
 
 /* ------------------------------------------------------------------------- *
@@ -232,7 +277,7 @@ async function rawApi(path, { method = 'GET', data } = {}) {
   let json = null;
   try { json = await response.json(); } catch { json = null; }
   if (!response.ok) {
-    const error = new Error(errorText(json?.detail || json?.error || `请求失败（${response.status}）`));
+    const error = new Error(errorText(json?.detail || json?.error || t('settings.wizard.requestFailed', { v1: response.status })));
     error.status = response.status;
     error.data = json;
     throw error;
@@ -272,11 +317,11 @@ function guessEndpoint(kind, baseUrl, apiVersion = '') {
 
 function describeKindHint(kind) {
   return ({
-    openai: '发送 OpenAI 兼容的 /chat/completions 请求',
-    anthropic: '发送 Claude 原生 /messages 请求',
-    gemini: '通过 Gemini 的 OpenAI 兼容层请求',
-    gemini_native: '发送 Gemini 原生 generateContent 请求',
-    azure_openai: '通过 Azure deployment 地址请求，需要 api-version',
+    openai: t('settings.wizard.sendsAnOpenaiCompatibleChatCompletionsRequest'),
+    anthropic: t('settings.wizard.sendsANativeClaudeMessagesRequest'),
+    gemini: t('settings.wizard.requestsViaGeminiSOpenaiCompatibleLayer'),
+    gemini_native: t('settings.wizard.sendsANativeGeminiGeneratecontentRequest'),
+    azure_openai: t('settings.wizard.requestsViaTheAzureDeploymentUrlApi'),
   })[kind] || '';
 }
 
@@ -288,7 +333,7 @@ function openProviderDialog(provider, ctx) {
   const dlg = el('dialog', {
     class: 'provider-dialog',
     'data-mode': editing ? 'edit' : 'create',
-    'aria-label': editing ? `编辑连接 ${provider.name}` : '添加模型连接',
+    'aria-label': editing ? t('settings.wizard.editConnection', { v1: provider.name }) : t('settings.addCardTitle'),
   });
 
   const selectedModels = new Set(provider?.models || []);
@@ -309,23 +354,23 @@ function openProviderDialog(provider, ctx) {
   // ---- 基础字段
   const presetOptions = [];
   presetOptions.push({
-    optgroup: '常用自定义与本地',
+    optgroup: t('settings.wizard.commonCustomLocal'),
     options: CUSTOM_PRESETS.map((item, index) => ({ value: `custom-${index}`, label: item.name })),
   });
   const officialPresets = state.presets || [];
   if (officialPresets.length) {
     presetOptions.push({
-      optgroup: '官方厂商预设（含推荐模型）',
+      optgroup: t('settings.wizard.officialVendorPresetsWithRecommendedModels'),
       options: officialPresets.map((item, index) => ({ value: `preset-${index}`, label: item.name })),
     });
   }
   const presetSel = select([
-    { value: '', label: editing ? '保持当前配置' : '选择厂商预设（可选）' },
+    { value: '', label: editing ? t('settings.wizard.keepCurrentConfiguration') : t('settings.wizard.selectAVendorPresetOptional') },
     ...presetOptions,
   ], '', { 'data-field': 'preset' });
   const presetHint = el('p', { class: 'help' });
 
-  const nameIn = input('例如：我的 DeepSeek', {
+  const nameIn = input(t('settings.wizard.eGMyDeepseek'), {
     value: provider?.name || '', 'data-field': 'name', required: true,
   });
   const kindSel = select(Object.entries(KIND_LABELS).map(([value, label]) => ({ value, label })),
@@ -335,26 +380,26 @@ function openProviderDialog(provider, ctx) {
   });
   const apiKeyIn = input(
     editing
-      ? (providerHasSavedKey(provider) ? '留空表示沿用已保存的密钥' : '留空表示保持当前（未保存密钥 / 无鉴权）')
-      : '本地无鉴权服务可留空',
+      ? (providerHasSavedKey(provider) ? t('settings.wizard.leaveEmptyToReuseTheSavedKey') : t('settings.wizard.leaveEmptyToKeepTheCurrentState'))
+      : t('settings.wizard.canBeLeftEmptyForLocalServices'),
     { type: 'password', autocomplete: 'off', 'data-field': 'api-key' },
   );
   const keyHint = el('p', { class: 'help' },
     editing && providerHasSavedKey(provider)
-      ? `当前密钥：${provider.key_hint || '已加密保存'}；不修改时不会回传完整 Key。`
-      : '密钥只在保存时发送到本机后端并加密存储；本地无鉴权服务可留空（需把鉴权方式设为「无鉴权」）。');
+      ? t('settings.wizard.currentKeyHint', { v1: provider.key_hint || t('settings.wizard.encryptedSaved') })
+      : t('settings.wizard.theKeyIsOnlySentToThe'));
 
   // ---- 地址规范化预览 + 模型列表（不截断）
   const previewMount = el('div', { class: 'provider-preview-mount' });
-  const modelSearch = input('搜索模型（支持 200+ 列表）…', {
-    'data-field': 'model-search', type: 'search', 'aria-label': '搜索模型',
+  const modelSearch = input(t('settings.wizard.searchModelsListsOf200'), {
+    'data-field': 'model-search', type: 'search', 'aria-label': t('settings.wizard.searchModels'),
   });
-  const selectAllBtn = el('button', { type: 'button', class: 'button secondary small', 'data-action': 'model-select-all' }, '全选当前结果');
-  const modelCount = el('span', { class: 'provider-model-count' }, '尚未拉取模型列表');
+  const selectAllBtn = el('button', { type: 'button', class: 'button secondary small', 'data-action': 'model-select-all' }, t('settings.wizard.selectAllCurrentResults'));
+  const modelCount = el('span', { class: 'provider-model-count' }, t('settings.wizard.modelListNotFetchedYet'));
   const modelList = el('div', { class: 'provider-model-list', 'data-role': 'model-list' });
   const manualModels = el('textarea', {
     rows: 3,
-    placeholder: '每行一个模型 ID；用于后端暂不支持保存前预览时手动填写',
+    placeholder: t('settings.wizard.oneModelIdPerLineUsedFor'),
     'data-field': 'manual-models',
   });
   manualModels.value = [...selectedModels].join('\n');
@@ -364,9 +409,9 @@ function openProviderDialog(provider, ctx) {
   };
 
   const manualModelsDetails = el('details', { class: 'pg-advanced', style: 'margin-top:8px' },
-    el('summary', {}, '手动维护模型 ID（每行一个）'),
+    el('summary', {}, t('settings.wizard.maintainModelIdsManuallyOnePerLine')),
     el('div', { class: 'pg-advanced-body' }, manualModels,
-      el('p', { class: 'help' }, '厂商返回的模型列表会全部展示、不截断；也可在这里手动补充或粘贴模型 ID。')));
+      el('p', { class: 'help' }, t('settings.wizard.theFullModelListReturnedByThe'))));
   const modelsArea = el('div', {},
     el('div', { class: 'provider-model-tools' }, modelSearch, selectAllBtn, modelCount),
     modelList,
@@ -384,7 +429,7 @@ function openProviderDialog(provider, ctx) {
     modelList.replaceChildren();
     if (!filtered.length) {
       modelList.append(el('p', { class: 'provider-model-empty' },
-        availableModels.length ? '没有匹配的模型' : '还没有模型列表；填写地址后会自动生成规范化预览，或点「拉取厂商模型」。'));
+        availableModels.length ? t('settings.wizard.noMatchingModels') : t('settings.wizard.noModelListYetAfterFillingIn')));
     }
     for (const item of filtered) {
       const checkbox = el('input', {
@@ -400,16 +445,16 @@ function openProviderDialog(provider, ctx) {
       });
       modelList.append(el('label', { class: 'provider-model-item', title: item.id },
         checkbox, el('span', {}, item.id),
-        item.caps?.vision ? badge('视觉', 'teal') : null,
-        item.caps?.reasoning ? badge('推理', 'blue') : null));
+        item.caps?.vision ? badge(t('settings.wizard.vision'), 'teal') : null,
+        item.caps?.reasoning ? badge(t('settings.wizard.reasoning'), 'blue') : null));
     }
     updateModelCount();
   }
 
   function updateModelCount() {
     modelCount.textContent = availableModels.length
-      ? `共 ${availableModels.length} 个模型 · 已选 ${selectedModels.size}`
-      : `已选 ${selectedModels.size} 个模型`;
+      ? t('settings.wizard.modelsSelected', { v1: availableModels.length, v2: selectedModels.size })
+      : t('settings.wizard.modelsSelected_2', { v1: selectedModels.size });
   }
 
   modelSearch.addEventListener('input', renderModelList);
@@ -441,35 +486,35 @@ function openProviderDialog(provider, ctx) {
   const headersMount = el('div');
   const headerRowsMount = el('div', { class: 'provider-header-rows' });
   const headerReplaceHint = el('p', { class: 'help' });
-  const addHeaderBtn = el('button', { type: 'button', class: 'button secondary small', 'data-action': 'add-header' }, '添加请求头');
+  const addHeaderBtn = el('button', { type: 'button', class: 'button secondary small', 'data-action': 'add-header' }, t('settings.wizard.addHeader'));
 
   const compat = compatOf(provider);
   const maxTokensSel = select([
-    { value: 'auto', label: '自动（推荐）' },
-    { value: 'max_tokens', label: '始终使用 max_tokens' },
-    { value: 'max_completion_tokens', label: '始终使用 max_completion_tokens' },
+    { value: 'auto', label: t('settings.wizard.autoRecommended') },
+    { value: 'max_tokens', label: t('settings.wizard.alwaysUseMaxTokens') },
+    { value: 'max_completion_tokens', label: t('settings.wizard.alwaysUseMaxCompletionTokens') },
   ], compat.max_tokens_param || 'auto', { 'data-field': 'max-tokens-param' });
   const timeoutIn = input('120', {
     type: 'number', min: 15, max: 600, step: 5,
     value: compat.timeout_seconds ?? 120, 'data-field': 'timeout',
   });
-  const apiVersionIn = input('例如 2024-10-21', {
+  const apiVersionIn = input(t('settings.wizard.eG20241021'), {
     value: compat.api_version || '', 'data-field': 'api-version',
   });
   const proxyChk = el('input', {
     type: 'checkbox', checked: Boolean(compat.use_proxy_env), 'data-field': 'use-proxy',
   });
   const proxyRow = el('label', { class: 'check-label', style: 'margin-top:6px' },
-    proxyChk, '允许该连接使用系统代理（HTTP_PROXY / HTTPS_PROXY）');
+    proxyChk, t('settings.wizard.allowThisConnectionToUseTheSystem'));
   const proxyHint = el('p', { class: 'help' },
     ctx.localMode === false
-      ? '仅本地模式生效：公网部署下会忽略该开关。'
-      : '仅本地模式生效；通过本机代理访问海外厂商时打开。');
+      ? t('settings.wizard.onlyTakesEffectInLocalModeIgnored')
+      : t('settings.wizard.onlyTakesEffectInLocalModeEnable'));
 
   function buildHeaderRow() {
-    const keyInput = input('例如 HTTP-Referer', { 'data-field': 'header-key' });
-    const valueInput = input('请求头值（保存后仅回显键名）', { 'data-field': 'header-value' });
-    const removeBtn = el('button', { type: 'button', class: 'button ghost small', 'aria-label': '删除该请求头' }, '删除');
+    const keyInput = input(t('settings.wizard.eGHttpReferer'), { 'data-field': 'header-key' });
+    const valueInput = input(t('settings.wizard.headerValueOnlyTheNameIsShown'), { 'data-field': 'header-value' });
+    const removeBtn = el('button', { type: 'button', class: 'button ghost small', 'aria-label': t('settings.wizard.deleteThisHeader') }, t('common.delete'));
     const row = el('div', { class: 'provider-header-row' }, keyInput, valueInput, removeBtn);
     removeBtn.addEventListener('click', () => {
       row.remove();
@@ -484,7 +529,7 @@ function openProviderDialog(provider, ctx) {
   function updateAddHeaderState() {
     const total = savedHeaderKeys.length + newHeaderRows.length;
     addHeaderBtn.disabled = total >= MAX_EXTRA_HEADERS;
-    addHeaderBtn.title = total >= MAX_EXTRA_HEADERS ? `最多 ${MAX_EXTRA_HEADERS} 条自定义请求头` : '';
+    addHeaderBtn.title = total >= MAX_EXTRA_HEADERS ? t('settings.wizard.upToCustomHeaders', { v1: MAX_EXTRA_HEADERS }) : '';
     updateHeaderReplaceHint();
   }
 
@@ -492,20 +537,20 @@ function openProviderDialog(provider, ctx) {
     const editingSaved = Boolean(provider?.id) && savedHeaderKeys.length > 0;
     if (!editingSaved) { headerReplaceHint.textContent = ''; return; }
     headerReplaceHint.textContent = removedHeaderKeys.size || newHeaderRows.length
-      ? '注意：已保存请求头的值无法回显，保存后会以本次填写的请求头整体替换原有请求头。'
-      : '已保存请求头的值已脱敏，仅显示键名；不修改时不会发送 extra_headers。';
+      ? t('settings.wizard.noteSavedHeaderValuesCannotBeShown')
+      : t('settings.wizard.savedHeaderValuesAreMaskedAndOnly');
   }
 
   function renderSavedHeaders() {
     headersMount.replaceChildren();
     const kept = savedHeaderKeys.filter(key => !removedHeaderKeys.has(key));
     if (!kept.length) { updateHeaderReplaceHint(); return; }
-    headersMount.append(el('p', { class: 'help' }, '已保存的请求头（脱敏，只回显键名）：'));
+    headersMount.append(el('p', { class: 'help' }, t('settings.wizard.savedHeadersMaskedNamesOnly')));
     const tags = el('div', { class: 'provider-header-saved' });
     for (const key of kept) {
       tags.append(el('span', { class: 'badge blue' }, key,
         el('button', {
-          type: 'button', 'aria-label': `删除已保存请求头 ${key}`,
+          type: 'button', 'aria-label': t('settings.wizard.deleteSavedHeader', { v1: key }),
           onClick: () => { removedHeaderKeys.add(key); renderSavedHeaders(); updateAddHeaderState(); },
         }, '×')));
     }
@@ -598,18 +643,18 @@ function openProviderDialog(provider, ctx) {
     const notes = [];
     if (Array.isArray(res?.notes) && res.notes.length) notes.push(...res.notes.filter(Boolean));
     if (res?.notice) notes.push(res.notice);
-    if (res?.ok === false && res?.diagnosis) notes.push(`厂商连接失败：${res.diagnosis}`);
+    if (res?.ok === false && res?.diagnosis) notes.push(t('settings.wizard.vendorConnectionFailed', { v1: res.diagnosis }));
     else if (res?.diagnosis && res?.ok === true) notes.push(res.diagnosis);
     if (listEndpoint && listEndpoint !== chatEndpoint) {
-      notes.push(`已向厂商请求模型列表：${listEndpoint}`);
+      notes.push(t('settings.wizard.requestedTheModelListFromTheVendor', { v1: listEndpoint }));
     }
     const rawUrl = baseUrlIn.value.trim();
     const hasNormalizeNote = () => notes.some(item => /清洗|规范化|剥离/.test(item));
     if (normalized && normalized.replace(/\/+$/, '') !== rawUrl.replace(/\/+$/, '') && !hasNormalizeNote()) {
-      notes.push(`已自动规范化地址为 ${normalized}（提交时将使用该地址）。`);
+      notes.push(t('settings.wizard.urlNormalizedToAutomaticallyThisAddressIs', { v1: normalized }));
     }
     if (/\/(chat\/completions|messages|responses|models)\/?$/i.test(rawUrl) && !hasNormalizeNote()) {
-      notes.push('检测到误粘贴的接口尾部路径，已自动清洗为服务根地址，避免重复拼接。');
+      notes.push(t('settings.wizard.aPastedEndpointTailPathWasDetected'));
     }
     if (res?.capabilities && typeof res.capabilities === 'object') {
       const caps = res.capabilities;
@@ -617,24 +662,24 @@ function openProviderDialog(provider, ctx) {
       const isMap = values.length > 0 && values.every(value => value && typeof value === 'object');
       if (isMap) {
         const visionCount = values.filter(value => value.vision).length;
-        if (visionCount) notes.push(`能力推断：${visionCount} 个模型支持视觉输入。`);
+        if (visionCount) notes.push(t('settings.wizard.capabilityInferenceModelsSupportVisionInput', { v1: visionCount }));
       } else {
         const pieces = [
-          caps.stream === false ? '不支持流式' : null,
-          caps.json === false ? '不支持 JSON 输出' : null,
-          caps.vision ? '支持视觉' : null,
+          caps.stream === false ? t('settings.wizard.noStreaming') : null,
+          caps.json === false ? t('settings.wizard.noJsonOutput') : null,
+          caps.vision ? t('settings.wizard.visionSupported') : null,
         ].filter(Boolean);
-        if (pieces.length) notes.push(`能力推断：${pieces.join(' · ')}`);
+        if (pieces.length) notes.push(t('settings.wizard.capabilityInference', { v1: pieces.join(' · ') }));
       }
     }
     if (!models.length && res?.ok === false) {
-      preview.append(notice(`未能拉取模型列表：${res?.diagnosis || '厂商未返回可用模型'}。可直接在下方手动填写模型 ID。`, 'warning'));
+      preview.append(notice(t('settings.wizard.fetchModelsFailed', { v1: res?.diagnosis || t('settings.wizard.vendorReturnedNoModels') }), 'warning'));
     }
     if (notes.length) {
       preview.append(el('p', { class: 'provider-preview-note' }, notes.join('；')));
     }
     if (!chatEndpoint && !notes.length) {
-      preview.append(el('p', { class: 'help' }, '填写接口地址后，这里会显示实际请求端点与自动清洗结果。'));
+      preview.append(el('p', { class: 'help' }, t('settings.wizard.afterEnteringTheApiUrlTheActual')));
     }
     renderPreviewArea(preview);
     renderModelList();
@@ -649,7 +694,7 @@ function openProviderDialog(provider, ctx) {
     }
     const run = async () => {
       const seq = ++previewSeq;
-      previewMount.replaceChildren(loading('正在生成规范化预览并拉取厂商模型…'));
+      previewMount.replaceChildren(loading(t('settings.wizard.generatingTheNormalizedPreviewAndFetchingVendor')));
       try {
         const payload = draftPayload();
         const res = await rawApi('/providers/fetch-models-preview', { method: 'POST', data: payload });
@@ -672,12 +717,12 @@ function openProviderDialog(provider, ctx) {
             } catch { /* 继续展示提示 */ }
           }
           previewMount.replaceChildren(
-            notice('当前后端尚未提供「保存前预览」接口（/api/providers/fetch-models-preview 未就绪），可先手动填写模型 ID，保存后仍可编辑。', 'warning'),
+            notice(t('settings.wizard.theBackendDoesNotProvideThePre'), 'warning'),
             modelsArea);
           updateModelCount();
           return;
         }
-        previewMount.replaceChildren(notice(`规范化预览失败：${error.message}`, 'error'));
+        previewMount.replaceChildren(notice(t('settings.wizard.normalizedPreviewFailed', { v1: error.message }), 'error'));
       }
     };
     if (immediate) await run();
@@ -722,33 +767,33 @@ function openProviderDialog(provider, ctx) {
 
   // ---- 底部流程按钮
   const fetchBtn = el('button', { type: 'button', class: 'button secondary', 'data-action': 'fetch-models' },
-    icon('search'), '拉取厂商模型');
+    icon('search'), t('settings.wizard.fetchVendorModels'));
   fetchBtn.addEventListener('click', () => {
-    if (!baseUrlIn.value.trim()) { showError('请先填写接口地址。'); return; }
+    if (!baseUrlIn.value.trim()) { showError(t('settings.wizard.pleaseFillInTheApiUrlFirst')); return; }
     clearError();
     runPreview({ immediate: true });
   });
 
   const probeBtn = el('button', { type: 'button', class: 'button secondary', 'data-action': 'probe' },
-    icon('check'), '保存前测试连接');
+    icon('check'), t('settings.wizard.testConnectionBeforeSaving'));
   probeBtn.addEventListener('click', () => busy(probeBtn, async () => {
     clearError();
     const model = pickModelForProbe();
-    if (!model) { showError('请先拉取并勾选至少 1 个模型，再测试连接。'); return; }
-    if (!baseUrlIn.value.trim()) { showError('请先填写接口地址。'); return; }
-    probeResult.replaceChildren(loading('正在用最小请求探测连通性…'));
+    if (!model) { showError(t('settings.wizard.fetchAndCheckAtLeastOneModel')); return; }
+    if (!baseUrlIn.value.trim()) { showError(t('settings.wizard.pleaseFillInTheApiUrlFirst')); return; }
+    probeResult.replaceChildren(loading(t('settings.wizard.probingConnectivityWithAMinimalRequest')));
     try {
       const res = await rawApi('/providers/probe', { method: 'POST', data: draftPayload({ includeModel: true }) });
       if (res.ok === false) {
-        probeResult.replaceChildren(notice(`连接未通过：${res.diagnosis || '厂商未返回可用响应'}`, 'error'));
+        probeResult.replaceChildren(notice(t('settings.wizard.connectionFailedDetail', { v1: res.diagnosis || t('settings.wizard.vendorReturnedNoResponse') }), 'error'));
         return;
       }
       const latency = Number(res.latency_ms);
       const parts = [
-        `连接成功${Number.isFinite(latency) ? `，首字节约 ${Math.round(latency)} ms` : ''}`,
-        res.model ? `模型：${res.model}` : `模型：${model}`,
-        res.diagnosis ? `诊断：${res.diagnosis}` : '',
-        res.request_url ? `请求：${res.request_url}` : '',
+        t('settings.wizard.connectionOk') + (Number.isFinite(latency) ? t('settings.wizard.firstByteLatency', { v1: Math.round(latency) }) : ''),
+        res.model ? t('settings.embeddingModelLine', { model: res.model }) : t('settings.embeddingModelLine', { model: model }),
+        res.diagnosis ? t('settings.wizard.diagnosis', { v1: res.diagnosis }) : '',
+        res.request_url ? t('settings.wizard.request', { v1: res.request_url }) : '',
       ].filter(Boolean);
       probeResult.replaceChildren(notice(parts.join('；')));
     } catch (error) {
@@ -758,27 +803,27 @@ function openProviderDialog(provider, ctx) {
           const legacy = await rawApi(`/providers/${provider.id}/test`, {
             method: 'POST', data: { model },
           });
-          probeResult.replaceChildren(notice(`连接成功（旧接口）：${legacy.content || '模型已响应'}`, 'warning'));
+          probeResult.replaceChildren(notice(t('settings.wizard.connectionOkLegacy', { v1: legacy.content || t('settings.wizard.modelResponded') }), 'warning'));
           return;
         } catch (legacyError) {
-          probeResult.replaceChildren(notice(`测试失败：${legacyError.message}`, 'error'));
+          probeResult.replaceChildren(notice(t('settings.wizard.testFailed', { v1: legacyError.message }), 'error'));
           return;
         }
       }
-      probeResult.replaceChildren(notice(`测试失败：${error.message}`, 'error'));
+      probeResult.replaceChildren(notice(t('settings.wizard.testFailed', { v1: error.message }), 'error'));
     }
   }));
 
   const saveBtn = el('button', { type: 'button', class: 'button', 'data-action': 'save' },
-    icon('check'), editing ? '保存修改' : '保存连接');
+    icon('check'), editing ? t('settings.wizard.saveChanges') : t('settings.wizard.saveConnection'));
   saveBtn.addEventListener('click', () => busy(saveBtn, async () => {
     clearError();
     const name = nameIn.value.trim();
     const baseUrl = baseUrlIn.value.trim();
     const models = [...selectedModels];
-    if (!name) { showError('请填写配置名称。'); return; }
-    if (!baseUrl || baseUrl.length < 8) { showError('请填写有效的接口地址（含协议）。'); return; }
-    if (!models.length) { showError('请至少勾选或填写 1 个模型。'); return; }
+    if (!name) { showError(t('settings.wizard.pleaseFillInTheConfigurationName')); return; }
+    if (!baseUrl || baseUrl.length < 8) { showError(t('settings.wizard.pleaseFillInAValidApiUrl')); return; }
+    if (!models.length) { showError(t('settings.wizard.pleaseCheckOrEnterAtLeastOne')); return; }
     const data = {
       name,
       kind: kindSel.value,
@@ -801,7 +846,7 @@ function openProviderDialog(provider, ctx) {
         if (isLocalUrl(baseUrl)) {
           data.auth_mode = 'none';
         } else {
-          showError('未填写 API Key：本地无鉴权服务请在「高级连接选项」把鉴权方式选为「无鉴权（none）」；远程服务请填写 Key。');
+          showError(t('settings.wizard.noApiKeyEnteredForLocalServices'));
           return;
         }
       }
@@ -819,16 +864,16 @@ function openProviderDialog(provider, ctx) {
       const saved = editing
         ? await api(`/providers/${provider.id}`, { method: 'PATCH', data })
         : await api('/providers', { method: 'POST', data });
-      toast(editing ? '连接配置已更新。' : '模型连接已加密保存。');
+      toast(editing ? t('settings.wizard.connectionConfigurationUpdated') : t('settings.wizard.modelConnectionSavedEncrypted'));
       dlg.close();
       await ctx.afterProviderSaved(saved);
     } catch (error) {
       // 保存失败就地显示，不关闭弹窗，避免用户重填。
-      showError(`保存失败：${error.message}`);
+      showError(t('settings.embeddingSaveFailed', { message: error.message }));
     }
   }));
 
-  const cancelBtn = el('button', { type: 'button', class: 'button ghost', onClick: () => dlg.close() }, '取消');
+  const cancelBtn = el('button', { type: 'button', class: 'button ghost', onClick: () => dlg.close() }, t('common.cancel'));
 
   // 初始渲染
   renderSavedHeaders();
@@ -839,36 +884,36 @@ function openProviderDialog(provider, ctx) {
 
   const advancedBody = el('div', { class: 'pg-advanced-body' },
     el('div', { class: 'form-grid' },
-      field('鉴权方式', authModeSel, '默认自动：按接口类型选择 Bearer / x-api-key 等鉴权头。'),
-      field('超时秒数（15–600）', timeoutIn, '网络较慢的中转站可调大，最大 600 秒。')),
+      field(t('settings.wizard.authMode'), authModeSel, t('settings.wizard.autoByDefaultChoosesBearerXApi')),
+      field(t('settings.wizard.timeoutSeconds15600'), timeoutIn, t('settings.wizard.increaseForSlowRelaysMaximum600Seconds'))),
     el('div', { class: 'form-grid' },
-      field('max_tokens 兼容策略', maxTokensSel, 'o1/o3/gpt-5 等模型不接受 max_tokens 时可显式切换。'),
-      field('api-version（Azure 等）', apiVersionIn, '留空则由后端按服务类型决定。')),
+      field(t('settings.wizard.maxTokensCompatibility'), maxTokensSel, t('settings.wizard.switchExplicitlyWhenModelsSuchAsO1')),
+      field(t('settings.wizard.apiVersionAzureEtc'), apiVersionIn, t('settings.wizard.leaveEmptyToLetTheBackendDecide'))),
     el('div', {},
-      el('p', { class: 'field-label' }, `自定义请求头（最多 ${MAX_EXTRA_HEADERS} 条，保存后仅回显键名）`),
+      el('p', { class: 'field-label' }, t('settings.wizard.customHeadersUpToOnlyNamesAre', { v1: MAX_EXTRA_HEADERS })),
       headersMount, headerRowsMount, headerReplaceHint,
       el('div', { class: 'row', style: 'margin-top:8px' }, addHeaderBtn)),
     proxyRow, proxyHint);
 
   const advanced = el('details', { class: 'pg-advanced provider-advanced' },
-    el('summary', {}, '高级连接选项 · 鉴权 / 请求头 / 超时 / 代理'),
+    el('summary', {}, t('settings.wizard.advancedConnectionOptionsAuthHeadersTimeoutProxy')),
     advancedBody);
 
   dlg.append(
     el('div', { class: 'row between', style: 'margin-bottom:14px' },
-      el('h3', {}, icon('key'), editing ? `编辑连接 · ${provider.name}` : '添加模型连接'),
-      el('button', { type: 'button', class: 'button ghost small', onClick: () => dlg.close(), 'aria-label': '关闭' }, '关闭')),
+      el('h3', {}, icon('key'), editing ? t('settings.wizard.editConnection_2', { v1: provider.name }) : t('settings.addCardTitle')),
+      el('button', { type: 'button', class: 'button ghost small', onClick: () => dlg.close(), 'aria-label': t('common.close') }, t('common.close'))),
     el('div', { class: 'provider-dialog-body' },
       el('div', { class: 'form-grid' },
-        field('厂商预设', presetSel, '顶部为常用自定义与本地分组；官方预设会带出推荐模型。'),
-        field('配置名称', nameIn)),
+        field(t('settings.wizard.vendorPreset'), presetSel, t('settings.wizard.theTopGroupContainsCommonCustomAnd')),
+        field(t('settings.wizard.configurationName'), nameIn)),
       presetHint,
       el('div', { class: 'form-grid' },
-        field('接口类型', kindSel, describeKindHint(kindSel.value)),
-        field('接口地址', baseUrlIn, '可直接粘贴厂商文档地址；误粘贴的 /chat/completions 会自动清洗。')),
+        field(t('settings.wizard.apiType'), kindSel, describeKindHint(kindSel.value)),
+        field(t('settings.wizard.apiUrl'), baseUrlIn, t('settings.wizard.pasteTheVendorSDocumentedUrlDirectly'))),
       previewMount,
       el('div', { class: 'form-grid' },
-        field(editing ? '更换 API Key（可选）' : 'API Key（本地可留空）', apiKeyIn), keyHint),
+        field(editing ? t('settings.wizard.replaceApiKeyOptional') : t('settings.wizard.apiKeyOptionalForLocal'), apiKeyIn), keyHint),
       advanced,
       probeResult,
       dialogError),
@@ -893,40 +938,40 @@ function openProviderDialog(provider, ctx) {
  * 模型能力与单价（局部更新，不整页重渲染）
  * ------------------------------------------------------------------------- */
 function openModelMetaDialog(provider, detail, ctx) {
-  if (!detail?.id) { toast('请先保存连接后再编辑模型属性。', true); return; }
+  if (!detail?.id) { toast(t('settings.wizard.saveTheConnectionBeforeEditingModelAttributes'), true); return; }
   const dlg = el('dialog', { class: 'modal-dialog', 'data-role': 'model-meta' });
-  const displayName = input('显示名称', { value: detail.display_name || detail.model_id });
+  const displayName = input(t('settings.wizard.displayName'), { value: detail.display_name || detail.model_id });
   const vChk = el('input', { type: 'checkbox', checked: Boolean(detail.caps?.vision) });
   const jChk = el('input', { type: 'checkbox', checked: detail.caps?.json !== false });
   const rChk = el('input', { type: 'checkbox', checked: Boolean(detail.caps?.reasoning) });
   const sChk = el('input', { type: 'checkbox', checked: detail.caps?.stream !== false });
   const enabledChk = el('input', { type: 'checkbox', checked: detail.enabled !== false });
-  const ctxIn = input('例如 128000', {
+  const ctxIn = input(t('settings.wizard.eG128000'), {
     type: 'number', min: 0, step: 1000, value: detail.caps?.context ?? '',
   });
-  const inPrice = input('例如 2.0（元/百万 tokens，留空则费用显示未知）', {
+  const inPrice = input(t('settings.wizard.eG20CnyPerMillion'), {
     type: 'number', step: '0.01', min: 0, value: detail.input_price ?? '',
   });
-  const outPrice = input('例如 8.0（元/百万 tokens，留空则费用显示未知）', {
+  const outPrice = input(t('settings.wizard.eG80CnyPerMillion'), {
     type: 'number', step: '0.01', min: 0, value: detail.output_price ?? '',
   });
 
   dlg.append(
-    el('div', { class: 'card-header' }, el('h3', {}, `模型能力与单价 · ${detail.model_id}`),
-      button('关闭', () => dlg.close(), 'ghost small', 'close')),
-    field('显示名称', displayName),
+    el('div', { class: 'card-header' }, el('h3', {}, t('settings.wizard.modelCapabilitiesPrices', { v1: detail.model_id })),
+      button(t('common.close'), () => dlg.close(), 'ghost small', 'close')),
+    field(t('settings.wizard.displayName'), displayName),
     el('div', { class: 'row', style: 'margin:14px 0' },
-      el('label', { class: 'check-label' }, vChk, '👁 支持视觉（拍题/OCR）'),
-      el('label', { class: 'check-label' }, jChk, '{} 支持结构化 JSON'),
-      el('label', { class: 'check-label' }, rChk, '🧠 推理模型'),
-      el('label', { class: 'check-label' }, sChk, '流式输出'),
-      el('label', { class: 'check-label' }, enabledChk, '在模型选择器中启用')),
+      el('label', { class: 'check-label' }, vChk, t('settings.wizard.visionSupportPhotoOcr')),
+      el('label', { class: 'check-label' }, jChk, t('settings.wizard.structuredJsonSupport')),
+      el('label', { class: 'check-label' }, rChk, t('settings.wizard.reasoningModel')),
+      el('label', { class: 'check-label' }, sChk, t('settings.wizard.streamingOutput')),
+      el('label', { class: 'check-label' }, enabledChk, t('settings.wizard.enableInTheModelPicker'))),
     el('div', { class: 'form-grid' },
-      field('上下文长度（tokens，可选）', ctxIn),
-      field('输入单价（元/1M tokens，可选）', inPrice),
-      field('输出单价（元/1M tokens，可选）', outPrice)),
+      field(t('settings.wizard.contextLengthTokensOptional'), ctxIn),
+      field(t('settings.wizard.inputPriceCnyPer1mTokensOptional'), inPrice),
+      field(t('settings.wizard.outputPriceCnyPer1mTokensOptional'), outPrice)),
     el('div', { class: 'row end', style: 'margin-top:16px' },
-      button('保存属性', e => busy(e.currentTarget, async () => {
+      button(t('settings.wizard.saveAttributes'), e => busy(e.currentTarget, async () => {
         const context = ctxIn.value !== '' ? Number(ctxIn.value) : undefined;
         const res = await api(`/models/${detail.id}`, {
           method: 'PATCH',
@@ -960,7 +1005,7 @@ function openModelMetaDialog(provider, detail, ctx) {
         if (target && res.enabled === false && Array.isArray(target.models)) {
           // 保持连接模型列表与详情一致（禁用只影响选择器，不删除模型）。
         }
-        toast('模型能力标签与单价已更新。');
+        toast(t('settings.wizard.modelCapabilityTagsAndPricesUpdated'));
         dlg.close();
         ctx.renderProviders();
       }), '', 'check'))
@@ -974,11 +1019,12 @@ function openModelMetaDialog(provider, detail, ctx) {
  * 页面主体
  * ------------------------------------------------------------------------- */
 export async function renderSettings(container, version) {
-  const [, prefs, usage, live] = await Promise.all([
+  const [, prefs, usage, live, usageToday] = await Promise.all([
     refreshProviders(),
     ensurePreferences(true),
     api('/ai/usage?days=30').catch(() => ({ by_model: [], by_day: [], notice: '' })),
     api('/health/live').catch(() => null),
+    api('/ai/usage/me?days=1').catch(() => null),
   ]);
   if (!current(version)) return;
 
@@ -1045,7 +1091,7 @@ export async function renderSettings(container, version) {
       ctx.renderApiStatus();
       window.dispatchEvent(new CustomEvent('zhixu:task-default-changed', { detail: { scope: task } }));
     } catch (error) {
-      toast(`默认模型保存失败：${error.message}`, true);
+      toast(t('settings.taskDefaultSaveFailed', { message: error.message }), true);
     }
   }
 
@@ -1057,18 +1103,18 @@ export async function renderSettings(container, version) {
       {
         value: '',
         label: isJudge
-          ? '不固定（分歧时由核验模型 B 裁定）'
-          : task === 'grade' ? '跟随讲解模型（可单独指定）' : '跟随页面模型选择器',
+          ? t('settings.judgeUnfixed')
+          : task === 'grade' ? t('settings.followExplain') : t('settings.followPicker'),
       },
       ...groups,
     ];
     const primaryVal = selectionOf(def, task);
     const verifyVal = verifySelectionOf(def);
     const primary = select(primaryOptions, primaryVal, {
-      'data-field': 'task-primary', 'data-task': task, 'aria-label': `${TASK_LABELS[task]}主模型`,
+      'data-field': 'task-primary', 'data-task': task, 'aria-label': t('settings.primaryAria', { task: TASK_LABELS[task] }),
     });
-    const verify = select([{ value: '', label: '不指定核验模型（快速模式）' }, ...groups], verifyVal, {
-      'data-field': 'task-verify', 'data-task': task, 'aria-label': `${TASK_LABELS[task]}核验模型`,
+    const verify = select([{ value: '', label: t('settings.verifyNone') }, ...groups], verifyVal, {
+      'data-field': 'task-verify', 'data-task': task, 'aria-label': t('settings.verifyAria', { task: TASK_LABELS[task] }),
     });
 
     const providerText = el('span', {
@@ -1079,8 +1125,8 @@ export async function renderSettings(container, version) {
 
     const clearBtn = el('button', {
       type: 'button', class: 'button ghost small pg-task-clear', 'data-action': 'clear-task', 'data-task': task,
-      'aria-label': `清空${TASK_LABELS[task]}默认模型`,
-    }, '清空');
+      'aria-label': t('settings.clearAria', { task: TASK_LABELS[task] }),
+    }, t('settings.clear'));
     clearBtn.addEventListener('click', () => busy(clearBtn, async () => {
       await saveTaskDefault(task, '', '', { clear: true });
     }));
@@ -1093,7 +1139,7 @@ export async function renderSettings(container, version) {
     const primaryField = el('div', { class: 'pg-task-cell-primary' }, primary);
     const verifyField = isJudge
       ? el('div', { class: 'pg-task-cell-verify pg-task-cell-judge' },
-        el('span', { class: 'help' }, '不适用：分歧时由核验模型 B 裁定'))
+        el('span', { class: 'help' }, t('settings.judgeNotApplicable')))
       : el('div', { class: 'pg-task-cell-verify' }, verify);
     const nameCell = el('div', { class: 'pg-task-cell-name' },
       el('span', { class: 'pg-default-task' }, TASK_LABELS[task]),
@@ -1111,22 +1157,22 @@ export async function renderSettings(container, version) {
     return [
       el('div', { class: 'pg-api-status-head' },
         el('div', {},
-          el('p', { class: 'pg-kicker' }, 'API 状态与默认模型'),
-          el('h2', {}, connectedCount ? `${connectedCount} 个 API 连接已保存` : '先连接一个模型'),
+          el('p', { class: 'pg-kicker' }, t('settings.apiStatusKicker')),
+          el('h2', {}, connectedCount ? t('settings.connectedCount', { count: connectedCount }) : t('settings.connectFirst')),
           el('p', { class: 'pg-api-summary' }, connectedCount
-            ? `共 ${modelCount} 个可用模型。可直接在下方为每个任务指定默认模型，清空后跟随页面模型选择器。`
-            : '还没有保存任何模型连接。AI 讲解、判分、OCR 与知识整理都需要你自己的 API。')),
-        statusTag(connectedCount ? '可用' : '待配置', connectedCount ? 'ok' : 'warn', connectedCount ? '✓' : '!')),
+            ? t('settings.apiSummary', { count: modelCount })
+            : t('settings.apiSummaryEmpty'))),
+        statusTag(connectedCount ? t('settings.statusAvailable') : t('settings.statusTodo'), connectedCount ? 'ok' : 'warn', connectedCount ? '✓' : '!')),
       el('div', { class: 'pg-api-actions' },
-        button(connectedCount ? '添加另一个模型连接' : '添加模型连接',
+        button(connectedCount ? t('settings.addAnother') : t('settings.addConnection'),
           () => openProviderDialog(null, ctx), 'secondary', 'plus'),
         connectedCount
-          ? button('测试已有连接', () => ctx.providersGrid.scrollIntoView({ behavior: 'smooth', block: 'start' }), 'ghost', 'check')
+          ? button(t('settings.testExisting'), () => ctx.providersGrid.scrollIntoView({ behavior: 'smooth', block: 'start' }), 'ghost', 'check')
           : null,
-        el('button', { type: 'button', class: 'button ghost', onClick: () => openEmbeddingCard(ctx) }, '配置语义检索')),
+        el('button', { type: 'button', class: 'button ghost', onClick: () => openEmbeddingCard(ctx) }, t('settings.configureSearch'))),
       el('div', { class: 'pg-task-defaults-head' },
-        el('h3', {}, '各任务默认模型'),
-        el('p', { class: 'help' }, '行内修改即时保存；「清空」会真正写入空配置，恢复跟随页面选择。')),
+        el('h3', {}, t('settings.taskDefaultsTitle')),
+        el('p', { class: 'help' }, t('settings.taskDefaultsHelp'))),
       el('ul', { class: 'pg-default-models pg-task-defaults' },
         ...TASK_ORDER.map(task => buildTaskRow(task))),
     ];
@@ -1144,21 +1190,21 @@ export async function renderSettings(container, version) {
   /* ---------- 2. 连接卡片 ---------- */
   function buildProviderCard(provider) {
     const modelSel = select((provider.models || []).map(m => ({ value: m, label: m })), '', {
-      'aria-label': '测试使用的模型',
+      'aria-label': t('settings.testModelAria'),
     });
     const testing = el('div');
     const modelBadges = el('div', { class: 'provider-models' });
     for (const detail of provider.model_details || []) {
       const icons = [detail.caps?.vision ? '👁' : '', detail.caps?.reasoning ? '🧠' : ''].filter(Boolean).join('');
-      const label = `${detail.model_id}${icons ? ' ' + icons : ''}${detail.enabled === false ? '（已停用）' : ''}`;
+      const label = `${detail.model_id}${icons ? ' ' + icons : ''}${detail.enabled === false ? t('settings.modelDisabled') : ''}`;
       if (!detail.id) {
-        modelBadges.append(el('span', { class: 'badge blue', title: '保存连接后可编辑模型属性' }, label));
+        modelBadges.append(el('span', { class: 'badge blue', title: t('settings.modelBadgeTitle') }, label));
         continue;
       }
       modelBadges.append(el('button', {
         type: 'button',
         class: 'badge blue clickable-badge',
-        title: '点击编辑该模型能力标签、上下文与单价',
+        title: t('settings.modelBadgeTitle2'),
         'data-model-id': detail.model_id,
         onClick: () => openModelMetaDialog(provider, detail, ctx),
       }, label));
@@ -1166,29 +1212,29 @@ export async function renderSettings(container, version) {
     const compat = compatOf(provider);
     const hasKey = providerHasSavedKey(provider);
     const metaBadges = el('div', { class: 'provider-card-meta' },
-      statusTag(hasKey ? '密钥已保存' : (authModeOf(provider) === 'none' ? '无鉴权连接' : '未配置密钥'),
+      statusTag(hasKey ? t('settings.keySaved') : (authModeOf(provider) === 'none' ? t('settings.keyNone') : t('settings.keyMissing')),
         hasKey || authModeOf(provider) === 'none' ? 'ok' : 'warn',
         hasKey || authModeOf(provider) === 'none' ? '✓' : '!'),
-      statusTag(`${(provider.models || []).length} 个模型`, 'info', '·'),
+      statusTag(t('settings.modelCountTag', { count: (provider.models || []).length }), 'info', '·'),
       authModeOf(provider) !== 'auto'
-        ? statusTag(`鉴权：${(AUTH_MODE_LABELS[authModeOf(provider)] || authModeOf(provider)).split('（')[0]}`, 'info', '·')
+        ? statusTag(t('settings.authModeTag', { mode: String(AUTH_MODE_LABELS[authModeOf(provider)] || authModeOf(provider)).split('（')[0] }), 'info', '·')
         : null,
-      isLocalUrl(provider.base_url) ? statusTag('本地 / 自建服务', 'ok', '·') : null);
+      isLocalUrl(provider.base_url) ? statusTag(t('settings.localService'), 'ok', '·') : null);
     const headers = extraHeaderKeys(provider);
     const compatText = [
       compat.max_tokens_param && compat.max_tokens_param !== 'auto' ? `max_tokens：${compat.max_tokens_param}` : '',
-      compat.timeout_seconds ? `超时 ${compat.timeout_seconds}s` : '',
-      compat.use_proxy_env ? '走系统代理' : '',
+      compat.timeout_seconds ? t('settings.timeoutTag', { seconds: compat.timeout_seconds }) : '',
+      compat.use_proxy_env ? t('settings.proxyTag') : '',
       compat.api_version ? `api-version：${compat.api_version}` : '',
     ].filter(Boolean).join(' · ');
 
-    const testBtn = button('测试连接', e => busy(e.currentTarget, async () => {
+    const testBtn = button(t('settings.testConnection'), e => busy(e.currentTarget, async () => {
       const model = modelSel.value || (provider.models || [])[0];
-      if (!model) { testing.replaceChildren(notice('该连接还没有模型，请先编辑添加模型。', 'warning')); return; }
+      if (!model) { testing.replaceChildren(notice(t('settings.testNoModel'), 'warning')); return; }
       if (!providerHasSavedKey(provider) && authModeOf(provider) !== 'none' && !isLocalUrl(provider.base_url)) {
-        testing.replaceChildren(notice('该连接尚未保存密钥，测试可能失败；可编辑连接补填 Key。', 'warning'));
+        testing.replaceChildren(notice(t('settings.testNoKey'), 'warning'));
       }
-      testing.replaceChildren(loading('正在调用所选模型…'));
+      testing.replaceChildren(loading(t('settings.testCalling')));
       const probePayload = {
         kind: provider.kind,
         base_url: provider.base_url,
@@ -1200,12 +1246,12 @@ export async function renderSettings(container, version) {
       try {
         const res = await rawApi('/providers/probe', { method: 'POST', data: probePayload });
         const latency = Number(res.latency_ms);
-        testing.replaceChildren(notice(`连接成功${Number.isFinite(latency) ? `（${Math.round(latency)}ms）` : ''}：${res.diagnosis || '模型已响应'}`));
+        testing.replaceChildren(notice(t('settings.testOk', { latency: Number.isFinite(latency) ? t('settings.testLatency', { ms: Math.round(latency) }) : '', diagnosis: res.diagnosis || t('settings.modelResponded') })));
       } catch (error) {
         if (error.status === 404 || error.status === 405) {
           try {
             const res = await api(`/providers/${provider.id}/test`, { method: 'POST', data: { model } });
-            testing.replaceChildren(notice(`连接成功：${res.content || '模型已响应'}（${res.notice || '旧接口'}）`));
+            testing.replaceChildren(notice(t('settings.testOkLegacy', { content: res.content || t('settings.modelResponded'), notice: res.notice || t('settings.legacyApi') })));
             return;
           } catch (legacyError) {
             testing.replaceChildren(notice(legacyError.message, 'error'));
@@ -1221,30 +1267,30 @@ export async function renderSettings(container, version) {
         el('span', { class: 'provider-logo' }, icon('sparkle')),
         el('div', { style: 'flex:1;min-width:0' },
           el('h3', {}, provider.name),
-          el('p', {}, `${providerKindLabel(provider.kind)} · ${isLocalUrl(provider.base_url) ? '本地地址' : '远程地址'}`)),
-        button('编辑', () => openProviderDialog(provider, ctx), 'ghost small', 'edit')),
-      el('div', { class: 'provider-key' }, el('span', {}, provider.key_hint || (hasKey ? '密钥已加密保存' : '无鉴权 / 未保存密钥')), icon('lock')),
+          el('p', {}, `${providerKindLabel(provider.kind)} · ${isLocalUrl(provider.base_url) ? t('settings.localAddress') : t('settings.remoteAddress')}`)),
+        button(t('common.edit'), () => openProviderDialog(provider, ctx), 'ghost small', 'edit')),
+      el('div', { class: 'provider-key' }, el('span', {}, provider.key_hint || (hasKey ? t('settings.keyEncrypted') : t('settings.noKeySaved'))), icon('lock')),
       el('p', { class: 'help', style: 'margin-bottom:8px' }, provider.base_url),
       metaBadges,
       el('details', { class: 'pg-advanced provider-advanced' },
-        el('summary', {}, `模型能力标签与单价（${(provider.model_details || []).length} 个模型）`),
+        el('summary', {}, t('settings.modelDetailsSummary', { count: (provider.model_details || []).length })),
         el('div', { class: 'pg-advanced-body' },
-          el('p', { class: 'help' }, '点击模型标签，编辑该模型的视觉 / JSON / 推理能力、上下文与参考单价；保存只更新本卡片。'),
+          el('p', { class: 'help' }, t('settings.modelDetailsHelp')),
           modelBadges.childNodes.length
             ? modelBadges
-            : el('p', { class: 'help' }, '还没有保存模型属性；保存连接后可在这里补充。'),
+            : el('p', { class: 'help' }, t('settings.modelDetailsEmpty')),
           headers.length
             ? el('div', {},
-              el('p', { class: 'help' }, `自定义请求头（脱敏）：${headers.join('、')}`))
+              el('p', { class: 'help' }, t('settings.headersSaved', { headers: headers.join(t('common.listSeparator')) })))
             : null,
-          compatText ? el('p', { class: 'help' }, `连接兼容参数：${compatText}`) : null)),
-      field('测试使用的模型', modelSel),
+          compatText ? el('p', { class: 'help' }, t('settings.compatParams', { params: compatText })) : null)),
+      field(t('settings.testModel'), modelSel),
       el('div', { class: 'row between', style: 'margin-top:14px' },
         testBtn,
-        button('删除配置', e => busy(e.currentTarget, async () => {
-          if (!window.confirm(`删除“${provider.name}”的 API 配置？`)) return;
+        button(t('settings.deleteConfig'), e => busy(e.currentTarget, async () => {
+          if (!window.confirm(t('settings.deleteConfirm', { name: provider.name }))) return;
           await api(`/providers/${provider.id}`, { method: 'DELETE' });
-          toast('模型配置已删除。');
+          toast(t('settings.deleted'));
           await ctx.afterProviderDeleted(provider.id);
         }), 'danger small', 'trash')),
       testing);
@@ -1255,9 +1301,9 @@ export async function renderSettings(container, version) {
     const children = state.providers.map(provider => buildProviderCard(provider));
     if (!children.length) {
       children.push(el('div', { class: 'card', style: 'grid-column:1/-1' },
-        empty('先连接一个你自己的模型',
-          '已内置 OpenAI、DeepSeek、通义千问、硅基流动、智谱 GLM、Kimi、火山方舟、OpenRouter、Claude、Gemini 预设，也支持自定义中转站与本地 Ollama / LM Studio / vLLM。',
-          button('添加模型连接', () => openProviderDialog(null, ctx), 'soft small', 'plus'), 'key')));
+        empty(t('settings.emptyTitle'),
+          t('settings.emptyText'),
+          button(t('settings.addConnection'), () => openProviderDialog(null, ctx), 'soft small', 'plus'), 'key')));
     }
     ctx.providersGrid.replaceChildren(...children);
   };
@@ -1266,7 +1312,7 @@ export async function renderSettings(container, version) {
     try {
       await refreshProviders();
     } catch (error) {
-      toast(`连接已保存，但刷新列表失败：${error.message}`, true);
+      toast(t('settings.savedButRefreshFailed', { message: error.message }), true);
     }
     ctx.renderProviders();
     ctx.renderApiStatus();
@@ -1302,12 +1348,12 @@ export async function renderSettings(container, version) {
   ctx.renderProviders();
 
   /* ---------- 3. 添加连接入口（保持与旧界面一致的 .provider-form 锚点） ---------- */
-  const addSubmit = el('button', { class: 'button', type: 'submit' }, icon('plus'), '打开连接向导');
+  const addSubmit = el('button', { class: 'button', type: 'submit' }, icon('plus'), t('settings.openWizard'));
   const addForm = el('form', { class: 'card provider-form' });
   addForm.append(
-    el('div', { class: 'card-header' }, el('h2', {}, '添加模型连接'), badge('保存前可预览与测通', 'teal')),
+    el('div', { class: 'card-header' }, el('h2', {}, t('settings.addCardTitle')), badge(t('settings.addCardBadge'), 'teal')),
     el('p', { class: 'help', style: 'margin-bottom:14px' },
-      '在向导里选择厂商预设或自定义地址：会自动生成规范化请求端点、拉取全量厂商模型，并在保存前测试连通性。支持本地 Ollama / LM Studio / vLLM 与 Azure OpenAI。'),
+      t('settings.addCardText')),
     addSubmit);
   addForm.addEventListener('submit', event => {
     event.preventDefault();
@@ -1316,26 +1362,26 @@ export async function renderSettings(container, version) {
 
   /* ---------- 4. 复习穿插与偏好（保留高级折叠） ---------- */
   const interleaveSel = select([
-    { value: '0', label: '关闭搜索结果穿插' },
-    { value: '1', label: '每页穿插 1 道到期错题（第 4 位）' },
-    { value: '2', label: '每页穿插 2 道到期错题（第 4、9 位，推荐）' },
+    { value: '0', label: t('settings.interleave.off') },
+    { value: '1', label: t('settings.interleave.one') },
+    { value: '2', label: t('settings.interleave.two') },
   ], String(prefs.interleave_per_page ?? 2));
   const sameKpChk = el('input', { type: 'checkbox', checked: Boolean(prefs.same_kp_only) });
   const stripChk = el('input', { type: 'checkbox', checked: prefs.show_review_strip !== false });
 
   const prefsCard = el('section', { class: 'card pg-fold-card', style: 'margin-top:22px' },
     el('div', { class: 'card-header' },
-      el('h2', {}, '复习穿插与搜索页偏好'),
-      badge('高级参数', 'blue')),
+      el('h2', {}, t('settings.reviewPrefsTitle')),
+      badge(t('settings.advancedBadge'), 'blue')),
     el('details', { class: 'pg-advanced' },
-      el('summary', {}, '展开调整错题穿插频率与搜索页提示'),
+      el('summary', {}, t('settings.reviewPrefsSummary')),
       el('div', { class: 'pg-advanced-body' },
         el('div', { class: 'form-grid' },
-          field('搜索页错题穿插频率', interleaveSel, '仅穿插符合当前筛选条件的到期错题，不改变检索总数。')),
-        el('label', { class: 'check-label' }, sameKpChk, '只穿插与当前知识点相同的到期错题'),
-        el('label', { class: 'check-label' }, stripChk, '在搜索页顶部同时保留独立「顺便温习」横条'),
+          field(t('settings.interleaveField'), interleaveSel, t('settings.interleaveHelp'))),
+        el('label', { class: 'check-label' }, sameKpChk, t('settings.sameKp')),
+        el('label', { class: 'check-label' }, stripChk, t('settings.strip')),
         el('div', { class: 'row end', style: 'margin-top:16px' },
-          button('保存偏好设置', e => busy(e.currentTarget, async () => {
+          button(t('settings.savePrefs'), e => busy(e.currentTarget, async () => {
             await api('/preferences', {
               method: 'PATCH',
               data: {
@@ -1344,42 +1390,42 @@ export async function renderSettings(container, version) {
                 show_review_strip: stripChk.checked,
               },
             });
-            toast('偏好设置已保存。');
+            toast(t('settings.prefsSaved'));
             await ensurePreferences(true);
           }), '', 'check')))));
 
   /* ---------- 5. 语义检索（Embedding）配置卡片（懒加载） ---------- */
   const embCard = el('section', { class: 'card pg-fold-card pg-embedding-card' },
     el('div', { class: 'card-header' },
-      el('h2', {}, '语义检索（Embedding）配置'),
-      badge('可选', 'blue')));
-  const embStatus = el('div', { class: 'pg-embedding-status' }, el('p', { class: 'help' }, '展开后可查看当前语义检索状态并测试向量接口。'));
+      el('h2', {}, t('settings.embeddingTitle')),
+      badge(t('settings.optionalBadge'), 'blue')));
+  const embStatus = el('div', { class: 'pg-embedding-status' }, el('p', { class: 'help' }, t('settings.embeddingStatusIdle')));
   const embMode = select([
-    { value: 'off', label: '关闭（回退本地词频检索）' },
-    { value: 'inherit', label: '复用已有模型连接' },
-    { value: 'custom', label: '自定义地址 + 模型 + Key' },
+    { value: 'off', label: t('settings.embeddingMode.off') },
+    { value: 'inherit', label: t('settings.embeddingMode.inherit') },
+    { value: 'custom', label: t('settings.embeddingMode.custom') },
   ], 'off');
-  const embProviderSel = select([{ value: '', label: '选择用于 Embedding 的连接' },
+  const embProviderSel = select([{ value: '', label: t('settings.embeddingProvider') },
     ...(state.providers || []).map(provider => ({ value: String(provider.id), label: provider.name }))]);
-  const embModelIn = input('例如 text-embedding-3-small / BAAI/bge-m3 / nomic-embed-text');
+  const embModelIn = input(t('settings.embeddingModelPlaceholder'));
   const embBaseUrlIn = input('https://api.openai.com/v1');
-  const embKeyIn = input('API Key（可留空）', { type: 'password', autocomplete: 'off' });
-  const embReuseField = field('复用的模型连接', embProviderSel);
+  const embKeyIn = input(t('settings.embeddingKeyPlaceholder'), { type: 'password', autocomplete: 'off' });
+  const embReuseField = field(t('settings.embeddingReuseField'), embProviderSel);
   const embCustomBox = el('div', { class: 'pg-embedding-custom hide' },
-    field('Embedding 接口地址', embBaseUrlIn),
+    field(t('settings.embeddingBaseUrl'), embBaseUrlIn),
     field('Embedding API Key', embKeyIn));
   const embResult = el('div', { class: 'pg-embedding-result', 'aria-live': 'polite' });
-  const embSaveBtn = button('保存 Embedding 配置', null, 'small');
-  const embTestBtn = button('测试向量接口', null, 'secondary small');
+  const embSaveBtn = button(t('settings.embeddingSave'), null, 'small');
+  const embTestBtn = button(t('settings.embeddingTest'), null, 'secondary small');
   const embForm = el('div', { class: 'pg-embedding-form' },
-    field('配置方式', embMode),
+    field(t('settings.embeddingModeField'), embMode),
     embReuseField,
-    field('Embedding 模型', embModelIn),
+    field(t('settings.embeddingModelField'), embModelIn),
     embCustomBox,
     el('div', { class: 'row' }, embTestBtn, embSaveBtn),
     embResult);
   const embDetails = el('details', { class: 'pg-advanced' },
-    el('summary', {}, '展开配置语义检索（自动向量召回）'),
+    el('summary', {}, t('settings.embeddingSummary')),
     el('div', { class: 'pg-advanced-body' }, embStatus, embForm));
   embCard.append(embDetails);
 
@@ -1401,7 +1447,7 @@ export async function renderSettings(container, version) {
         .filter(provider => ['openai', 'gemini', 'azure_openai'].includes(provider.kind))
         .map(provider => ({ id: provider.id, name: provider.name, models: provider.models || [] }));
     embProviderSel.replaceChildren(
-      el('option', { value: '' }, '选择用于 Embedding 的连接'),
+      el('option', { value: '' }, t('settings.embeddingProvider')),
       ...list.map(item => el('option', { value: String(item.id) }, item.name || `#${item.id}`)));
     return list;
   }
@@ -1422,28 +1468,28 @@ export async function renderSettings(container, version) {
     const mode = String(cfg.mode || '').toLowerCase();
     const ready = effective.ready ?? (source === 'custom' || source === 'inherit' || source === 'env');
     const statusTagNode = (() => {
-      if (!embLoaded) return statusTag('正在读取配置…', 'info', '…');
-      if (mode === 'off' && source !== 'env') return statusTag('未启用（回退本地词频检索）', 'warn', '!');
-      if (source === 'env') return statusTag('由环境变量提供', 'info', '·');
-      if (source === 'inherit') return statusTag('已启用 · 复用模型连接', ready ? 'ok' : 'warn', ready ? '✓' : '!');
-      if (source === 'custom') return statusTag('已启用 · 自定义向量接口', ready ? 'ok' : 'warn', ready ? '✓' : '!');
-      if (cfg.env_configured) return statusTag('未启用（环境变量配置可回退）', 'warn', '!');
-      if (ready) return statusTag('已启用', 'ok', '✓');
-      return statusTag('未配置', 'warn', '!');
+      if (!embLoaded) return statusTag(t('settings.embeddingLoadingConfig'), 'info', '…');
+      if (mode === 'off' && source !== 'env') return statusTag(t('settings.embeddingStatusDisabled'), 'warn', '!');
+      if (source === 'env') return statusTag(t('settings.embeddingStatusEnv'), 'info', '·');
+      if (source === 'inherit') return statusTag(t('settings.embeddingStatusInherit'), ready ? 'ok' : 'warn', ready ? '✓' : '!');
+      if (source === 'custom') return statusTag(t('settings.embeddingStatusCustom'), ready ? 'ok' : 'warn', ready ? '✓' : '!');
+      if (cfg.env_configured) return statusTag(t('settings.embeddingStatusEnvFallback'), 'warn', '!');
+      if (ready) return statusTag(t('settings.embeddingStatusEnabled'), 'ok', '✓');
+      return statusTag(t('settings.embeddingStatusUnconfigured'), 'warn', '!');
     })();
     const rows = [statusTagNode];
     const model = effective.model || cfg.model;
-    if (model) rows.push(el('span', { class: 'help' }, `模型：${model}`));
+    if (model) rows.push(el('span', { class: 'help' }, t('settings.embeddingModelRow', { model })));
     if (cfg.provider_id) {
       const provider = providerById(cfg.provider_id);
-      rows.push(el('span', { class: 'help' }, `连接：${provider ? provider.name : `#${cfg.provider_id}`}`));
+      rows.push(el('span', { class: 'help' }, t('settings.embeddingProviderRow', { provider: provider ? provider.name : `#${cfg.provider_id}` })));
     }
-    if (cfg.has_api_key || cfg.key_hint) rows.push(el('span', { class: 'help' }, '独立 Key 已加密保存'));
+    if (cfg.has_api_key || cfg.key_hint) rows.push(el('span', { class: 'help' }, t('settings.embeddingKeySaved')));
     if (cfg.env_configured && source !== 'env') {
-      rows.push(el('span', { class: 'help' }, '环境变量 STUDY_EMBEDDING_* 已配置；账号配置优先。'));
+      rows.push(el('span', { class: 'help' }, t('settings.embeddingEnvConfigured')));
     }
     if (Array.isArray(cfg.compatible_providers) && cfg.compatible_providers.length) {
-      rows.push(el('span', { class: 'help' }, `可用于 Embedding 的连接：${cfg.compatible_providers.length} 个`));
+      rows.push(el('span', { class: 'help' }, t('settings.embeddingCompatible', { count: cfg.compatible_providers.length })));
     }
     embStatus.replaceChildren(...rows);
   }
@@ -1484,7 +1530,7 @@ export async function renderSettings(container, version) {
   async function loadEmbeddingConfig() {
     if (embLoaded) return;
     embLoaded = true;
-    embStatus.replaceChildren(loading('正在读取 Embedding 配置…'));
+    embStatus.replaceChildren(loading(t('settings.embeddingLoading')));
     const [cfgResult, readyResult] = await Promise.allSettled([
       rawApi('/providers/embeddings-config'),
       api('/health/ready').catch(() => null),
@@ -1492,9 +1538,9 @@ export async function renderSettings(container, version) {
     if (cfgResult.status === 'fulfilled') {
       applyEmbeddingConfig(cfgResult.value);
     } else if (cfgResult.reason?.status === 404 || cfgResult.reason?.status === 405) {
-      embStatus.replaceChildren(notice('当前后端尚未提供 Embedding 配置接口，暂只能通过 STUDY_EMBEDDING_* 环境变量配置。', 'warning'));
+      embStatus.replaceChildren(notice(t('settings.embeddingUnavailableBackend'), 'warning'));
     } else {
-      embStatus.replaceChildren(notice(`读取 Embedding 配置失败：${cfgResult.reason?.message || '未知错误'}`, 'error'));
+      embStatus.replaceChildren(notice(t('settings.embeddingReadFailed', { message: cfgResult.reason?.message || t('settings.embeddingUnknownError') }), 'error'));
     }
     // 管理员 /health/ready 详情里可能带 embedding 状态：只展示状态字段，绝不渲染路径。
     const ready = readyResult.status === 'fulfilled' ? readyResult.value : null;
@@ -1503,13 +1549,13 @@ export async function renderSettings(container, version) {
     if (embReady) {
       const text = typeof embReady === 'string'
         ? embReady
-        : [embReady.ready === false || embReady.configured === false ? '未就绪' : '就绪',
+        : [embReady.ready === false || embReady.configured === false ? t('settings.embeddingNotReady') : t('settings.embeddingReady'),
           embReady.detail,
-          embReady.source && embReady.source !== 'none' ? `来源 ${embReady.source}` : '',
-          embReady.model ? `模型 ${embReady.model}` : '',
-          embReady.dimension ? `维度 ${embReady.dimension}` : '',
+          embReady.source && embReady.source !== 'none' ? t('settings.embeddingSourceRow', { source: embReady.source }) : '',
+          embReady.model ? t('settings.embeddingModelRowShort', { model: embReady.model }) : '',
+          embReady.dimension ? t('settings.embeddingDimensionRow', { dimension: embReady.dimension }) : '',
           embReady.recent_error?.message || embReady.recent_error?.detail || ''].filter(Boolean).join(' · ');
-      embStatus.append(el('p', { class: 'help' }, `就绪检查：${text}`));
+      embStatus.append(el('p', { class: 'help' }, t('settings.embeddingReadyCheck', { text })));
     }
   }
 
@@ -1520,41 +1566,41 @@ export async function renderSettings(container, version) {
   embTestBtn.addEventListener('click', () => busy(embTestBtn, async () => {
     const payload = embeddingPayload();
     if (payload.mode === 'off') {
-      embResult.replaceChildren(notice('当前为关闭状态；选择复用连接或自定义接口后再测试。', 'warning'));
+      embResult.replaceChildren(notice(t('settings.embeddingOffNotice'), 'warning'));
       return;
     }
     if (payload.mode === 'inherit' && !payload.provider_id) {
-      embResult.replaceChildren(notice('请选择要复用的模型连接。', 'warning'));
+      embResult.replaceChildren(notice(t('settings.embeddingSelectProvider'), 'warning'));
       return;
     }
     if (payload.mode === 'inherit' && !payload.model) {
-      embResult.replaceChildren(notice('复用连接时还需填写 Embedding 模型名，例如 text-embedding-3-small。', 'warning'));
+      embResult.replaceChildren(notice(t('settings.embeddingInheritModelNeeded'), 'warning'));
       return;
     }
     if (payload.mode === 'custom' && !payload.model) {
-      embResult.replaceChildren(notice('请填写 Embedding 模型名称。', 'warning'));
+      embResult.replaceChildren(notice(t('settings.embeddingModelNeeded'), 'warning'));
       return;
     }
-    embResult.replaceChildren(loading('正在调用向量接口…'));
+    embResult.replaceChildren(loading(t('settings.embeddingCalling')));
     try {
       const res = await rawApi('/providers/embeddings-test', { method: 'POST', data: payload });
       if (res.ok === false) {
-        embResult.replaceChildren(notice(`向量接口不可用：${res.diagnosis || res.error || '未知原因'}`, 'error'));
+        embResult.replaceChildren(notice(t('settings.embeddingUnavailable', { reason: res.diagnosis || res.error || t('settings.embeddingUnknownReason') }), 'error'));
         return;
       }
       const parts = [
-        res.diagnosis || '向量接口正常',
-        res.model ? `模型：${res.model}` : '',
-        res.dimension ? `维度：${res.dimension}` : '',
-        Number.isFinite(Number(res.latency_ms)) ? `耗时：${Math.round(Number(res.latency_ms))} ms` : '',
-        res.source ? `来源：${res.source}` : '',
+        res.diagnosis || t('settings.embeddingOk'),
+        res.model ? t('settings.embeddingModelLine', { model: res.model }) : '',
+        res.dimension ? t('settings.embeddingDimensionLine', { dimension: res.dimension }) : '',
+        Number.isFinite(Number(res.latency_ms)) ? t('settings.embeddingLatencyLine', { ms: Math.round(Number(res.latency_ms)) }) : '',
+        res.source ? t('settings.embeddingSourceRow', { source: res.source }) : '',
       ].filter(Boolean);
       embResult.replaceChildren(notice(parts.join('；')));
     } catch (error) {
       if (error.status === 404 || error.status === 405) {
-        embResult.replaceChildren(notice('当前后端尚未提供向量测试接口（/api/providers/embeddings-test 未就绪）。', 'warning'));
+        embResult.replaceChildren(notice(t('settings.embeddingTestUnavailable'), 'warning'));
       } else {
-        embResult.replaceChildren(notice(`向量接口测试失败：${error.message}`, 'error'));
+        embResult.replaceChildren(notice(t('settings.embeddingTestFailed', { message: error.message }), 'error'));
       }
     }
   }));
@@ -1562,29 +1608,29 @@ export async function renderSettings(container, version) {
   embSaveBtn.addEventListener('click', () => busy(embSaveBtn, async () => {
     const payload = embeddingPayload();
     if (payload.mode === 'inherit' && !payload.provider_id) {
-      embResult.replaceChildren(notice('请选择要复用的模型连接。', 'warning'));
+      embResult.replaceChildren(notice(t('settings.embeddingSelectProvider'), 'warning'));
       return;
     }
     if (payload.mode === 'inherit' && !payload.model) {
-      embResult.replaceChildren(notice('复用连接时还需填写 Embedding 模型名。', 'warning'));
+      embResult.replaceChildren(notice(t('settings.embeddingInheritModelNeeded'), 'warning'));
       return;
     }
     if (payload.mode === 'custom' && (!payload.model || !payload.base_url)) {
-      embResult.replaceChildren(notice('自定义模式需要同时填写接口地址与模型名称。', 'warning'));
+      embResult.replaceChildren(notice(t('settings.embeddingCustomNeeds'), 'warning'));
       return;
     }
-    embResult.replaceChildren(loading('正在保存 Embedding 配置…'));
+    embResult.replaceChildren(loading(t('settings.embeddingSaving')));
     try {
       const res = await rawApi('/providers/embeddings-config', { method: 'PUT', data: payload });
       embConfig = res || payload;
       applyEmbeddingConfig(embConfig);
-      embResult.replaceChildren(notice('Embedding 配置已保存。'));
-      toast('语义检索配置已保存。');
+      embResult.replaceChildren(notice(t('settings.embeddingSaved')));
+      toast(t('settings.embeddingSavedToast'));
     } catch (error) {
       if (error.status === 404 || error.status === 405) {
-        embResult.replaceChildren(notice('当前后端尚未提供 Embedding 配置接口，请暂时使用 STUDY_EMBEDDING_* 环境变量。', 'warning'));
+        embResult.replaceChildren(notice(t('settings.embeddingUnavailableBackendSave'), 'warning'));
       } else {
-        embResult.replaceChildren(notice(`保存失败：${error.message}`, 'error'));
+        embResult.replaceChildren(notice(t('settings.embeddingSaveFailed', { message: error.message }), 'error'));
       }
     }
   }));
@@ -1595,40 +1641,106 @@ export async function renderSettings(container, version) {
     loadEmbeddingConfig();
   }
 
-  /* ---------- 6. Token 用量账本 ---------- */
-  const usageCard = el('section', { class: 'card', style: 'margin-top:22px' },
-    el('div', { class: 'card-header' }, el('h2', {}, '近 30 天 Token 用量账本'),
-      badge(`${usage.by_model?.length || 0} 个模型`)),
-    el('p', { class: 'help', style: 'margin-bottom:14px' },
-      usage.notice || '按模型统计真实调用 token；单价由用户自行填写，未填显示「未知」。'));
-  if (usage.by_model?.length) {
-    const tbl = el('table', {},
+  /* ---------- 6. AI 用量与费用估算（只展示估算，不扣减） ---------- */
+  const usageRows = Array.isArray(usage.by_model) ? usage.by_model : [];
+  const usageTotals = usageRows.reduce((acc, row) => {
+    acc.calls += Number(row.calls || 0);
+    acc.input += Number(row.input_tokens || 0);
+    acc.output += Number(row.output_tokens || 0);
+    if (row.estimated_cost !== null && row.estimated_cost !== undefined) {
+      acc.cost += Number(row.estimated_cost);
+      acc.pricedModels += 1;
+    } else {
+      acc.unpricedModels += 1;
+    }
+    return acc;
+  }, { calls: 0, input: 0, output: 0, cost: 0, pricedModels: 0, unpricedModels: 0 });
+  const usageCard = el('section', { class: 'card settings-usage-card', style: 'margin-top:22px' },
+    el('div', { class: 'card-header' }, el('h2', {}, t('settings.usageTitle')),
+      badge(t('settings.usageModelBadge', { count: usageRows.length }))),
+    el('p', { class: 'help', style: 'margin-bottom:10px' },
+      t('settings.usageNote')),
+    el('div', { class: 'settings-usage-summary', 'aria-live': 'polite' },
+      el('span', {}, t('settings.usageCalls', { count: number(usageTotals.calls) })),
+      el('span', {}, t('settings.usageInput', { count: number(usageTotals.input) })),
+      el('span', {}, t('settings.usageOutput', { count: number(usageTotals.output) })),
+      el('span', { class: 'settings-usage-cost' }, usageTotals.pricedModels
+        ? t('settings.usageTotalEstimate', { amount: moneyText(usageTotals.cost) })
+        : t('settings.usageTotalUnknown')),
+      usageTotals.unpricedModels
+        ? el('span', { class: 'settings-usage-warn' }, t('settings.usageUnpriced', { count: usageTotals.unpricedModels }))
+        : null),
+    el('p', { class: 'help settings-usage-source', 'data-no-i18n': '' },
+      usage.notice || t('settings.usageNoticeFallback')));
+  // 今日用量 / 剩余配额（WS23）：接口未就绪时整块隐藏，不影响既有 30 天用量表。
+  if (usageToday && usageToday.quota) {
+    const quotaKinds = Array.isArray(usageToday.quota.kinds) ? usageToday.quota.kinds : [];
+    const visible = quotaKinds.filter(entry => Number(entry.used_today) > 0
+      || ['explain', 'grade', 'notes', 'recognize', 'ocr', 'course'].includes(entry.kind));
+    const today = usageToday.today || {};
+    const chips = [
+      el('span', { class: 'settings-usage-quota-chip' },
+        t('ai.usage.quotaTodayJobs', { count: number(today.jobs || 0) })),
+      el('span', { class: 'settings-usage-quota-chip' },
+        t('ai.usage.quotaTokens', {
+          input: number(today.tokens_in || 0), output: number(today.tokens_out || 0),
+        })),
+      ...visible.map(entry => {
+        const kindKey = `tasks.task.${entry.kind}`;
+        const label = t(kindKey) !== kindKey ? t(kindKey) : entry.label || entry.kind;
+        const limit = entry.daily_limit;
+        const text = limit === null || limit === undefined || Number(limit) === 0
+          ? t('ai.usage.quotaUnlimited')
+          : t('ai.usage.quotaEntry', { used: number(entry.used_today || 0), limit: number(limit) });
+        return el('span', {
+          class: `settings-usage-quota-chip${entry.limit_reached ? ' is-warn' : ''}`,
+          title: entry.remaining_today === null || entry.remaining_today === undefined
+            ? ''
+            : t('ai.usage.quotaRemaining', { count: number(entry.remaining_today) }),
+        }, `${label} · ${text}`);
+      }),
+    ];
+    usageCard.append(
+      el('div', { class: 'settings-usage-quota', 'aria-live': 'polite' },
+        el('strong', {}, t('ai.usage.quotaTitle')),
+        el('div', { class: 'settings-usage-quota-chips' }, ...chips),
+        el('p', { class: 'help' }, t('ai.usage.quotaNote'))));
+  }
+  if (usageRows.length) {
+    const tbl = el('table', { class: 'settings-usage-table' },
       el('thead', {}, el('tr', {},
-        el('th', {}, '模型'), el('th', {}, '调用次数'), el('th', {}, '输入 Tokens'),
-        el('th', {}, '输出 Tokens'), el('th', {}, '估算费用'))),
-      el('tbody', {}, ...(usage.by_model || []).map(row => el('tr', {},
-        el('td', {}, row.model),
-        el('td', {}, number(row.calls)),
-        el('td', {}, number(row.input_tokens)),
-        el('td', {}, number(row.output_tokens)),
-        el('td', {}, row.estimated_cost !== null && row.estimated_cost !== undefined
-          ? `¥ ${row.estimated_cost}` : '未知（未填单价）')))));
+        el('th', {}, t('settings.usageHeadModel')), el('th', {}, t('settings.usageHeadCalls')), el('th', {}, t('settings.usageHeadInput')),
+        el('th', {}, t('settings.usageHeadOutput')), el('th', {}, t('settings.usageHeadPrice')), el('th', {}, t('settings.usageHeadCost')))),
+      el('tbody', {}, ...usageRows.map(row => {
+        const provider = providerById(row.provider_id);
+        return el('tr', {},
+          el('td', {},
+            el('strong', {}, row.model || t('settings.usageUnknownModel')),
+            provider ? el('div', { class: 'settings-usage-connect' }, provider.name) : null),
+          el('td', {}, number(row.calls)),
+          el('td', {}, number(row.input_tokens)),
+          el('td', {}, number(row.output_tokens)),
+          el('td', {}, priceLabel(row)),
+          el('td', { class: 'settings-usage-cost' }, row.estimated_cost !== null && row.estimated_cost !== undefined
+            ? `¥ ${moneyText(row.estimated_cost)}` : t('tasks.priceUnset')));
+      })));
     usageCard.append(el('div', { class: 'table-wrap' }, tbl));
   } else {
-    usageCard.append(el('p', { class: 'help' }, '暂无用量记录。发起 AI 讲解、核验或笔记任务后会自动记账。'));
+    usageCard.append(el('p', { class: 'help' },
+      t('settings.usageEmpty')));
   }
 
   /* ---------- 7. 账号安全 ---------- */
-  const curPwd = input('输入当前密码', { type: 'password', autocomplete: 'current-password' });
-  const newPwd = input('输入新密码（至少 8 位）', { type: 'password', autocomplete: 'new-password' });
+  const curPwd = input(t('settings.currentPasswordPlaceholder'), { type: 'password', autocomplete: 'current-password' });
+  const newPwd = input(t('settings.newPasswordPlaceholder'), { type: 'password', autocomplete: 'new-password' });
   const codesMount = el('div');
   const secCard = el('section', { class: 'card', style: 'margin-top:22px' },
-    el('div', { class: 'card-header' }, el('h2', {}, '账号安全与找回密码恢复码'), badge('单次有效', 'teal')),
-    el('div', { class: 'form-grid' }, field('当前密码', curPwd), field('新密码（≥8 位）', newPwd)),
+    el('div', { class: 'card-header' }, el('h2', {}, t('settings.securityTitle')), badge(t('settings.securityBadge'), 'teal')),
+    el('div', { class: 'form-grid' }, field(t('settings.currentPassword'), curPwd), field(t('settings.newPasswordField'), newPwd)),
     el('div', { class: 'row between', style: 'margin-top:14px' },
-      button('生成 8 组找回密码恢复码', e => busy(e.currentTarget, async () => {
-        if (!window.confirm('生成新恢复码会使此前未使用的恢复码失效，继续？')) return;
-        if (!curPwd.value) throw new Error('生成恢复码前请输入当前密码。');
+      button(t('settings.generateRecovery'), e => busy(e.currentTarget, async () => {
+        if (!window.confirm(t('settings.generateRecoveryConfirm'))) return;
+        if (!curPwd.value) throw new Error(t('settings.generateRecoveryNeedPassword'));
         const res = await api('/auth/recovery-codes', {
           method: 'POST', data: { current_password: curPwd.value },
         });
@@ -1637,19 +1749,19 @@ export async function renderSettings(container, version) {
           el('pre', { class: 'prompt-preview-pre' }, (res.codes || []).join('\n'))
         );
       }), 'secondary small', 'key'),
-      button('修改密码', e => busy(e.currentTarget, async () => {
-        if (!curPwd.value || newPwd.value.length < 8) throw new Error('请输入当前密码和至少 8 位新密码。');
+      button(t('settings.changePassword'), e => busy(e.currentTarget, async () => {
+        if (!curPwd.value || newPwd.value.length < 8) throw new Error(t('settings.changePasswordNeedBoth'));
         const res = await api('/auth/change-password', {
           method: 'POST', data: { current_password: curPwd.value, new_password: newPwd.value },
         });
         curPwd.value = ''; newPwd.value = '';
-        toast(res.message || '密码已修改。');
+        toast(res.message || t('settings.passwordChanged'));
       }), '', 'lock')),
     codesMount);
 
   container.replaceChildren(
-    heading('MODEL CONNECTIONS', '选好你的学习搭档。',
-      '先看 API 状态与各任务默认模型（可行内直接修改），再添加自定义中转站或本地模型；模型能力、预算与语义检索收在下方。'),
+    heading('MODEL CONNECTIONS', t('settings.heading'),
+      t('settings.subheading')),
     apiStatusCard,
     ctx.providersGrid,
     addForm,

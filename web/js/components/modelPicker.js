@@ -1,3 +1,4 @@
+import { t } from '../core/i18n.js';
 import { api } from '../core/api.js';
 import { state, readLocal, saveLocal } from '../core/state.js';
 import { el, field, select, badge } from '../core/dom.js';
@@ -5,8 +6,8 @@ import { go } from '../core/router.js';
 
 function capIcons(caps = {}) {
   const parts = [];
-  if (caps.vision) parts.push('👁视觉');
-  if (caps.reasoning) parts.push('🧠推理');
+  if (caps.vision) parts.push(t('modelPicker.vision'));
+  if (caps.reasoning) parts.push(t('modelPicker.reasoning'));
   if (caps.json) parts.push('{}JSON');
   return parts.length ? ` [${parts.join(' ')}]` : '';
 }
@@ -65,30 +66,30 @@ export function createModelPicker(scope, { forceCross = false, requireVision = f
   const judgeVal = flatValues.has(defaultJudge) ? defaultJudge : '';
 
   const primary = select(
-    [{ value: '', label: groups.length ? '请选择主模型' : '尚未配置模型' }, ...groups],
+    [{ value: '', label: groups.length ? t('modelPicker.selectPrimary') : t('modelPicker.notConfigured') }, ...groups],
     firstVal
   );
-  const verifier = select([{ value: '', label: '请选择独立核验模型（模型 B）' }, ...groups], verVal);
-  const judge = select([{ value: '', label: '自动（无裁判时由模型 B 裁定）' }, ...groups], judgeVal);
+  const verifier = select([{ value: '', label: t('modelPicker.selectVerifier') }, ...groups], verVal);
+  const judge = select([{ value: '', label: t('modelPicker.autoJudge') }, ...groups], judgeVal);
 
   const initialCross = forceCross || Boolean(saved.cross) || td.mode === 'accurate';
   const crossCheck = el('input', { type: 'checkbox', checked: initialCross, disabled: forceCross });
   const peerCheck = el('input', { type: 'checkbox', checked: Boolean(saved.peerReview) });
 
   const modePills = el('div', { class: 'mode-toggle-row' });
-  const fastBtn = el('button', { type: 'button', class: `mode-pill${!initialCross ? ' active' : ''}` }, '⚡ 快速模式（单模型）');
-  const accurateBtn = el('button', { type: 'button', class: `mode-pill${initialCross ? ' active' : ''}` }, '🛡 精确模式（双模型交叉验证）');
+  const fastBtn = el('button', { type: 'button', class: `mode-pill${!initialCross ? ' active' : ''}` }, t('modelPicker.fastMode'));
+  const accurateBtn = el('button', { type: 'button', class: `mode-pill${initialCross ? ' active' : ''}` }, t('modelPicker.accurateMode'));
   if (showModeToggle && !forceCross) {
     fastBtn.addEventListener('click', () => { crossCheck.checked = false; sync(); });
     accurateBtn.addEventListener('click', () => { crossCheck.checked = true; sync(); });
     modePills.append(fastBtn, accurateBtn);
   }
 
-  const verifierField = field('核验模型（模型 B）', verifier);
-  const judgeField = field('独立裁判模型（模型 C，可选）', judge, '不选时由核验模型 B 担任裁判，绝不由主模型 A 自判。');
-  const peerLabel = el('label', { class: 'check-label', style: 'margin-top:8px' }, peerCheck, '分歧时启用 1 轮互审（A 看 B、B 看 A 各自审视修正）');
+  const verifierField = field(t('modelPicker.verifierField'), verifier);
+  const judgeField = field(t('modelPicker.judgeField'), judge, t('modelPicker.judgeHint'));
+  const peerLabel = el('label', { class: 'check-label', style: 'margin-top:8px' }, peerCheck, t('modelPicker.peerLabel'));
 
-  const grid = el('div', { class: 'ai-fields' }, field(requireVision ? '视觉模型（主模型 A）' : '主模型（模型 A）', primary), verifierField);
+  const grid = el('div', { class: 'ai-fields' }, field(requireVision ? t('modelPicker.visionField') : t('modelPicker.primaryField'), primary), verifierField);
   const extraCrossBox = el('div', { class: 'cross-extra' }, showJudge ? judgeField : null, showModeToggle && !forceCross ? peerLabel : null);
 
   const currentLabel = el('p', { class: 'model-picker-current help', 'aria-live': 'polite' });
@@ -96,13 +97,13 @@ export function createModelPicker(scope, { forceCross = false, requireVision = f
     showModeToggle && !forceCross ? modePills : null,
     grid,
     !showModeToggle || forceCross
-      ? el('label', { class: 'check-label', style: 'margin-top:10px' }, crossCheck, '独立交叉验证', forceCross ? badge('作答判分必选', 'amber') : null)
+      ? el('label', { class: 'check-label', style: 'margin-top:10px' }, crossCheck, t('modelPicker.crossVerify'), forceCross ? badge(t('modelPicker.crossRequired'), 'amber') : null)
       : null,
     extraCrossBox,
     currentLabel,
     visionFallback
       ? el('p', { class: 'notice warning vision-fallback-hint', role: 'status' },
-        '当前连接里还没有标记为「视觉」的模型，已回退为全部模型可选；请确认所选模型支持图片输入，否则拍题 / OCR 会识别失败。可在「模型设置 → 模型能力标签」中勾选视觉。')
+        t('modelPicker.visionFallback'))
       : null
   );
 
@@ -117,10 +118,10 @@ export function createModelPicker(scope, { forceCross = false, requireVision = f
 
   function refreshCurrentLabel() {
     const isCross = forceCross || crossCheck.checked;
-    const parts = [optionLabelOf(primary.value) || '未选择'];
-    if (isCross && verifier.value) parts.push(`核验：${optionLabelOf(verifier.value)}`);
-    if (isCross && showJudge && judge.value) parts.push(`裁判：${optionLabelOf(judge.value)}`);
-    currentLabel.textContent = `当前模型：${parts.join(' · ')} · ${isCross ? '精确模式（交叉核验）' : '快速模式（单模型）'}`;
+    const parts = [optionLabelOf(primary.value) || t('modelPicker.notSelected')];
+    if (isCross && verifier.value) parts.push(t('modelPicker.verifyChip', { name: optionLabelOf(verifier.value) }));
+    if (isCross && showJudge && judge.value) parts.push(t('modelPicker.judgeChip', { name: optionLabelOf(judge.value) }));
+    currentLabel.textContent = t('modelPicker.current', { models: parts.join(' · '), mode: isCross ? t('modelPicker.modeAccurate') : t('modelPicker.modeFast') });
   }
 
   /** 切换模型/模式后立即写回内存默认模型，避免切到下一题又弹回旧选择。 */
@@ -191,8 +192,8 @@ export function createModelPicker(scope, { forceCross = false, requireVision = f
 
   if (!groups.length) {
     node.append(el('p', { class: 'help', style: 'margin-top:10px' },
-      'AI 功能使用你自己的 API。',
-      el('button', { type: 'button', class: 'text-button', onClick: () => go('settings') }, '前往模型设置')));
+      t('modelPicker.selfApi'),
+      el('button', { type: 'button', class: 'text-button', onClick: () => go('settings') }, t('modelPicker.goSettings'))));
   }
 
   return {
@@ -203,18 +204,18 @@ export function createModelPicker(scope, { forceCross = false, requireVision = f
         crossCheck.checked = true;
         sync();
       }
-      if (!primary.value) throw new Error('请先在模型设置中添加 API 和可使用的模型。');
+      if (!primary.value) throw new Error(t('modelPicker.noProviderError'));
       const [provider_id, model] = JSON.parse(primary.value);
       const cross_verify = requiredCross || forceCross || crossCheck.checked;
       let verify_provider_id, verify_model, judge_provider_id, judge_model;
       if (cross_verify) {
         if (!verifier.value) {
           verifier.focus();
-          throw new Error('交叉验证需要选择第二个模型（模型 B）。');
+          throw new Error(t('modelPicker.needVerifierError'));
         }
         [verify_provider_id, verify_model] = JSON.parse(verifier.value);
         if (provider_id === verify_provider_id && model === verify_model) {
-          throw new Error('交叉验证请选择不同的模型，不能重复使用同一模型。');
+          throw new Error(t('modelPicker.needDifferentError'));
         }
         if (judge.value) {
           [judge_provider_id, judge_model] = JSON.parse(judge.value);

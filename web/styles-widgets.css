@@ -1,0 +1,204 @@
+/* 顶栏专注计时（番茄钟）与「每日一签」弹窗的样式。
+ *
+ * 命名前缀：`.fc-`（focus timer）、`.dq-`（daily quote），避免和既有页面样式冲突。
+ * 主控件均 ≥44px 触控高度；≤700px 时面板改为顶部抽屉，不产生横向滚动。
+ */
+
+/* ------------------------------------------------------------------ 番茄钟 */
+
+/* 侧栏导航项变多后，底部「今日一句」在 900px 高的屏幕上会被撑出视口且无法滚动到；
+ * 这里让侧栏自身可滚动（内容不足一屏时 .sidebar-bottom 的 margin-top:auto 仍然贴底）。 */
+.sidebar { overflow-y: auto; overflow-x: hidden; overscroll-behavior: contain; scrollbar-width: thin; }
+.sidebar::-webkit-scrollbar { width: 6px; }
+.sidebar::-webkit-scrollbar-thumb { background: #2f4f58; border-radius: 6px; }
+
+.fc-wrap { position: relative; display: inline-flex; }
+.fc-slot { display: inline-flex; flex: none; }
+
+.fc-pill {
+  display: inline-flex;
+  align-items: center;
+  gap: 7px;
+  flex: none;
+  min-height: 40px;
+  padding: 6px 11px;
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  background: #fff;
+  color: #547068;
+  font-size: .8125rem;
+  font-variant-numeric: tabular-nums;
+  letter-spacing: .01em;
+  transition: border-color .15s, background .15s, color .15s;
+}
+.fc-pill:hover { border-color: #9fc4b6; color: #2f6d58; }
+.fc-pill.running { border-color: #8dc0ab; background: #f3faf6; color: #226b57; }
+.fc-pill.paused { border-color: #e3cb9f; background: #fff9ef; color: #8a6a2f; }
+.fc-pill-text { font-weight: 600; white-space: nowrap; }
+
+.fc-ring { width: 18px; height: 18px; transform: rotate(-90deg); flex: none; }
+.fc-ring-track { fill: none; stroke: #dbe8e1; stroke-width: 2.6; }
+.fc-ring-bar {
+  fill: none;
+  stroke: #3d8f79;
+  stroke-width: 2.6;
+  stroke-linecap: round;
+  transition: stroke-dashoffset .25s linear;
+}
+.fc-pill.paused .fc-ring-bar { stroke: #c39a4e; }
+
+.fc-panel {
+  position: absolute;
+  top: calc(100% + 12px);
+  right: 0;
+  width: 336px;
+  max-width: calc(100vw - 24px);
+  display: grid;
+  gap: 12px;
+  padding: 18px;
+  background: #fff;
+  border: 1px solid var(--line);
+  border-radius: 15px;
+  box-shadow: 0 20px 48px #102b3526;
+  z-index: 45;
+}
+.fc-panel[hidden] { display: none; }
+.fc-head { display: flex; align-items: center; justify-content: space-between; }
+.fc-head strong { font-size: .9375rem; color: var(--ink); }
+
+.fc-clock-wrap { text-align: center; padding: 2px 0 4px; }
+.fc-clock {
+  font-size: 2.3rem;
+  font-weight: 700;
+  letter-spacing: -.045em;
+  color: #1d3b34;
+  font-variant-numeric: tabular-nums;
+  line-height: 1.15;
+}
+.fc-clock-caption { font-size: .75rem; color: var(--muted); margin-top: 3px; }
+
+.fc-modes, .fc-presets { display: flex; flex-wrap: wrap; gap: 6px; }
+.fc-chip {
+  border: 1px solid #dfe7e9;
+  background: #fff;
+  border-radius: 7px;
+  padding: 8px 11px;
+  font-size: .8125rem;
+  color: #63797f;
+  min-height: 36px;
+}
+.fc-chip:hover { border-color: #a8c4bb; }
+.fc-chip.active { background: #eaf4ee; border-color: #8bb69f; color: #2f6d58; font-weight: 600; }
+.fc-chip:disabled { cursor: not-allowed; opacity: .5; }
+
+.fc-preset-custom { display: flex; align-items: center; gap: 8px; font-size: .8125rem; color: var(--muted); }
+.fc-custom { width: 86px; min-height: 36px; padding: 6px 10px; }
+
+.fc-task { font-size: .8125rem; min-height: 38px; }
+
+.fc-actions { display: flex; gap: 8px; }
+.fc-primary { flex: 1; min-height: 44px; }
+.fc-stop { min-height: 44px; }
+
+.fc-sound { font-size: .75rem; color: var(--muted); }
+
+.fc-stats {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 5px;
+  padding-top: 10px;
+  border-top: 1px solid #eef1f2;
+  font-size: .75rem;
+  color: var(--muted);
+}
+.fc-stats strong { color: #2f6d58; font-weight: 650; }
+.fc-dot { color: #c2cdd2; }
+
+/* --------------------------------------------------------------- 每日一签 */
+
+.dq-dialog {
+  max-width: min(520px, calc(100vw - 32px));
+  padding: 0;
+  border: 0;
+  background: transparent;
+  opacity: 0;
+  transform: translateY(10px) scale(.985);
+  transition: opacity .2s ease, transform .2s ease;
+}
+.dq-dialog[open] { display: block; }
+.dq-dialog.is-in { opacity: 1; transform: none; }
+.dq-dialog.is-out { opacity: 0; transform: translateY(6px) scale(.985); }
+.dq-dialog::backdrop { background: #10262fab; backdrop-filter: blur(2px); }
+
+.dq-inner {
+  position: relative;
+  padding: 28px 30px 20px;
+  border: 1px solid #e2e9e2;
+  border-radius: 20px;
+  background:
+    radial-gradient(120% 90% at 100% 0%, #eef5ec 0%, transparent 55%),
+    linear-gradient(160deg, #fdfcf7 0%, #f6f9f4 100%);
+  box-shadow: 0 32px 80px #0d273140;
+}
+
+.dq-head { display: flex; align-items: center; justify-content: space-between; gap: 12px; }
+.dq-eyebrow {
+  font-size: .6875rem;
+  letter-spacing: .2em;
+  color: #7f948b;
+  font-weight: 600;
+}
+.dq-x { width: 34px; height: 34px; border-radius: 8px; color: #7f948b; }
+.dq-x:hover { background: #e9f0ea; }
+
+.dq-text {
+  margin: 20px 0 14px;
+  font-family: "Songti SC", "Noto Serif SC", "Source Han Serif SC", "SimSun", serif;
+  font-size: 1.42rem;
+  line-height: 1.95;
+  letter-spacing: .015em;
+  color: #1d3b34;
+  overflow-wrap: anywhere;
+}
+.dq-from { font-size: .875rem; color: #6d857c; text-align: right; }
+
+.dq-actions { display: flex; flex-wrap: wrap; gap: 8px; margin-top: 26px; }
+.dq-actions .button { min-height: 42px; }
+.dq-close { flex: 1; min-width: 120px; }
+.dq-fav[aria-pressed="true"] { color: #94711f; background: #fdf6e3; border-color: #eddfba; }
+
+.dq-meta { margin-top: 15px; text-align: center; font-size: .6875rem; color: #9aa9a3; }
+
+/* 侧栏底部的「今日一句」小卡（复用 .sidebar-note 外框） */
+.sidebar-note .dq-teaser { cursor: pointer; border-radius: 8px; margin-top: 2px; padding: 2px 2px 0; }
+.sidebar-note .dq-teaser:hover { background: #16343f; }
+.dq-teaser-text {
+  display: -webkit-box;
+  -webkit-line-clamp: 2;
+  -webkit-box-orient: vertical;
+  overflow: hidden;
+  color: #dce9e4;
+  font-size: .8125rem;
+  line-height: 1.7;
+}
+.dq-teaser-from { display: block; color: #8bada8; font-size: .6875rem; margin-top: 6px; }
+
+@media (max-width: 700px) {
+  .fc-panel {
+    position: fixed;
+    top: 76px;
+    left: 12px;
+    right: 12px;
+    width: auto;
+    max-height: min(72vh, 560px);
+    overflow: auto;
+  }
+  .fc-pill { min-height: 38px; }
+  .dq-inner { padding: 24px 20px 16px; }
+  .dq-text { font-size: 1.24rem; line-height: 1.9; margin: 16px 0 12px; }
+  .dq-actions .button { flex: 1 1 100%; }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .dq-dialog, .fc-ring-bar { transition: none; }
+}

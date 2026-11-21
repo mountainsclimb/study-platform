@@ -1,5 +1,6 @@
 import { api } from '../core/api.js';
 import { el, button, busy, toast } from '../core/dom.js';
+import { t } from '../core/i18n.js';
 
 export function createPromptGrid(gridSpec, { initialConfig = null, onChange = null } = {}) {
   const dims = gridSpec.dimensions || {};
@@ -17,9 +18,9 @@ export function createPromptGrid(gridSpec, { initialConfig = null, onChange = nu
   let customReq = '';
   const root = el('div', { class: 'prompt-grid-composer' });
   const dimContainers = el('div', { class: 'prompt-grid-dims' });
-  const previewContent = el('pre', { class: 'prompt-preview-pre' }, '点击展开查看拼装后的提示词要求（L1–L4）…');
+  const previewContent = el('pre', { class: 'prompt-preview-pre' }, t('promptGrid.clickToExpandTheAssembledPromptRequirements'));
   const previewDetails = el('details', { class: 'sources', style: 'margin-top:14px' },
-    el('summary', {}, '最终要求预览（可展开核对 L1–L4，安全规则 L0 由系统固定保护）'),
+    el('summary', {}, t('promptGrid.finalRequirementsPreviewExpandToVerifyL1')),
     previewContent);
 
   const tplBar = el('div', { class: 'row between', style: 'margin-bottom:14px' });
@@ -40,27 +41,27 @@ export function createPromptGrid(gridSpec, { initialConfig = null, onChange = nu
               renderGrid();
               updatePreview();
               if (onChange) onChange({ config: getConfig(), customRequirements: customReq });
-              toast(`已载入模板「${tpl.name}」`);
+              toast(t('promptGrid.templateLoaded', { v1: tpl.name }));
             },
-          }, `${tpl.is_recommended ? '推荐 · ' : tpl.is_shared ? '已共享 · ' : ''}${tpl.name}`),
+          }, `${tpl.is_recommended ? t('promptGrid.recommended') : tpl.is_shared ? t('promptGrid.shared') : ''}${tpl.name}`),
           tpl.own
             ? el('button', {
                 type: 'button',
                 class: 'tpl-load-btn',
                 onClick: e => busy(e.currentTarget, async () => {
                   const shared = !tpl.is_shared;
-                  if (shared && !window.confirm('模板名称、方格选项和自定义要求将对其他登录用户可见。确认公开分享？')) return;
+                  if (shared && !window.confirm(t('promptGrid.theTemplateNameGridOptionsAndCustom'))) return;
                   await api(`/prompt-templates/${tpl.id}/share`, { method: 'PUT', data: { shared } });
-                  toast(shared ? '模板已公开分享。' : '已取消分享。');
+                  toast(shared ? t('promptGrid.templateSharedPublicly') : t('promptGrid.sharingCancelled'));
                   await refreshTemplates();
                 }),
-              }, tpl.is_shared ? '取消分享' : '公开分享')
+              }, tpl.is_shared ? t('promptGrid.stopSharing') : t('promptGrid.sharePublicly'))
             : null,
           tpl.own
             ? el('button', {
                 type: 'button',
                 class: 'tpl-del-btn',
-                title: '删除我的模板',
+                title: t('promptGrid.deleteMyTemplate'),
                 onClick: e => busy(e.currentTarget, async () => {
                   await api(`/prompt-templates/${tpl.id}`, { method: 'DELETE' });
                   await refreshTemplates();
@@ -70,21 +71,21 @@ export function createPromptGrid(gridSpec, { initialConfig = null, onChange = nu
         tplList.append(chip);
       }
       if (!tplList.childNodes.length) {
-        tplList.append(el('span', { class: 'help' }, '把常用方格组合存为模板，下次一键复用。'));
+        tplList.append(el('span', { class: 'help' }, t('promptGrid.saveFrequentlyUsedGridCombinationsAsTemplates')));
       }
     } catch (err) {
-      tplList.replaceChildren(el('p', { class: 'help' }, `模板加载失败：${err.message}`));
+      tplList.replaceChildren(el('p', { class: 'help' }, t('promptGrid.failedToLoadTemplates', { v1: err.message })));
     }
   }
 
-  const saveTplBtn = button('存为我的模板', event => busy(event.currentTarget, async () => {
-    const name = window.prompt('给这套提示词组合起个名字（例如：高考数学导数一轮清单）：');
+  const saveTplBtn = button(t('promptGrid.saveAsMyTemplate'), event => busy(event.currentTarget, async () => {
+    const name = window.prompt(t('promptGrid.nameThisPromptCombinationEGGaokao'));
     if (!name || !name.trim()) return;
     await api('/prompt-templates', {
       method: 'POST',
       data: { name: name.trim(), config: getConfig(), custom_requirements: customReq },
     });
-    toast('已保存到「我的模板」。');
+    toast(t('promptGrid.savedToMyTemplates'));
     await refreshTemplates();
   }), 'ghost small', 'plus');
 
@@ -99,7 +100,7 @@ export function createPromptGrid(gridSpec, { initialConfig = null, onChange = nu
       });
       previewContent.textContent = res.preview || '';
     } catch (err) {
-      previewContent.textContent = `预览生成失败：${err.message}`;
+      previewContent.textContent = t('promptGrid.failedToBuildThePreview', { v1: err.message });
     }
   }
   previewDetails.addEventListener('toggle', () => { if (previewDetails.open) updatePreview(); });

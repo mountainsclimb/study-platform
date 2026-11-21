@@ -631,3 +631,496 @@ a{color:var(--accent-deep)}
   .job-progress-row .job-progress { flex-basis: 100%; }
   .job-card-live { padding: 14px; }
 }
+/* ==========================================================================
+ * P8 暗色主题（2026-11-21）
+ * --------------------------------------------------------------------------
+ * 只在本文件末尾追加，不改动上方既有样式；浅色主题的观感保持不变（所有
+ * 规则都限定在 [data-theme="dark"] 下，由 theme-boot.js 在首屏前打标）。
+ *
+ * 约定：
+ * - 覆盖选择器统一加 `html[data-theme="dark"]` 前缀。styles.css 在 index.html
+ *   中先于模块样式表加载，多一个 html 类型选择器可让覆盖优先级高于模块里的
+ *   单/双类选择器，避免给模块 CSS 加 !important。
+ * - 幻灯片舞台（.cls-stage/.cls-slide* 的内联配色）、讲评/试卷纸面
+ *   （.pm-dialog 纸面、.pl-card-preview-img、.pm-paper）与打印输出属于
+ *   「文档」，保持原纸面颜色；只把外壳与工具栏切到暗色。
+ * ========================================================================== */
+
+/* ---------- 1. 顶栏主题切换按钮（浅色/暗色共用，触控 ≥44px） ---------- */
+.theme-toggle{width:44px;height:44px;min-width:44px;min-height:44px;border-radius:11px;
+  display:inline-flex;align-items:center;justify-content:center;flex:none;
+  color:var(--soft);background:transparent;border:1px solid transparent}
+.theme-toggle:hover{background:var(--rail);color:var(--ink)}
+.theme-toggle:active{background:var(--line)}
+.theme-toggle .icon{width:20px;height:20px}
+
+/* ---------- 2. 暗色设计令牌 ---------- */
+html[data-theme="dark"]{
+  color-scheme:dark;
+  --paper:#0f1615; --surface:#151f1d; --rail:#1b2724;
+  --ink:#e8f0ec; --soft:#a8bab4; --muted:#9aaca6;
+  --accent:#2b8269; --accent-deep:#8ad8bd; --tint:#1b352e;
+  --line:#2b3b37; --focus:#7fd6bd; --wrong:#f0a49b; --wrong-bg:#3a2422;
+  --teal:#8ad8bd; --teal-bg:#1b352e; --navy:#0b1413; --white:#fff;
+  --danger:#f0a49b;
+  background:var(--paper); color:var(--ink);
+}
+html[data-theme="dark"] body{background:var(--paper);color:var(--ink)}
+html[data-theme="dark"] ::selection{background:#2f6a58;color:#f2fbf7}
+
+/* ---------- 3. 全局壳层：顶栏 / 侧栏 / 内容区 ---------- */
+html[data-theme="dark"] .topbar{background:#0f1615e6;border-bottom-color:var(--line)}
+html[data-theme="dark"] .topbar-pill{background:#16211f;border-color:var(--line);color:#a9c2ba}
+html[data-theme="dark"] .mobile-toggle{color:var(--ink)}
+html[data-theme="dark"] .breadcrumb,html[data-theme="dark"] .topbar-right{color:var(--soft)}
+html[data-theme="dark"] .subtle-divider{color:#4a5f59}
+html[data-theme="dark"] .sidebar{background:var(--navy);box-shadow:8px 0 40px #00000055}
+html[data-theme="dark"] .sidebar-note{border-color:#2a3f3a}
+html[data-theme="dark"] .sidebar-note p{color:#a6bfb9}
+html[data-theme="dark"] .sidebar-note strong{color:#e0ecea}
+html[data-theme="dark"] .nav-item:hover{background:#17302b;color:#fff}
+html[data-theme="dark"] .nav-item.active{background:#1e4b40}
+html[data-theme="dark"] .user-menu{border-top-color:#2a3f3a}
+html[data-theme="dark"] .avatar{background:#dcede6;color:#1d3f36}
+
+/* ---------- 4. 按钮 / 徽标 / 提示条 ---------- */
+html[data-theme="dark"] .badge.blue{background:#1e2c3a;color:#a9c6e8}
+html[data-theme="dark"] .badge.amber{background:#3a2f1b;color:#e8c07d}
+html[data-theme="dark"] .notice.warning{background:#3a2f1b;border-color:#5c4a25;color:#e8c07d}
+html[data-theme="dark"] .status-chip[data-state="warn"]{background:#3a2f1b;color:#e8c07d}
+html[data-theme="dark"] .build-stale-banner{background:#3a2f1b;border-color:#5c4a25;color:#ecd39a}
+html[data-theme="dark"] .build-stale-banner .button.small{background:#b8892f;color:#10130c}
+html[data-theme="dark"] .build-stale-banner-close{color:#ecd39a}
+html[data-theme="dark"] .build-stale-banner-close:hover{background:#4b3d22}
+html[data-theme="dark"] .notice{background:var(--tint);border-color:var(--line);color:var(--accent-deep)}
+html[data-theme="dark"] .notice.error{background:var(--wrong-bg);border-color:#5a3532;color:var(--wrong)}
+
+/* ---------- 5. 首页与通用卡片 ---------- */
+html[data-theme="dark"] .hero{background:linear-gradient(135deg,#17241f,#121d1a);border-color:var(--line)}
+html[data-theme="dark"] .hero p{color:var(--soft)}
+html[data-theme="dark"] .orbit{border-color:#2f4a42}
+html[data-theme="dark"] .orbit:after{border-color:#2f4a42}
+html[data-theme="dark"] .book-art{background:#245c4c;border-left-color:#1c4c3e;box-shadow:10px 10px 0 #1c342d;color:#cfe9df}
+html[data-theme="dark"] .book-art i{background:#4d8b74}
+html[data-theme="dark"] .art-star{color:#5f8d7c}
+html[data-theme="dark"] .stat-icon{background:var(--tint);color:var(--accent-deep)}
+html[data-theme="dark"] .shortcut{background:var(--surface);border-color:var(--line);color:var(--ink)}
+html[data-theme="dark"] .shortcut:hover{border-color:#3f6a5d;box-shadow:0 4px 13px #00000040}
+html[data-theme="dark"] .shortcut>span:first-child{background:#1e2b3a;color:#a9c3e8}
+html[data-theme="dark"] .shortcut:nth-child(2)>span:first-child{background:#342a1b;color:#e0b877}
+html[data-theme="dark"] .shortcut:nth-child(3)>span:first-child{background:#1d2f22;color:#a9d3a9}
+html[data-theme="dark"] .empty{color:var(--soft)}
+html[data-theme="dark"] .empty-icon{background:var(--tint);color:var(--accent-deep)}
+html[data-theme="dark"] .empty h3{color:var(--ink)}
+html[data-theme="dark"] .mini-item{border-bottom-color:var(--line)}
+html[data-theme="dark"] .mini-icon{background:var(--tint);color:var(--accent-deep)}
+html[data-theme="dark"] .stat-top,html[data-theme="dark"] .stat-unit,html[data-theme="dark"] .stat-caption,
+html[data-theme="dark"] .section-label,html[data-theme="dark"] .shortcut small,html[data-theme="dark"] .mini-item-content p{color:var(--soft)}
+html[data-theme="dark"] .footer-note{color:#8fa39c}
+
+/* ---------- 6. 表单 / 表格 / 筛选 ---------- */
+html[data-theme="dark"] .field label,html[data-theme="dark"] .field-label,
+html[data-theme="dark"] .filter-compact .field label{color:var(--soft)}
+html[data-theme="dark"] input::placeholder,html[data-theme="dark"] textarea::placeholder{color:#93a49e}
+html[data-theme="dark"] .check-label{color:var(--soft)}
+html[data-theme="dark"] .search-wrap .icon{color:#93a8a1}
+html[data-theme="dark"] table th{background:var(--rail);color:var(--soft)}
+html[data-theme="dark"] table th,html[data-theme="dark"] table td{border-bottom-color:var(--line)}
+html[data-theme="dark"] .multi-select>summary{background:var(--surface);border-color:var(--line);color:var(--ink)}
+html[data-theme="dark"] .multi-select-panel{background:var(--surface);border-color:var(--line);box-shadow:0 14px 34px #00000060}
+html[data-theme="dark"] .multi-select-option{color:var(--ink)}
+html[data-theme="dark"] .multi-select-summary.muted{color:#93a49e}
+html[data-theme="dark"] .pagination,html[data-theme="dark"] .search-meta{color:var(--soft)}
+html[data-theme="dark"] .tabs{background:var(--rail)}
+html[data-theme="dark"] .tab{color:var(--soft)}
+html[data-theme="dark"] .tab.active{background:var(--surface);color:var(--accent-deep);box-shadow:0 1px 5px #00000045}
+
+/* ---------- 7. 题目 / 练习 / 知识清单组件 ---------- */
+html[data-theme="dark"] .question-summary{background:var(--surface);border-color:var(--line);color:var(--ink)}
+html[data-theme="dark"] .question-summary:hover{border-color:#3f6a5d}
+html[data-theme="dark"] .question-summary.selected{background:var(--tint);border-color:var(--accent)}
+html[data-theme="dark"] .question-summary .summary-text{color:#d5e2dd}
+html[data-theme="dark"] .question-summary .summary-foot{color:#93a49e}
+html[data-theme="dark"] .question-material>strong{color:#a9bbb4}
+html[data-theme="dark"] .question-source{color:var(--soft)}
+html[data-theme="dark"] .option{background:var(--surface);border-color:var(--line)}
+html[data-theme="dark"] .option:has(input:checked){background:var(--tint);border-color:var(--accent)}
+html[data-theme="dark"] .option-label{color:#a9bbb4}
+html[data-theme="dark"] .option-correct{background:#17302a!important;border-color:#4fae8b!important}
+html[data-theme="dark"] .option-wrong{background:#33201e!important;border-color:#b86a62!important}
+html[data-theme="dark"] .solution-box{background:var(--paper);border-left-color:#6c8fc0}
+html[data-theme="dark"] .image-error{background:#332a1c;color:#e0bd7e}
+html[data-theme="dark"] .upload-zone{background:var(--surface);border-color:#3a554d;color:var(--soft)}
+html[data-theme="dark"] .upload-zone:hover{border-color:var(--accent);background:var(--tint)}
+html[data-theme="dark"] .upload-zone small{color:#93a49e}
+html[data-theme="dark"] .mastery-option{background:var(--surface);border-color:var(--line);color:var(--soft)}
+html[data-theme="dark"] .mastery-option.selected{background:var(--tint);border-color:var(--accent);color:var(--accent-deep)}
+html[data-theme="dark"] .note-card{background:var(--surface);border-color:var(--line)}
+html[data-theme="dark"] .note-card.active{background:var(--tint);border-color:var(--accent)}
+html[data-theme="dark"] .template-option{background:var(--surface);border-color:var(--line)}
+html[data-theme="dark"] .template-option:has(input:checked){background:var(--tint);border-color:var(--accent)}
+html[data-theme="dark"] .template-option p{color:#93a49e}
+html[data-theme="dark"] .document-item{border-bottom-color:var(--line)}
+html[data-theme="dark"] .document-item .icon{color:var(--accent-deep)}
+html[data-theme="dark"] .markdown{color:#d5e2dd}
+html[data-theme="dark"] .markdown pre{background:var(--rail)}
+html[data-theme="dark"] .markdown code{background:var(--rail);color:#cfe6dc}
+html[data-theme="dark"] .markdown blockquote{border-left-color:#3f6a5d;color:var(--soft)}
+html[data-theme="dark"] .markdown pre.markdown-fallback{background:var(--rail);border-color:#4a4433;color:#d9cba6}
+html[data-theme="dark"] .sources summary{color:var(--soft)}
+html[data-theme="dark"] .provider-logo{background:var(--tint);border-color:var(--line);color:var(--accent-deep)}
+html[data-theme="dark"] .provider-key{background:var(--rail);color:var(--soft)}
+html[data-theme="dark"] .job-card{background:var(--surface);border-color:var(--line)}
+html[data-theme="dark"] .job-progress{background:var(--rail)}
+html[data-theme="dark"] .job-history button{background:var(--surface);border-color:var(--line);color:var(--ink)}
+html[data-theme="dark"] .job-error{color:var(--wrong)}
+html[data-theme="dark"] .verification{background:var(--tint);border-color:#2f5548;color:#b8dfcc}
+html[data-theme="dark"] .verification.warning{background:#3a2f1b;border-color:#5c4a25;color:#e8c07d}
+html[data-theme="dark"] .job-progress-label{color:#9fd8c1}
+html[data-theme="dark"] .progress-track{background:var(--rail)}
+html[data-theme="dark"] .progress-track span{background:var(--accent-deep)}
+html[data-theme="dark"] .due-strip{background:#2b2618;border-color:#4a3f27}
+html[data-theme="dark"] .due-strip-title{color:#e0bd7e}
+html[data-theme="dark"] .due-item{background:var(--surface);border-color:#4a3f27;color:#dcc493}
+html[data-theme="dark"] .review-slot-card{background:#221d12;border-left-color:#d4943a}
+html[data-theme="dark"] .skip-review-btn:hover{background:#2c2618;color:#e0bd7e}
+html[data-theme="dark"] .skip-review-link:hover{background:#2c2618;color:#e0bd7e}
+html[data-theme="dark"] .group-readonly{border-top-color:var(--line)}
+html[data-theme="dark"] .group-readonly-item summary{color:var(--soft)}
+html[data-theme="dark"] .group-readonly-item .question-text{color:var(--ink)}
+html[data-theme="dark"] .kw-mark{background:#4a3f12;color:#f5e6a8}
+html[data-theme="dark"] .cite-chip{background:var(--tint);color:var(--accent-deep)}
+html[data-theme="dark"] .origin-tag.official{background:#1e2c3a;color:#a9c6e8}
+html[data-theme="dark"] .origin-tag.supplement{background:#3a2f1b;color:#e8c07d}
+html[data-theme="dark"] .code-block{background:var(--rail);color:#d5e2dd}
+
+/* ---------- 8. 知识树 / 生成方格 / 资料勾选 / 方法标签 ---------- */
+html[data-theme="dark"] .kp-chip{background:var(--tint);border-color:#2f5548;color:var(--accent-deep)}
+html[data-theme="dark"] .kp-chip:hover{background:#204036}
+html[data-theme="dark"] .kp-drawer{background:var(--rail);border-color:var(--line)}
+html[data-theme="dark"] .kp-branch>summary:hover,html[data-theme="dark"] .kp-leaf:hover{background:#22302c}
+html[data-theme="dark"] .kp-children{border-left-color:var(--line)}
+html[data-theme="dark"] .kp-leaf{color:var(--ink)}
+html[data-theme="dark"] .kp-pick-btn{background:var(--surface);border-color:var(--line);color:var(--soft)}
+html[data-theme="dark"] .kp-agg-card{background:var(--rail);border-color:var(--line)}
+html[data-theme="dark"] .archived-card{background:#141d1b}
+html[data-theme="dark"] .mode-pill{background:var(--surface);border-color:var(--line);color:var(--soft)}
+html[data-theme="dark"] .mode-pill.active{background:var(--tint);border-color:var(--accent);color:var(--accent-deep)}
+html[data-theme="dark"] .ai-mode-card{background:var(--surface);border-color:var(--line)}
+html[data-theme="dark"] .ai-mode-card-head{border-bottom-color:var(--line)}
+html[data-theme="dark"] .judge-box{background:#151f1dcc;border-color:var(--line)}
+html[data-theme="dark"] .divergence-panel h4{color:#e9a49c}
+html[data-theme="dark"] .divergence-col{background:var(--rail);border-color:var(--line)}
+html[data-theme="dark"] .step-item{background:var(--surface);border-color:var(--line)}
+html[data-theme="dark"] .step-item.step-diverge{background:var(--wrong-bg);border-color:#5a3532}
+html[data-theme="dark"] .saved-exp-item{background:var(--surface);border-color:var(--line)}
+html[data-theme="dark"] .cross-extra{border-top-color:var(--line)}
+html[data-theme="dark"] .prompt-grid-composer{background:var(--rail);border-color:var(--line)}
+html[data-theme="dark"] .grid-dim-label{color:var(--soft)}
+html[data-theme="dark"] .grid-card{background:var(--surface);border-color:var(--line)}
+html[data-theme="dark"] .grid-card:hover{border-color:#3f6a5d}
+html[data-theme="dark"] .grid-card.active{background:var(--tint);border-color:var(--accent);color:var(--accent-deep)}
+html[data-theme="dark"] .prompt-preview-pre{background:var(--rail);color:#d5e2dd}
+html[data-theme="dark"] .tpl-chip{background:var(--surface);border-color:var(--line)}
+html[data-theme="dark"] .tpl-load-btn{color:var(--ink)}
+html[data-theme="dark"] .tpl-load-btn:hover{background:var(--tint)}
+html[data-theme="dark"] .tpl-del-btn{color:var(--soft);border-left-color:var(--line)}
+html[data-theme="dark"] .tpl-del-btn:hover{background:var(--wrong-bg);color:var(--wrong)}
+html[data-theme="dark"] .doc-check-pill{background:var(--surface);border-color:var(--line);color:var(--ink)}
+html[data-theme="dark"] .doc-check-pill:has(input:checked){background:var(--tint);border-color:var(--accent)}
+html[data-theme="dark"] .thumb-item{background:var(--rail);border-color:var(--line)}
+html[data-theme="dark"] .fetch-models-box{background:var(--rail);border-color:var(--line)}
+html[data-theme="dark"] .method-chip{background:#1d2733;border-color:#33465e;color:#a9c3e6}
+html[data-theme="dark"] .method-chip:hover{background:#22303f}
+html[data-theme="dark"] .mindmap-card{background:var(--rail);border-color:var(--line)}
+html[data-theme="dark"] .mindmap-toolbar{background:#22302c;border-bottom-color:var(--line)}
+html[data-theme="dark"] .mindmap-viewport{background:var(--surface)}
+html[data-theme="dark"] .crop-canvas-wrap{background:var(--rail);border-color:var(--line)}
+html[data-theme="dark"] .block-math-text{background:var(--rail);border-color:var(--line);color:#cfe0d8}
+html[data-theme="dark"] .block-table{background:var(--surface);border-color:var(--line)}
+html[data-theme="dark"] .member-chip{background:var(--surface);border-color:var(--line);color:var(--soft)}
+html[data-theme="dark"] .member-chip.static{background:#17211f;border-color:var(--line);color:#93a49e}
+html[data-theme="dark"] button.member-chip:hover{background:var(--tint);border-color:var(--accent);color:var(--accent-deep)}
+html[data-theme="dark"] .member-chip.current{background:var(--tint);border-color:var(--accent);color:var(--accent-deep)}
+html[data-theme="dark"] .member-chip-status{color:#e0bd7e}
+html[data-theme="dark"] .member-chip.current .member-chip-status{color:var(--accent-deep)}
+
+/* ---------- 9. 弹窗 / 图片查看 / 登录页 ---------- */
+html[data-theme="dark"] .modal-dialog,html[data-theme="dark"] .issue-dialog,
+html[data-theme="dark"] .provider-dialog,html[data-theme="dark"] .image-dialog{background:var(--surface);color:var(--ink)}
+html[data-theme="dark"] .modal-dialog::backdrop,html[data-theme="dark"] .issue-dialog::backdrop,
+html[data-theme="dark"] .provider-dialog::backdrop,html[data-theme="dark"] .image-dialog::backdrop{background:#050a09cc}
+html[data-theme="dark"] .issue-dialog .close-dialog,html[data-theme="dark"] .image-dialog .close-dialog{background:var(--rail);border-color:var(--line);color:var(--soft)}
+html[data-theme="dark"] .auth-screen{background:var(--paper);color:var(--ink)}
+html[data-theme="dark"] .auth-form-card h1{color:var(--ink)}
+html[data-theme="dark"] .auth-form-card>p,html[data-theme="dark"] .auth-switch{color:var(--soft)}
+html[data-theme="dark"] .auth-note{color:#93a49e;border-top-color:var(--line)}
+html[data-theme="dark"] .auth-error{background:var(--wrong-bg);color:var(--wrong);border:1px solid #5a3532}
+html[data-theme="dark"] .toast{background:#123a31;color:#e6f3ed;box-shadow:0 8px 30px #00000060}
+html[data-theme="dark"] .toast.error{background:#7c3f3a}
+html[data-theme="dark"] .initial-loading{color:var(--soft)}
+html[data-theme="dark"] .spinner{border-color:#2b3b37;border-top-color:var(--accent-deep)}
+html[data-theme="dark"] .error-panel{background:var(--wrong-bg);border-color:#5a3532;color:var(--wrong)}
+html[data-theme="dark"] .drop-enter{background:var(--tint)!important;border-color:var(--accent)!important}
+
+/* ---------- 10. 设置页 / 任务页公共片段 ---------- */
+html[data-theme="dark"] .pg-doc-hint{color:#e0bd7e}
+html[data-theme="dark"] .pg-task-row{background:var(--paper);border-color:var(--line)}
+html[data-theme="dark"] .pg-task-row .pg-task-provider{color:var(--soft)}
+html[data-theme="dark"] .pg-task-row .pg-task-provider[data-empty="true"]{color:#e0b877}
+html[data-theme="dark"] .provider-preview{background:var(--paper);border-color:var(--line)}
+html[data-theme="dark"] .provider-preview-note{color:#e0bd7e}
+html[data-theme="dark"] .provider-preview-base{color:var(--soft)}
+html[data-theme="dark"] .provider-model-list{background:var(--surface);border-color:var(--line)}
+html[data-theme="dark"] .provider-model-item:hover{background:var(--paper)}
+html[data-theme="dark"] .provider-model-empty{color:var(--soft)}
+html[data-theme="dark"] .provider-dialog-actions{border-top-color:var(--line)}
+html[data-theme="dark"] .job-thinking{color:#9fb5ae}
+html[data-theme="dark"] .job-pill{color:var(--ink)}
+
+/* ---------- 11. 番茄钟 / 每日一签（styles-widgets.css 的硬编码浅色） ---------- */
+html[data-theme="dark"] .fc-pill{background:var(--surface);border-color:var(--line);color:var(--soft)}
+html[data-theme="dark"] .fc-pill:hover{border-color:#3f6a5d;color:var(--accent-deep)}
+html[data-theme="dark"] .fc-pill.running{background:var(--tint);border-color:#2f5548;color:var(--accent-deep)}
+html[data-theme="dark"] .fc-pill.paused{background:#2b2618;border-color:#4a3f27;color:#e0bd7e}
+html[data-theme="dark"] .fc-ring-track{stroke:var(--line)}
+html[data-theme="dark"] .fc-ring-bar{stroke:var(--accent-deep)}
+html[data-theme="dark"] .fc-pill.paused .fc-ring-bar{stroke:#e0bd7e}
+html[data-theme="dark"] .fc-panel{background:var(--surface);border-color:var(--line);box-shadow:0 20px 48px #00000070}
+html[data-theme="dark"] .fc-clock{color:var(--ink)}
+html[data-theme="dark"] .fc-chip{background:var(--surface);border-color:var(--line);color:var(--soft)}
+html[data-theme="dark"] .fc-chip:hover{border-color:#3f6a5d}
+html[data-theme="dark"] .fc-chip.active{background:var(--tint);border-color:var(--accent);color:var(--accent-deep)}
+html[data-theme="dark"] .fc-stats{border-top-color:var(--line)}
+html[data-theme="dark"] .fc-stats strong{color:var(--accent-deep)}
+html[data-theme="dark"] .fc-dot{color:#4a5f59}
+html[data-theme="dark"] .dq-inner{border-color:var(--line);
+  background:radial-gradient(120% 90% at 100% 0%,#1c2b25 0%,transparent 55%),linear-gradient(160deg,#151f1c 0%,#121a18 100%);
+  box-shadow:0 32px 80px #00000090}
+html[data-theme="dark"] .dq-eyebrow{color:#8fa49b}
+html[data-theme="dark"] .dq-x{color:#8fa49b}
+html[data-theme="dark"] .dq-x:hover{background:#1f2b27}
+html[data-theme="dark"] .dq-text{color:var(--ink)}
+html[data-theme="dark"] .dq-from{color:var(--soft)}
+html[data-theme="dark"] .dq-fav[aria-pressed="true"]{color:#ecd39a;background:#3a2f1b;border-color:#5c4a25}
+html[data-theme="dark"] .dq-meta{color:#8fa49b}
+html[data-theme="dark"] .dq-dialog::backdrop{background:#050a09d0}
+
+/* ---------- 12. 首页（styles-pages.css）中的硬编码浅色 ---------- */
+html[data-theme="dark"] .home-ai-chip.amber{background:#3a2f1b;color:#e8c07d}
+html[data-theme="dark"] .home-ai-card.is-active{background:var(--tint);border-color:var(--accent)}
+html[data-theme="dark"] .home-ai-card.is-degraded{background:var(--rail)}
+html[data-theme="dark"] .home-activity-empty{background:var(--rail)}
+html[data-theme="dark"] .pg-tag[data-tone="warn"]{background:#3a2f1b;color:#e8c07d}
+
+/* ---------- 13. 题库练习 / 志愿 / 物理演示（styles-pages.css） ---------- */
+html[data-theme="dark"] .pg-admit-chart-wrap{background:var(--rail);border-color:var(--line)}
+html[data-theme="dark"] .pg-admit-gaps,html[data-theme="dark"] .pg-admit-school,
+html[data-theme="dark"] .pg-admit-suggest-list{background:var(--surface);border-color:var(--line)}
+html[data-theme="dark"] .pg-admit-suggest-item:hover,
+html[data-theme="dark"] .pg-admit-suggest-item:focus-visible{background:var(--tint)}
+html[data-theme="dark"] .pg-phys-card{background:var(--surface);border-color:var(--line)}
+html[data-theme="dark"] .pg-phys-svg{background:var(--rail);border-color:var(--line)}
+html[data-theme="dark"] .pg-phys-ctrl,html[data-theme="dark"] .pg-phys-speed-btn,
+html[data-theme="dark"] .pg-phys-toggle{background:var(--surface);border-color:var(--line);color:var(--ink)}
+html[data-theme="dark"] .pg-phys-graph,html[data-theme="dark"] .pg-phys-energy,
+html[data-theme="dark"] .pg-phys-quantity,html[data-theme="dark"] .pg-phys-equation,
+html[data-theme="dark"] .pg-phys-checks{background:var(--surface);border-color:var(--line)}
+html[data-theme="dark"] .pg-phys-graph-tab{background:var(--surface);border-color:var(--line);color:var(--soft)}
+html[data-theme="dark"] .pg-phys-bar-track{background:var(--line)}
+html[data-theme="dark"] .pg-phys-quantity-item{background:var(--rail)}
+html[data-theme="dark"] .pg-phys-eq-item,html[data-theme="dark"] .pg-phys-step{background:#141d1b}
+html[data-theme="dark"] .pg-phys-subq{background:var(--rail)}
+
+/* ---------- 14. AI 课堂（styles-classroom.css）：外壳/面板暗色，舞台与纸面保持原色 ---------- */
+html[data-theme="dark"] .cls-doc-picker,html[data-theme="dark"] .cls-doc-option,
+html[data-theme="dark"] .cls-wizard-head,html[data-theme="dark"] .cls-outline-row,
+html[data-theme="dark"] .cls-scene-result,html[data-theme="dark"] .cls-caption,
+html[data-theme="dark"] .cls-controls,html[data-theme="dark"] .cls-end-card-inner,
+html[data-theme="dark"] .cls-quiz-panel,html[data-theme="dark"] .cls-quiz-option,
+html[data-theme="dark"] .cls-quiz-result-item,html[data-theme="dark"] .cls-tutor,
+html[data-theme="dark"] .cls-voice-btn,html[data-theme="dark"] .cls-chat-tab.active,
+html[data-theme="dark"] .cls-ma-agent,html[data-theme="dark"] .cls-ma-color-input,
+html[data-theme="dark"] .cls-interactive-frame{background:var(--surface);border-color:var(--line);color:var(--ink)}
+html[data-theme="dark"] .cls-player-side{background:var(--surface);border-color:var(--line)}
+html[data-theme="dark"] .cls-setup-models,html[data-theme="dark"] .cls-quiz-question,
+html[data-theme="dark"] .cls-scene-result-index,html[data-theme="dark"] .cls-pbl-milestone,
+html[data-theme="dark"] .cls-ma-roster,html[data-theme="dark"] .cls-ma-compose,
+html[data-theme="dark"] .cls-ma-side-card,html[data-theme="dark"] .cls-ma-edit-row,
+html[data-theme="dark"] .cls-scene-chip,html[data-theme="dark"] .cls-image-field,
+html[data-theme="dark"] .cls-sources-block,html[data-theme="dark"] .cls-capability-chip{background:var(--surface);border-color:var(--line);color:var(--ink)}
+html[data-theme="dark"] .cls-scene-chip:hover{background:var(--tint)}
+html[data-theme="dark"] .cls-quiz-analysis,html[data-theme="dark"] .cls-tutor-bubble,
+html[data-theme="dark"] .cls-chat-tabs,html[data-theme="dark"] .cls-voice-hint,
+html[data-theme="dark"] .cls-ma-play-controls,html[data-theme="dark"] .cls-ma-status{background:var(--rail);border-color:var(--line);color:var(--soft)}
+html[data-theme="dark"] .cls-check-pill{background:var(--surface);border-color:var(--line);color:var(--ink)}
+html[data-theme="dark"] .cls-quiz-result-item.is-correct{background:var(--tint);border-color:#2f5548}
+html[data-theme="dark"] .cls-quiz-result-item.is-wrong,html[data-theme="dark"] .cls-tutor-error,
+html[data-theme="dark"] .cls-generate-error,html[data-theme="dark"] .cls-voice-hint.is-error,
+html[data-theme="dark"] .cls-ma-status.is-error{background:var(--wrong-bg);border-color:#5a3532;color:var(--wrong)}
+html[data-theme="dark"] .cls-quiz-result-item.is-review,html[data-theme="dark"] .cls-tutor-hint-row,
+html[data-theme="dark"] .cls-ma-hint-chip,html[data-theme="dark"] .cls-capability-chip.is-off,
+html[data-theme="dark"] .cls-outline-warnings,html[data-theme="dark"] .cls-done-warnings{background:#3a2f1b;border-color:#5c4a25;color:#e8c07d}
+html[data-theme="dark"] .cls-interactive-note,html[data-theme="dark"] .cls-search-history,
+html[data-theme="dark"] .cls-export-source-note{background:#1b2530;border-color:#33465e;color:#b8cce6}
+html[data-theme="dark"] .cls-search-field{background:var(--surface);border-color:var(--line)}
+html[data-theme="dark"] .cls-voice-btn:hover:not(:disabled){background:var(--tint);border-color:var(--accent)}
+html[data-theme="dark"] .cls-dot{color:#4a5f59}
+html[data-theme="dark"] .cls-player-title,html[data-theme="dark"] .cls-player-meta{color:var(--ink)}
+html[data-theme="dark"] .cls-player-meta{color:var(--soft)}
+/* 课堂内的小徽标/进度/提示：模块 CSS 里写死了浅色底，这里统一压成暗色令牌。 */
+html[data-theme="dark"] .cls-outline-index,html[data-theme="dark"] .cls-quiz-index{background:var(--tint);color:var(--accent-deep)}
+html[data-theme="dark"] .cls-scene-chip-index{background:var(--rail);color:var(--soft)}
+html[data-theme="dark"] .cls-progress-track{background:var(--line)}
+html[data-theme="dark"] .cls-chat-source{background:var(--surface);border-color:var(--line);color:var(--soft)}
+html[data-theme="dark"] .cls-interactive-hint{background:var(--tint);color:var(--accent-deep)}
+html[data-theme="dark"] .cls-editor-status[data-state="dirty"]{background:#3a2f1b;border-color:#5c4a25;color:#e8c07d}
+html[data-theme="dark"] .cls-editor-status[data-state="saving"]{background:#1b2530;border-color:#33465e;color:#a9c6e8}
+html[data-theme="dark"] .cls-tutor-message.is-speaking .cls-tutor-bubble{background:var(--tint);outline-color:var(--accent)}
+html[data-theme="dark"] .cls-tutor-message.is-discussion .cls-tutor-bubble{border-left-color:var(--line)}
+/* 舞台/幻灯片（.cls-stage-shell/.cls-stage/.cls-el*）保持原样：内联配色属于课程文档。 */
+html[data-theme="dark"] .cls-stage-shell{background:#0a1211;box-shadow:0 12px 34px #00000060}
+
+/* ---------- 15. 试卷工坊 / 我的题库（styles-paperlab.css） ---------- */
+html[data-theme="dark"] .pl-file-item,html[data-theme="dark"] .pl-history-card,
+html[data-theme="dark"] .pl-page-tab,html[data-theme="dark"] .pl-summary,
+html[data-theme="dark"] .pl-item-filter,html[data-theme="dark"] .pl-item-card,
+html[data-theme="dark"] .pl-picker-card,html[data-theme="dark"] .pl-kp-weight-row,
+html[data-theme="dark"] .pl-paper-edit-item,html[data-theme="dark"] .pl-revision-mode,
+html[data-theme="dark"] .pl-revision-kp,html[data-theme="dark"] .pl-practice-history-item,
+html[data-theme="dark"] .pl-practice-nav-item,html[data-theme="dark"] .pl-practice-question,
+html[data-theme="dark"] .pl-card-row,html[data-theme="dark"] .pl-diff-col,
+html[data-theme="dark"] .mb-part-card{background:var(--surface);border-color:var(--line);color:var(--ink)}
+html[data-theme="dark"] .pl-basket-item,html[data-theme="dark"] .pl-snapshot-material,
+html[data-theme="dark"] .pl-paper-edit-bar,html[data-theme="dark"] .pl-practice-start-meta,
+html[data-theme="dark"] .pl-practice-nav,html[data-theme="dark"] .pl-practice-part,
+html[data-theme="dark"] .pl-card-toolbar,html[data-theme="dark"] .pl-cross-verify,
+html[data-theme="dark"] .pl-verify-diff,html[data-theme="dark"] .pl-diff-metrics,
+html[data-theme="dark"] .pl-ocr-page-row,html[data-theme="dark"] .mb-options-editor,
+html[data-theme="dark"] .mb-answers-editor,html[data-theme="dark"] .mb-parts-editor{background:var(--rail);border-color:var(--line);color:var(--soft)}
+html[data-theme="dark"] .pl-ai-panel,html[data-theme="dark"] .pl-practice-material{background:var(--rail);border-color:var(--line)}
+html[data-theme="dark"] .pl-practice-score-row,html[data-theme="dark"] .pl-practice-reference,
+html[data-theme="dark"] .mb-enrich-result,html[data-theme="dark"] .mb-selection-bar{background:var(--tint);border-color:#2f5548;color:var(--accent-deep)}
+html[data-theme="dark"] .mb-card.is-verified{background:var(--tint);border-color:#2f5548}
+html[data-theme="dark"] .pl-practice-user-answer{background:var(--rail);border-color:var(--line)}
+html[data-theme="dark"] .pl-item-skip,html[data-theme="dark"] .pl-verify-failed,
+html[data-theme="dark"] .mb-editor-conflict-actions,html[data-theme="dark"] .pl-ann-conflict-info{background:#3a2f1b;border-color:#5c4a25;color:#e8c07d}
+html[data-theme="dark"] .pl-verify-ok{background:var(--tint);border-color:#2f5548;color:var(--accent-deep)}
+html[data-theme="dark"] .pl-ann-row,html[data-theme="dark"] .pl-ann-draft-row,
+html[data-theme="dark"] .pl-ann-error-row{background:var(--surface);border-color:var(--line);color:var(--ink)}
+html[data-theme="dark"] .pl-ann-row.is-stale,html[data-theme="dark"] .pl-ann-draft-row.is-stale,
+html[data-theme="dark"] .pl-ann-error-row.is-stale{background:var(--wrong-bg);border-color:#5a3532;color:var(--wrong)}
+html[data-theme="dark"] .pl-ann-check,html[data-theme="dark"] .pl-ann-zoom{background:var(--surface);border-color:var(--line);color:var(--ink)}
+html[data-theme="dark"] .pl-ann-handle{background:var(--surface);border-color:var(--line)}
+html[data-theme="dark"] .pl-card-code code{background:var(--rail);color:#cfe6dc}
+html[data-theme="dark"] .pl-summary,html[data-theme="dark"] .pl-item-card{color:var(--ink)}
+/* 试卷纸面/卡片预览（.pl-card-preview-img）、批注页缩略图属于文档，保持纸色。 */
+html[data-theme="dark"] .pl-card-preview-scroll{background:#0b1211}
+
+/* ---------- 16. 学情分析（styles-insight.css） ---------- */
+html[data-theme="dark"] .ins-kp-item[open]{background:var(--rail)}
+html[data-theme="dark"] .ins-notstarted,html[data-theme="dark"] .ins-rec,
+html[data-theme="dark"] .ins-empty-block{background:var(--rail);border-color:var(--line)}
+html[data-theme="dark"] .ins-ai-mark{background:#3a2f1b;color:#e8c07d}
+
+/* ---------- 17. AI 助手（styles-assistant.css） ---------- */
+html[data-theme="dark"] .asst-chat-head,html[data-theme="dark"] .asst-live,
+html[data-theme="dark"] .asst-composer,html[data-theme="dark"] .asst-input,
+html[data-theme="dark"] .asst-voice-btn{background:var(--surface);border-color:var(--line);color:var(--ink)}
+html[data-theme="dark"] .asst-tool{background:var(--rail);border-color:var(--line);color:var(--soft)}
+html[data-theme="dark"] .asst-confirm-card{background:#3a2f1b;border-color:#5c4a25;color:#e8c07d}
+html[data-theme="dark"] .asst-voice-hint{background:var(--rail);border-color:var(--line);color:var(--soft)}
+html[data-theme="dark"] .asst-voice-hint.is-error{background:var(--wrong-bg);border-color:#5a3532;color:var(--wrong)}
+html[data-theme="dark"] .asst-voice-btn:hover:not(:disabled){background:var(--tint);border-color:var(--accent)}
+html[data-theme="dark"] .asst-confirm-detail .asst-json{background:#151f1de6;color:#d5e2dd}
+html[data-theme="dark"] .mb-choice:hover{background:var(--tint)}
+/* 课堂媒体/旁白/语音等次级弹窗（styles-classroom.css 内写死浅底，静态盘点覆盖）。 */
+html[data-theme="dark"] .voice-input-btn,html[data-theme="dark"] .cls-media-dialog,
+html[data-theme="dark"] .cls-voice-select,html[data-theme="dark"] .cls-image-reference-preview{
+  background:var(--surface);border-color:var(--line);color:var(--ink)}
+html[data-theme="dark"] .voice-input-btn:hover:not(:disabled){background:var(--tint);border-color:var(--accent)}
+html[data-theme="dark"] .voice-input-btn.is-listening,html[data-theme="dark"] .voice-input-btn.is-recording{
+  background:var(--wrong-bg);border-color:#5a3532;color:var(--wrong)}
+html[data-theme="dark"] .cls-narration-item,html[data-theme="dark"] .cls-image-history-item{
+  background:var(--rail);border-color:var(--line)}
+html[data-theme="dark"] .cls-narration-item-index{background:var(--tint);color:var(--accent-deep)}
+
+/* ---------- 18. 任务中心（styles-tasks.css） ---------- */
+html[data-theme="dark"] .task-pre{background:var(--rail);color:#d5e2dd}
+html[data-theme="dark"] .task-cost[data-cost-known="false"]{background:#3a2f1b;color:#e8c07d}
+
+/* ---------- 19. 讲评/试卷纸面弹窗（.pm-dialog）保持文档纸色 ----------
+ * 讲评模式自带「深色」开关（.pm-dark）。站点暗色下把它默认的纸面固定为
+ * 浅色文档，避免模块内「浅色」选项被全局暗色令牌带成深色而失灵；
+ * 用户在该弹窗内主动选「深色」时仍走模块自己的 .pm-dark 令牌。 */
+html[data-theme="dark"] .pm-dialog:not(.pm-dark){
+  --pm-paper:#f7f6f1; --pm-surface:#fffefa; --pm-ink:#182927;
+  --pm-soft:#556761; --pm-line:#dedfd6; --pm-tint:#e8f1e9;
+}
+
+/* ---------- 19.5 首轮验收修复：暗色下对比度/硬编码浅色（模块 owner 可后续在源样式根治） ---------- */
+/* 模块里大量 <dialog>（课堂导出、我的题库编辑/导入、试卷批注、助手技能、设置连接向导等）
+ * 只在模块 CSS 里设置宽高与阴影、没声明背景，暗色下依赖 UA 默认色。这里统一兜底为
+ * 站点暗色表面；讲评弹窗 .pm-dialog（文档纸面）与每日一签 .dq-dialog（自带渐变）排除。 */
+html[data-theme="dark"] dialog:not(.pm-dialog):not(.dq-dialog){background:var(--surface);color:var(--ink);border-color:var(--line)}
+html[data-theme="dark"] .subtle-divider{color:#7f938c}
+html[data-theme="dark"] .home-ai-meta{color:#9db3ac}
+html[data-theme="dark"] .home-ai-card.is-active .home-ai-count{color:#e8c07d}
+html[data-theme="dark"] .home-ai-card:hover{border-color:#3f6a5d;box-shadow:0 6px 18px #00000040}
+html[data-theme="dark"] .result-card.selected{border-color:var(--accent)}
+html[data-theme="dark"] .shared-material{border-left-color:#3f6a5d}
+html[data-theme="dark"] .reading-note{border-color:var(--line)}
+html[data-theme="dark"] .reading-note[data-state="error"]{border-color:#5a3532;background:var(--wrong-bg);color:var(--wrong)}
+html[data-theme="dark"] .error-tags-panel{background:#221d15;border-color:#4a3d28}
+html[data-theme="dark"] .tag-pill{background:var(--surface);border-color:var(--line);color:#d7bf95}
+html[data-theme="dark"] .tag-pill.active{background:var(--tint);border-color:var(--accent);color:var(--accent-deep);font-weight:600}
+html[data-theme="dark"] .saved-explanations{border-top-color:var(--line)}
+html[data-theme="dark"] .group-members-title strong{color:var(--ink)}
+html[data-theme="dark"] .ins-chart .ins-chart-axis{stroke:var(--line)}
+html[data-theme="dark"] .ins-chart rect[fill="#edf1ee"]{fill:var(--rail)}
+html[data-theme="dark"] .ins-chart-bar.activity{fill:#4f7d6c}
+/* 原生文件选择框（我的题库导入 / 拍题上传等）在暗色下是 UA 白底，统一压成表单色。 */
+html[data-theme="dark"] input[type="file"]{color:var(--soft);background:var(--surface);
+  border:1px solid var(--line);border-radius:8px;padding:6px 9px;max-width:100%}
+html[data-theme="dark"] input[type="file"]::file-selector-button{background:var(--rail);color:var(--ink);
+  border:1px solid var(--line);border-radius:7px;padding:6px 11px;margin-right:10px;font:inherit;cursor:pointer}
+html[data-theme="dark"] input[type="file"]::file-selector-button:hover{background:var(--tint);color:var(--accent-deep)}
+/* AI 课堂列表页标题操作行在 ≤700px 会超出视口 2px（浅色/暗色均有的既有问题）。
+ * 暗色验收要求无横向溢出，这里只对暗色做换行兜底；模块 owner 可在源样式统一修复。 */
+@media (max-width:700px){
+  html[data-theme="dark"] .cls-list-heading-actions{flex-wrap:wrap;justify-content:flex-end}
+}
+
+/* ---------- 20. 打印：强制浅色 ----------
+ * 打印/导出必须是白纸黑字：恢复浅色令牌，并压掉暗色壳层背景。
+ * 用 !important 覆盖 boot 写在 <html style="color-scheme:dark"> 上的行内样式。 */
+@media print{
+  html[data-theme="dark"]{
+    color-scheme:light!important;
+    --paper:#fff; --surface:#fff; --rail:#f5f8f7;
+    --ink:#182927; --soft:#556761; --muted:#556761;
+    --accent:#286552; --accent-deep:#194e3e; --tint:#e8f1e9;
+    --line:#dedfd6; --focus:#127963; --wrong:#904537; --wrong-bg:#fbefeb;
+    --teal:#286552; --teal-bg:#e8f1e9; --navy:#1c2e2a; --danger:#904537;
+    background:#fff!important;color:#182927!important;
+  }
+  html[data-theme="dark"] body{background:#fff!important;color:#182927!important}
+  html[data-theme="dark"] .content,html[data-theme="dark"] .main,
+  html[data-theme="dark"] .layout{background:#fff!important;color:#182927!important}
+  html[data-theme="dark"] .card,html[data-theme="dark"] .question-detail,
+  html[data-theme="dark"] .practice-workspace,html[data-theme="dark"] .reading-main,
+  html[data-theme="dark"] .reading-actions,html[data-theme="dark"] .modal-dialog,
+  html[data-theme="dark"] .pm-dialog{background:#fff!important;color:#182927!important;box-shadow:none!important}
+  html[data-theme="dark"] .pm-dialog{--pm-paper:#fff;--pm-surface:#fff;--pm-ink:#182927;--pm-soft:#556761;--pm-line:#dedfd6;--pm-tint:#e8f1e9}
+  html[data-theme="dark"] .bank-image,html[data-theme="dark"] .pl-card-preview-img,
+  html[data-theme="dark"] .mb-card-images img{background:#fff}
+  /* 暗色下隐藏的浅色底纹在打印时统一压平为白纸。 */
+  html[data-theme="dark"] .hero,html[data-theme="dark"] .notice,
+  html[data-theme="dark"] .badge,html[data-theme="dark"] .answer-box,
+  html[data-theme="dark"] .solution-box,html[data-theme="dark"] .shared-material,
+  html[data-theme="dark"] .group-members,html[data-theme="dark"] .question-material,
+  html[data-theme="dark"] .reading-note,html[data-theme="dark"] .status-chip,
+  html[data-theme="dark"] .choice,html[data-theme="dark"] .option,
+  html[data-theme="dark"] .code-block,html[data-theme="dark"] .markdown pre,
+  html[data-theme="dark"] .markdown code{background:transparent!important;color:#182927!important}
+}

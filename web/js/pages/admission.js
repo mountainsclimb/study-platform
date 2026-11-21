@@ -11,13 +11,22 @@ import {
   number, query, toast,
 } from '../core/dom.js';
 import { current } from '../core/router.js';
+import { t } from '../core/i18n.js';
 
 const TABS = [
-  { key: 'rank', label: '一分一段', icon: 'chart' },
-  { key: 'schools', label: '找学校', icon: 'search' },
-  { key: 'school', label: '查学校 / 专业', icon: 'university' },
-  { key: 'plans', label: '招生计划', icon: 'file' },
+  { key: 'rank', labelKey: 'admission.tabRank', icon: 'chart' },
+  { key: 'schools', labelKey: 'admission.tabSchools', icon: 'search' },
+  { key: 'school', labelKey: 'admission.tabSchool', icon: 'university' },
+  { key: 'plans', labelKey: 'admission.tabPlans', icon: 'file' },
 ];
+
+// 冲 / 稳 / 保 是后端下发的中文档位值：比较保持原值，展示时按语言映射。
+const LEVEL_KEYS = { '冲': 'admission.levelReach', '稳': 'admission.levelMatch', '保': 'admission.levelSafety' };
+
+function levelText(level) {
+  const key = LEVEL_KEYS[level];
+  return key ? t(key) : String(level);
+}
 
 let metaPromise = null;
 
@@ -30,17 +39,17 @@ function loadMeta(force = false) {
 }
 
 export async function renderAdmission(container, version) {
-  container.replaceChildren(loading('正在加载志愿数据…'));
+  container.replaceChildren(loading(t('admission.loadingAdmissionData')));
   const meta = await loadMeta();
   if (!current(version)) return;
 
   if (!meta.ready) {
     container.replaceChildren(
-      heading('GAOKAO COMPASS', '志愿查询', '用一分一段表把分数换成位次，再看清可选院校与专业。'),
-      notice('志愿数据尚未导入，志愿查询暂不可用。', 'warning'),
+      heading('GAOKAO COMPASS', t('nav.admission'), t('admission.turnYourScoreIntoARankWith')),
+      notice(t('admission.admissionDataHasNotBeenImportedYet'), 'warning'),
       empty(
-        '还没有志愿数据',
-        meta.error || '请在 study-platform 目录运行 python scripts/import_admission.py 生成 data/admission.sqlite3 后刷新页面。',
+        t('admission.noAdmissionDataYet'),
+        meta.error || t('admission.runPythonScriptsImportAdmissionPyIn'),
         null,
         'compass'
       )
@@ -62,11 +71,11 @@ export async function renderAdmission(container, version) {
   };
 
   const provinceSelect = select(provinces.map(item => ({ value: item.slug, label: item.name })), view.province);
-  const yearSelect = select(years.slice().reverse().map(item => ({ value: item, label: `${item} 年` })), view.year);
-  const categorySelect = select([{ value: '', label: '自动（数据最多的科类）' }], '');
+  const yearSelect = select(years.slice().reverse().map(item => ({ value: item, label: t('common.yearLabel', { year: item }) })), view.year);
+  const categorySelect = select([{ value: '', label: t('admission.autoCategoryWithTheMostData') }], '');
   const statsGrid = el('div', { class: 'stats-grid' });
   const completenessBar = el('div', { class: 'pg-admit-completeness' });
-  const tabBar = el('div', { class: 'pg-tabs', role: 'tablist', 'aria-label': '志愿查询分区' });
+  const tabBar = el('div', { class: 'pg-tabs', role: 'tablist', 'aria-label': t('admission.admissionSearchSections') });
   const panel = el('div', { class: 'stack' });
   let panelSeq = 0;
   let filterSeq = 0;
@@ -74,7 +83,7 @@ export async function renderAdmission(container, version) {
   /* ---------------- 顶部筛选与看板 ---------------- */
 
   function rebuildCategoryOptions() {
-    const options = [{ value: '', label: '自动（数据最多的科类）' }];
+    const options = [{ value: '', label: t('admission.autoCategoryWithTheMostData') }];
     for (const item of (view.filters?.categories || [])) options.push({ value: item, label: item });
     categorySelect.replaceChildren(...options.map(option => el('option', { value: option.value }, option.label)));
     if (view.filters && view.filters.categories.includes(view.category)) {
@@ -112,18 +121,18 @@ export async function renderAdmission(container, version) {
   function buildCompleteness(filters) {
     if (!filters) return [];
     const items = [
-      ['位次数据', Boolean(filters.rank_supported), '该省年投档线缺少位次，按位次匹配不可用，请改用分数查询'],
-      ['批次线', Boolean(filters.control_score_supported), '该省年一分一段缺少批次控制线'],
-      ['科类', Boolean(filters.category_available), '该省年录取表缺少科类字段，科类筛选会自动忽略'],
-      ['计划人数', Boolean(filters.plan_supported), '该省年招生计划缺少计划人数，表格显示「未提供」'],
+      [t('admission.rankData'), Boolean(filters.rank_supported), t('admission.theProvinceYearCutoffLinesLackRanks')],
+      [t('admission.controlScoreLine'), Boolean(filters.control_score_supported), t('admission.theProvinceYearScoreRankTableLacks')],
+      [t('admission.category'), Boolean(filters.category_available), t('admission.theProvinceYearAdmissionTableLacksA')],
+      [t('admission.plannedEnrollment'), Boolean(filters.plan_supported), t('admission.theProvinceYearEnrollmentPlanLacksPlanned')],
     ];
     return [
-      el('span', { class: 'pg-admit-completeness-label' }, '本省本年数据完整度'),
+      el('span', { class: 'pg-admit-completeness-label' }, t('admission.dataCompletenessForThisProvinceYear')),
       ...items.map(([label, ok, hint]) => el('span', {
         class: 'pg-tag',
         'data-tone': ok ? 'ok' : 'warn',
-        title: ok ? `${label}可用` : hint,
-      }, `${label}：${ok ? '可用' : '缺失'}`)),
+        title: ok ? t('admission.itemAvailable', { v1: label }) : hint,
+      }, t('admission.itemStatus', { v1: label, v2: ok ? t('admission.available') : t('admission.missing') }))),
     ];
   }
 
@@ -134,17 +143,17 @@ export async function renderAdmission(container, version) {
     const counts = filters?.counts || {};
     if (overview) {
       return [
-        statCard('高考人数', number(exam.total_candidates || 0), '人', '省考试院公布口径'),
-        statCard('招生院校', number(university.total || enrollment.university_count || 0), '所', '本省该年出现过的院校'),
-        statCard('招生计划', enrollment.total_plan ? number(enrollment.total_plan) : '未提供', '', '部分年份缺少计划数'),
-        statCard('985 / 211', `${number(university.is_985 || 0)} / ${number(university.is_211 || 0)}`, '所', '院校属性标记'),
+        statCard(t('admission.gaokaoCandidates'), number(exam.total_candidates || 0), t('admission.people'), t('admission.asPublishedByTheProvincialExamAuthority')),
+        statCard(t('admission.admittingUniversities'), number(university.total || enrollment.university_count || 0), t('admission.schools'), t('admission.universitiesAppearingInThisProvinceYear')),
+        statCard(t('admission.enrollmentPlan'), enrollment.total_plan ? number(enrollment.total_plan) : t('admission.notProvided'), '', t('admission.plannedNumbersMissingForSomeYears')),
+        statCard('985 / 211', `${number(university.is_985 || 0)} / ${number(university.is_211 || 0)}`, t('admission.schools'), t('admission.universityAttributeTags')),
       ];
     }
     return [
-      statCard('一分一段', number(counts['score-range'] || 0), '条', '分数—位次记录'),
-      statCard('院校投档线', number(counts['school-admission'] || 0), '条', '院校最低分与位次'),
-      statCard('专业录取线', number(counts['major-admission'] || 0), '条', '专业维度录取分数'),
-      statCard('招生计划', number(counts['enrollment-plan'] || 0), '条', '院校专业计划明细'),
+      statCard(t('admission.scoreRankTable'), number(counts['score-range'] || 0), t('admission.records'), t('admission.scoreRankRecords')),
+      statCard(t('admission.universityCutoffLines'), number(counts['school-admission'] || 0), t('admission.records'), t('admission.minimumScoreAndRankByUniversity')),
+      statCard(t('admission.majorAdmissionLines'), number(counts['major-admission'] || 0), t('admission.records'), t('admission.admissionScoresByMajor')),
+      statCard(t('admission.enrollmentPlan'), number(counts['enrollment-plan'] || 0), t('admission.records'), t('admission.universityMajorPlanDetails')),
     ];
   }
 
@@ -169,7 +178,7 @@ export async function renderAdmission(container, version) {
         renderTabs();
         renderPanel();
       },
-    }, tab.label)));
+    }, t(tab.labelKey))));
   }
 
   function renderPanel() {
@@ -196,26 +205,26 @@ export async function renderAdmission(container, version) {
 
   function rankTab() {
     const seq = panelSeq;
-    const scoreInput = input('例如 600', { type: 'number', min: '0', max: '1000', inputmode: 'numeric' });
+    const scoreInput = input(t('admission.eG600'), { type: 'number', min: '0', max: '1000', inputmode: 'numeric' });
     const result = el('div');
     const form = el('div', { class: 'pg-admit-form pg-admit-form--narrow' },
-      field('高考分数', scoreInput),
-      el('div', { class: 'pg-admit-actions' }, button('查询位次', run, '', 'chart')));
+      field(t('admission.gaokaoScore'), scoreInput),
+      el('div', { class: 'pg-admit-actions' }, button(t('admission.lookUpRank'), run, '', 'chart')));
     const card = el('section', { class: 'card' },
       el('div', { class: 'card-header' },
-        el('div', {}, el('h2', {}, '一分一段 · 分数换位次'),
-          el('p', { class: 'help' }, '位次为累计人数口径；同一分数可能出现在多个批次，结果中会分别列出。')),
-        view.filters?.rank_supported ? badge('支持位次', 'teal') : badge('缺位次数据', 'amber')),
+        el('div', {}, el('h2', {}, t('admission.scoreRankTableConvertScoreToRank')),
+          el('p', { class: 'help' }, t('admission.ranksAreCumulativeCountsTheSameScore'))),
+        view.filters?.rank_supported ? badge(t('admission.rankSupported'), 'teal') : badge(t('admission.rankDataMissing'), 'amber')),
       form,
       result);
 
     async function run() {
       const score = Number(scoreInput.value);
       if (!Number.isFinite(score) || score < 0 || score > 1000) {
-        toast('请输入 0–1000 之间的有效分数。', true);
+        toast(t('admission.pleaseEnterAValidScoreBetween0'), true);
         return;
       }
-      result.replaceChildren(loading('正在查询…'));
+      result.replaceChildren(loading(t('admission.searching')));
       try {
         const data = await api(`/admission/score-rank?${query({
           province: view.province, year: view.year, category: view.category, score,
@@ -237,32 +246,44 @@ export async function renderAdmission(container, version) {
     const head = el('div', { class: 'pg-admit-summary' },
       el('div', {},
         el('p', { class: 'pg-admit-label' },
-          `${data.year} 年 · ${data.province_name} · ${data.category || '未分科类'} · ${data.score} 分`),
-        el('div', { class: 'pg-admit-big' }, rank ? number(rank) : '暂无',
-          el('span', { class: 'pg-admit-big-unit' }, '位')),
-        el('p', { class: 'help' }, data.rank_range ? `位次区间 ${data.rank_range}` : '')),
+          t('admission.rankSummary', { year: data.year, province: data.province_name, category: data.category || t('admission.uncategorized'), score: data.score })),
+        el('div', { class: 'pg-admit-big' }, rank ? number(rank) : t('admission.nA'),
+          el('span', { class: 'pg-admit-big-unit' }, t('admission.rank'))),
+        el('p', { class: 'help' }, data.rank_range ? t('admission.rankRange', { v1: data.rank_range }) : '')),
       el('div', { class: 'pg-admit-facts' },
-        factRow('批次', data.batch || '未标注'),
-        factRow('批次线', data.control_score ? `${data.control_score} 分` : '数据源未提供'),
-        factRow('本段人数', data.segment_count ? number(data.segment_count) : '—'),
-        factRow('该科类总人数', data.total ? number(data.total) : '—'),
-        factRow('精确匹配', data.exact ? '是' : `否，最接近 ${data.nearest_score} 分`)));
+        factRow(t('admission.batch'), data.batch || data.control_batch || t('admission.notLabeled')),
+        factRow(t('admission.controlScoreLine'), data.control_score
+          ? t('admission.scorePoints', { v1: data.control_score }) + (
+            data.control_source === 'official' ? t('admission.officialSupplement_2')
+              : data.control_source === 'official-inferred' ? t('admission.officialSupplementBatchMatchedByScore') : '')
+          : t('admission.notProvidedByTheDataSource')),
+        factRow(t('admission.candidatesInThisSegment'), data.segment_count ? number(data.segment_count) : '—'),
+        factRow(t('admission.totalCandidatesInThisCategory'), data.total ? number(data.total) : '—'),
+        factRow(t('admission.exactMatch'), data.exact ? t('common.yes') : t('admission.noClosestIsPoints', { v1: data.nearest_score }))));
     const chart = lineChart(
       (data.distribution || []).map(point => ({ x: point.score, y: point.cumulative_count })),
-      { xLabel: '分数', yLabel: '累计位次', height: 220 }
+      { xLabel: t('admission.score'), yLabel: t('admission.cumulativeRank'), height: 220 }
     );
     const matches = data.matches?.length > 1
       ? el('div', { class: 'pg-admit-table' },
-        el('h3', {}, '同分数各批次记录'),
-        dataTable(['批次', '批次线', '本段人数', '累计位次', '位次区间'], data.matches.map(row => [
+        el('h3', {}, t('admission.recordsForTheSameScoreInDifferent')),
+        dataTable([t('admission.batch'), t('admission.controlScoreLine'), t('admission.candidatesInThisSegment'), t('admission.cumulativeRank'), t('admission.rankRange_2')], data.matches.map(row => [
           row.batch || '—', row.control_score ?? '—', number(row.segment_count || 0),
           number(row.cumulative_count || 0), row.rank_range || '—',
+        ])))
+      : null;
+    const official = data.official_batches?.length
+      ? el('div', { class: 'pg-admit-table' },
+        el('h3', {}, t('admission.officiallySupplementedControlScoresSince2020')),
+        dataTable([t('admission.batch'), t('admission.category'), t('admission.scoreLine')], data.official_batches.map(row => [
+          row.batch || '—', row.category || t('admission.allCategories'), t('admission.scorePoints', { v1: row.score }),
         ])))
       : null;
     return el('div', { class: 'stack' },
       el('section', { class: 'card' }, head,
         chart ? el('div', { class: 'pg-admit-chart-wrap' }, chart) : null,
-        matches));
+        matches,
+        official));
   }
 
   function factRow(label, value) {
@@ -274,39 +295,39 @@ export async function renderAdmission(container, version) {
   function schoolsTab() {
     const seq = panelSeq;
     const modeSelect = select([
-      { value: 'score', label: '按分数匹配' },
-      { value: 'rank', label: '按位次匹配' },
+      { value: 'score', label: t('admission.matchByScore') },
+      { value: 'rank', label: t('admission.matchByRank') },
     ], 'score');
-    const valueInput = input('例如 600', { type: 'number', inputmode: 'numeric' });
+    const valueInput = input(t('admission.eG600'), { type: 'number', inputmode: 'numeric' });
     const bandInput = input('15', { type: 'number', min: '1', max: '80' });
-    const keywordInput = input('如：浙江大学（可选）', { type: 'search' });
+    const keywordInput = input(t('admission.eGZhejiangUniversityOptional'), { type: 'search' });
     const result = el('div');
-    const bandField = field('分数浮动', bandInput, '上下浮动分数，默认 ±15 分');
-    const modeHint = el('p', { class: 'help' }, '输入分数后，按投档线与分数的差值分为冲、稳、保三档。');
+    const bandField = field(t('admission.scoreRange'), bandInput, t('admission.scoreRangeAroundYourScoreDefault15'));
+    const modeHint = el('p', { class: 'help' }, t('admission.afterEnteringAScoreUniversitiesAreGrouped'));
     modeSelect.addEventListener('change', () => {
       const rankMode = modeSelect.value === 'rank';
       bandField.classList.toggle('hide', rankMode);
       modeHint.textContent = rankMode
-        ? '位次模式按投档位次与你的位次的比例划分：低于 0.85 为冲，0.85–1.2 为稳，其余为保。'
-        : '输入分数后，按投档线与分数的差值分为冲、稳、保三档。';
+        ? t('admission.rankModeDividesByTheRatioOf')
+        : t('admission.afterEnteringAScoreUniversitiesAreGrouped');
     });
     const form = el('div', { class: 'pg-admit-form pg-admit-form--wide' },
-      field('匹配方式', modeSelect),
-      field('分数 / 位次', valueInput),
+      field(t('admission.matchingMode'), modeSelect),
+      field(t('admission.scoreRank'), valueInput),
       bandField,
-      field('院校关键词', keywordInput),
-      el('div', { class: 'pg-admit-actions' }, button('开始匹配', () => run(1), '', 'search')));
+      field(t('admission.universityKeyword'), keywordInput),
+      el('div', { class: 'pg-admit-actions' }, button(t('admission.startMatching'), () => run(1), '', 'search')));
     const card = el('section', { class: 'card' },
       el('div', { class: 'card-header' },
-        el('div', {}, el('h2', {}, '找学校 · 冲稳保'), modeHint),
-        view.filters?.rank_supported ? badge('位次可用', 'teal') : badge('仅分数', 'amber')),
+        el('div', {}, el('h2', {}, t('admission.findSchoolsReachMatchSafety')), modeHint),
+        view.filters?.rank_supported ? badge(t('admission.rankAvailable'), 'teal') : badge(t('admission.scoreOnly'), 'amber')),
       form,
       result);
 
     async function run(page) {
       const value = Number(valueInput.value);
       if (!Number.isFinite(value) || value <= 0) {
-        toast('请输入有效的分数或位次。', true);
+        toast(t('admission.pleaseEnterAValidScoreOrRank'), true);
         return;
       }
       const params = {
@@ -320,7 +341,7 @@ export async function renderAdmission(container, version) {
       };
       if (modeSelect.value === 'rank') params.rank = Math.round(value);
       else params.score = Math.round(value);
-      result.replaceChildren(loading('正在匹配院校…'));
+      result.replaceChildren(loading(t('admission.matchingUniversities')));
       try {
         const data = await api(`/admission/schools?${query(params)}`);
         if (!guardStale(seq) || !result.isConnected) return;
@@ -337,18 +358,18 @@ export async function renderAdmission(container, version) {
 
   function schoolsResult(data, params, onPage) {
     if (!data.rank_supported && data.mode === 'rank') {
-      return notice(data.note || '该省份年份的投档线缺少位次数据，请改用分数查询。', 'warning');
+      return notice(data.note || t('admission.theCutoffLinesForThisProvinceYear'), 'warning');
     }
     if (!data.items?.length) {
-      return empty('没有匹配到院校', '换一个分数区间或年份试试；老年份可能缺少位次或批次数据。', null, 'search');
+      return empty(t('admission.noUniversitiesMatched'), t('admission.tryADifferentScoreRangeOrYear'), null, 'search');
     }
     const note = data.category_filtered ? null
-      : notice('该省份年份的录取数据缺少科类字段，已忽略科类筛选。', 'warning');
+      : notice(t('admission.theAdmissionDataForThisProvinceYear'), 'warning');
     return el('div', { class: 'stack' },
       note,
       el('div', { class: 'pg-list-toolbar' },
-        el('span', { class: 'pg-filter-summary' }, `共 ${number(data.total)} 所院校 · 第 ${data.page} / ${Math.max(1, Math.ceil(data.total / data.page_size))} 页`),
-        el('span', { class: 'help' }, data.mode === 'score' ? `分数浮动 ±${params.band} 分` : '按位次比例匹配')),
+        el('span', { class: 'pg-filter-summary' }, t('admission.universitiesPage', { v1: number(data.total), v2: data.page, v3: Math.max(1, Math.ceil(data.total / data.page_size)) })),
+        el('span', { class: 'help' }, data.mode === 'score' ? t('admission.scoreRangePoints', { v1: params.band }) : t('admission.matchByRankRatio'))),
       el('div', { class: 'pg-admit-school-list' },
         ...data.items.map(item => schoolCard(item))),
       pager(data.total, data.page, data.page_size, onPage));
@@ -374,18 +395,18 @@ export async function renderAdmission(container, version) {
     el('div', { class: 'pg-admit-school-main' },
       el('div', { class: 'pg-admit-school-title' }, el('strong', {}, item.university_name), ...badges),
       el('div', { class: 'pg-admit-school-meta' },
-        el('span', {}, item.min_score != null ? `最低分 ${item.min_score}` : '最低分暂无'),
-        el('span', {}, item.min_rank != null ? `位次 ${number(item.min_rank)}` : '位次暂无'),
-        item.delta != null ? el('span', {}, `分差 ${item.delta > 0 ? '+' : ''}${item.delta}`) : null,
-        item.ratio != null ? el('span', {}, `位次比 ${item.ratio}`) : null)),
-    item.level ? el('span', { class: `badge ${levelTone} pg-admit-level` }, item.level) : null);
+        el('span', {}, item.min_score != null ? t('admission.minScore', { v1: item.min_score }) : t('admission.minScoreNA')),
+        el('span', {}, item.min_rank != null ? t('admission.rank_2', { v1: number(item.min_rank) }) : t('admission.rankNA')),
+        item.delta != null ? el('span', {}, t('admission.gap', { v1: item.delta > 0 ? '+' : '', v2: item.delta })) : null,
+        item.ratio != null ? el('span', {}, t('admission.rankRatio', { v1: item.ratio })) : null)),
+    item.level ? el('span', { class: `badge ${levelTone} pg-admit-level` }, levelText(item.level)) : null);
   }
 
   /* ---------------- 查学校 / 专业 ---------------- */
 
   function schoolTab() {
     const seq = panelSeq;
-    const searchInput = input('输入院校名称，如：浙江大学', { type: 'search', autocomplete: 'off' });
+    const searchInput = input(t('admission.enterAUniversityNameEGZhejiang'), { type: 'search', autocomplete: 'off' });
     const suggestBox = el('div', { class: 'pg-admit-suggest-list', hidden: true });
     const result = el('div');
     let suggestSeq = 0;
@@ -401,8 +422,8 @@ export async function renderAdmission(container, version) {
           const data = await api(`/admission/suggest?${query({ q: term })}`);
           if (mine !== suggestSeq || !suggestBox.isConnected) return;
           const items = [
-            ...(data.universities || []).map(row => ({ name: row.name, meta: '院校' })),
-            ...(data.majors || []).map(row => ({ name: row.name, meta: '专业' })),
+            ...(data.universities || []).map(row => ({ name: row.name, meta: 'university' })),
+            ...(data.majors || []).map(row => ({ name: row.name, meta: 'major' })),
           ];
           if (!items.length) { suggestBox.hidden = true; return; }
           suggestBox.replaceChildren(...items.map(item => el('button', {
@@ -410,7 +431,7 @@ export async function renderAdmission(container, version) {
             class: 'pg-admit-suggest-item',
             onClick: () => {
               suggestBox.hidden = true;
-              if (item.meta === '院校') {
+              if (item.meta === 'university') {
                 searchInput.value = item.name;
                 load(item.name);
               } else {
@@ -443,7 +464,7 @@ export async function renderAdmission(container, version) {
     searchInput.addEventListener('focus', () => { clearTimeout(hideTimer); });
 
     async function load(name) {
-      result.replaceChildren(loading('正在读取院校数据…'));
+      result.replaceChildren(loading(t('admission.loadingUniversityData')));
       try {
         const data = await api(`/admission/school?${query({
           province: view.province, year: view.year, category: view.category, name,
@@ -457,11 +478,11 @@ export async function renderAdmission(container, version) {
 
     const card = el('section', { class: 'card' },
       el('div', { class: 'card-header' },
-        el('div', {}, el('h2', {}, '查学校 / 专业'),
-          el('p', { class: 'help' }, '院校投档线、专业录取线、招生计划与历年趋势一次看全。'))),
+        el('div', {}, el('h2', {}, t('admission.lookUpSchoolMajor')),
+          el('p', { class: 'help' }, t('admission.universityCutoffLinesMajorAdmissionLinesEnrollment')))),
       el('div', { class: 'pg-admit-search' },
         el('div', { class: 'search-wrap' }, searchInput, suggestBox),
-        button('查询', () => { if (searchInput.value.trim()) load(searchInput.value.trim()); }, '', 'search')),
+        button(t('admission.search'), () => { if (searchInput.value.trim()) load(searchInput.value.trim()); }, '', 'search')),
       result);
 
     if (view.pendingSchool) {
@@ -485,51 +506,51 @@ export async function renderAdmission(container, version) {
       el('div', {},
         el('div', { class: 'pg-admit-school-title' }, el('h3', {}, data.name), ...badges),
         el('p', { class: 'help' },
-          `${data.year} 年 · ${data.province_name} · ${data.category || '未分科类'}`
+          t('admission.schoolSummary', { year: data.year, province: data.province_name, category: data.category || t('admission.uncategorized') })
           + (data.plan_summary?.rows
-            ? ` · 招生计划 ${number(data.plan_summary.rows)} 条（已知计划数合计 ${number(data.plan_summary.people)} 人）`
+            ? t('admission.enrollmentPlanRecordsPlannedPlacesKnownIn', { v1: number(data.plan_summary.rows), v2: number(data.plan_summary.people) })
             : ''))),
       el('div', { class: 'pg-admit-facts' },
-        factRow('投档线记录', `${data.cutoffs?.length || 0} 条`),
-        factRow('专业录取记录', `${data.majors?.length || 0} 条`),
-        factRow('招生计划记录', `${data.plans?.length || 0} 条`)));
+        factRow(t('admission.cutoffRecords'), t('common.countItems', { count: data.cutoffs?.length || 0 })),
+        factRow(t('admission.majorAdmissionRecords'), t('common.countItems', { count: data.majors?.length || 0 })),
+        factRow(t('admission.enrollmentPlanRecords'), t('common.countItems', { count: data.plans?.length || 0 }))));
 
     const trendChart = lineChart(
       (data.trend || []).filter(row => row.min_score != null).map(row => ({ x: row.year, y: row.min_score })),
-      { xLabel: '年份', yLabel: '最低分', height: 190 }
+      { xLabel: t('practice.year'), yLabel: t('admission.minimumScore'), height: 190 }
     );
 
     return el('div', { class: 'stack' },
       el('section', { class: 'card' }, head,
         (data.trend || []).filter(row => row.min_score != null).length > 1
           ? el('div', { class: 'pg-admit-chart-wrap' }, trendChart) : null),
-      data.cutoffs?.length ? sectionCard('院校投档线', dataTable(
-        ['批次', '科类', '最低分', '最低位次', '录取人数', '选科要求'],
+      data.cutoffs?.length ? sectionCard(t('admission.universityCutoffLines'), dataTable(
+        [t('admission.batch'), t('admission.category'), t('admission.minimumScore'), t('admission.minimumRank'), t('admission.admittedCount'), t('admission.subjectRequirements')],
         data.cutoffs.slice(0, 60).map(row => [
           row.batch || '—', row.category || '—', row.min_score ?? '—',
           row.min_rank != null ? number(row.min_rank) : '—',
           row.admit_count != null ? number(row.admit_count) : '—', row.subject_req || '—',
         ])
       )) : null,
-      data.majors?.length ? sectionCard('专业录取线', dataTable(
-        ['专业', '批次', '最低分', '最低位次', '平均分', '录取人数'],
+      data.majors?.length ? sectionCard(t('admission.majorAdmissionLines'), dataTable(
+        [t('admission.major'), t('admission.batch'), t('admission.minimumScore'), t('admission.minimumRank'), t('admission.averageScore'), t('admission.admittedCount')],
         data.majors.slice(0, 80).map(row => [
           row.major_name || '—', row.batch || '—', row.min_score ?? '—',
           row.min_rank != null ? number(row.min_rank) : '—',
           row.avg_score != null ? row.avg_score : '—',
           row.admit_count != null ? number(row.admit_count) : '—',
         ])
-      ), data.majors.length > 80 ? `仅显示前 80 条，共 ${data.majors.length} 条` : '') : null,
-      data.plans?.length ? sectionCard('招生计划', dataTable(
-        ['专业', '批次', '计划数', '学制', '学费', '选科要求'],
+      ), data.majors.length > 80 ? t('admission.showingTheFirst80OfRecords', { v1: data.majors.length }) : '') : null,
+      data.plans?.length ? sectionCard(t('admission.enrollmentPlan'), dataTable(
+        [t('admission.major'), t('admission.batch'), t('admission.plannedCount'), t('admission.duration'), t('admission.tuition'), t('admission.subjectRequirements')],
         data.plans.slice(0, 80).map(row => [
           row.major_name || '—', row.batch || '—',
-          row.plan_count != null ? number(row.plan_count) : '未提供',
+          row.plan_count != null ? number(row.plan_count) : t('admission.notProvided'),
           row.duration || '—', row.tuition != null ? `¥${number(Math.round(row.tuition))}` : '—',
           row.subject_req || '—',
         ])
-      ), data.plans.length > 80 ? `仅显示前 80 条，共 ${data.plans.length} 条` : '') : null,
-      notice('表格中的「—」表示数据源缺字段；2017–2021 年多数省份缺少位次与批次线，请以分数趋势为主。'));
+      ), data.plans.length > 80 ? t('admission.showingTheFirst80OfRecords', { v1: data.plans.length }) : '') : null,
+      notice(t('admission.meansTheFieldIsMissingInThe')));
   }
 
   function sectionCard(title, content, hint = null) {
@@ -543,23 +564,23 @@ export async function renderAdmission(container, version) {
 
   function plansTab() {
     const seq = panelSeq;
-    const keywordInput = input('专业关键词，如：计算机', { type: 'search' });
-    const universityInput = input('院校名称（可选）', { type: 'search' });
+    const keywordInput = input(t('admission.majorKeywordEGComputerScience'), { type: 'search' });
+    const universityInput = input(t('admission.universityNameOptional'), { type: 'search' });
     const result = el('div');
     const form = el('div', { class: 'pg-admit-form pg-admit-form--three' },
-      field('专业关键词', keywordInput),
-      field('院校名称', universityInput),
-      el('div', { class: 'pg-admit-actions' }, button('查询计划', () => run(1), '', 'search')));
+      field(t('admission.majorKeyword'), keywordInput),
+      field(t('admission.universityName'), universityInput),
+      el('div', { class: 'pg-admit-actions' }, button(t('admission.searchPlans'), () => run(1), '', 'search')));
     const card = el('section', { class: 'card' },
       el('div', { class: 'card-header' },
-        el('div', {}, el('h2', {}, '招生计划检索'),
-          el('p', { class: 'help' }, '2023–2025 年部分省份的计划数缺失，表格中显示「未提供」。'))),
+        el('div', {}, el('h2', {}, t('admission.enrollmentPlanSearch')),
+          el('p', { class: 'help' }, t('admission.plannedNumbersAreMissingForSomeProvinces')))),
       form,
       result);
 
     async function run(page) {
       if (!keywordInput.value.trim() && !universityInput.value.trim()) {
-        toast('请输入专业关键词或院校名称。', true);
+        toast(t('admission.pleaseEnterAMajorKeywordOrUniversity'), true);
         return;
       }
       const params = {
@@ -571,7 +592,7 @@ export async function renderAdmission(container, version) {
         page: page || 1,
         page_size: 20,
       };
-      result.replaceChildren(loading('正在查询…'));
+      result.replaceChildren(loading(t('admission.searching')));
       try {
         const data = await api(`/admission/plans?${query(params)}`);
         if (!guardStale(seq) || !result.isConnected) return;
@@ -593,21 +614,21 @@ export async function renderAdmission(container, version) {
 
   function plansResult(data, params, onPage) {
     if (!data.items?.length) {
-      return empty('没有查到计划记录', '换一个专业关键词、院校或年份再试。', null, 'file');
+      return empty(t('admission.noPlanRecordsFound'), t('admission.tryAnotherMajorKeywordUniversityOrYear'), null, 'file');
     }
     const note = data.category_filtered ? null
-      : notice('该省份年份的招生计划缺少科类字段，已忽略科类筛选。', 'warning');
+      : notice(t('admission.theEnrollmentPlanForThisProvinceYear'), 'warning');
     return el('div', { class: 'stack' },
       note,
       el('div', { class: 'pg-list-toolbar' },
         el('span', { class: 'pg-filter-summary' },
-          `共 ${number(data.total)} 条计划 · 已知计划数合计 ${number(data.total_people)} 人`
-          + ` · 第 ${data.page} / ${Math.max(1, Math.ceil(data.total / data.page_size))} 页`)),
+          t('admission.planRecordsKnownPlannedTotalPeople', { v1: number(data.total), v2: number(data.total_people) })
+          + t('admission.page', { v1: data.page, v2: Math.max(1, Math.ceil(data.total / data.page_size)) }))),
       el('div', { class: 'table-wrap' }, dataTable(
-        ['院校', '专业', '批次', '计划数', '学制', '学费', '选科要求'],
+        [t('admission.university'), t('admission.major'), t('admission.batch'), t('admission.plannedCount'), t('admission.duration'), t('admission.tuition'), t('admission.subjectRequirements')],
         data.items.map(row => [
           row.university_name || '—', row.major_name || '—', row.batch || '—',
-          row.plan_count != null ? number(row.plan_count) : '未提供',
+          row.plan_count != null ? number(row.plan_count) : t('admission.notProvided'),
           row.duration || '—', row.tuition != null ? `¥${number(Math.round(row.tuition))}` : '—',
           row.subject_req || '—',
         ])
@@ -626,10 +647,10 @@ export async function renderAdmission(container, version) {
   function pager(total, page, pageSize, onPage) {
     const pages = Math.max(1, Math.ceil(total / pageSize));
     return el('div', { class: 'pagination' },
-      el('span', {}, `第 ${page} / ${pages} 页`),
+      el('span', {}, t('common.pageOf', { page: page, pages: pages })),
       el('div', { class: 'row' },
-        button('上一页', () => onPage(page - 1), 'secondary small', null, { disabled: page <= 1 }),
-        button('下一页', () => onPage(page + 1), 'secondary small', null, { disabled: page >= pages })));
+        button(t('common.prevPage'), () => onPage(page - 1), 'secondary small', null, { disabled: page <= 1 }),
+        button(t('common.nextPage'), () => onPage(page + 1), 'secondary small', null, { disabled: page >= pages })));
   }
 
   /* ---------------- 简易折线图（SVG，无第三方库） ---------------- */
@@ -647,7 +668,7 @@ export async function renderAdmission(container, version) {
 
   function lineChart(points, { xLabel = '', yLabel = '', height = 200 } = {}) {
     const valid = (points || []).filter(point => Number.isFinite(Number(point.y)));
-    if (valid.length < 2) return el('p', { class: 'help' }, '数据点不足，暂无法绘制趋势图。');
+    if (valid.length < 2) return el('p', { class: 'help' }, t('admission.notEnoughDataPointsToDrawA'));
     const width = 640;
     const pad = { top: 16, right: 18, bottom: 30, left: 54 };
     const innerW = width - pad.left - pad.right;
@@ -676,7 +697,7 @@ export async function renderAdmission(container, version) {
       viewBox: `0 0 ${width} ${height}`,
       class: 'pg-admit-chart',
       role: 'img',
-      'aria-label': `${yLabel}趋势图`,
+      'aria-label': t('admission.trendChart', { v1: yLabel }),
     }, [
       ...grid,
       svgNode('path', { d: areaPath, class: 'pg-chart-area' }),
@@ -692,6 +713,87 @@ export async function renderAdmission(container, version) {
     ]);
   }
 
+  /* ---------------- 数据缺失声明 ---------------- */
+
+  let gapsData = null;
+  const gapContext = el('div', { class: 'pg-admit-gap-current' });
+  const gapsBody = el('div', { class: 'pg-admit-gaps-body' }, loading(t('admission.readingTheMissingDataStatement')));
+  const gapsBox = el('details', { class: 'pg-admit-gaps' },
+    el('summary', {}, t('admission.missingDataStatementReportedHonestlyByProvince')),
+    gapsBody);
+
+  const GAP_LABELS = {
+    ok: t('admission.complete'), partial: t('admission.partiallyMissing'), missing: t('admission.missing'), no_data: t('admission.noDataForThisTable'),
+    official: t('admission.officialSupplement'), native: t('admission.fromPrimaryData'),
+  };
+  const TABLE_LABELS = {
+    'score-range': t('admission.scoreRankTable'), 'school-admission': t('admission.universityCutoffLines'),
+    'major-admission': t('admission.majorAdmissionLines'), 'enrollment-plan': t('admission.enrollmentPlan'),
+  };
+
+  async function loadGaps() {
+    try {
+      const data = await api('/admission/gaps');
+      if (!data.available) {
+        gapsBody.replaceChildren(notice(data.detail || t('admission.noMissingDataStatementGeneratedYet'), 'warning'));
+        return;
+      }
+      gapsData = data;
+      const summary = data.summary || {};
+      const count = group => {
+        const bucket = summary[group] || {};
+        return (bucket.missing || 0) + (bucket.no_data || 0);
+      };
+      const officialYears = (data.official?.years || []).join(t('common.listSeparator'));
+      gapsBody.replaceChildren(
+        el('p', {},
+          t('admission.thisPageCoversProvinceYearsMissingValues', { v1: number(summary.province_years || 0) }),
+          t('admission.officialCoverage', { v1: officialYears || t('admission.noneYet') })),
+        el('div', { class: 'pg-admit-gap-tags' },
+          ...([
+            [t('admission.missingRank'), count('rank')],
+            [t('admission.missingControlScore'), count('control')],
+            [t('admission.missingPlannedCount'), count('plan')],
+            [t('admission.missingCategory'), count('category')],
+            [t('admission.provinceYearsWithMissingTables'), summary.province_years_missing_tables || 0],
+          ].map(([label, value]) => el('span', { class: 'pg-tag', 'data-tone': value ? 'warn' : 'ok' },
+            t('admission.provinceYears', { v1: label, v2: number(value) }))))),
+        gapContext,
+        el('p', { class: 'help' },
+          t('admission.seeTheDataGapStatementDocumentIn_2')));
+      renderGapContext();
+    } catch (error) {
+      gapsBody.replaceChildren(notice(t('admission.failedToReadTheMissingDataStatement', { v1: error.message }), 'error'));
+    }
+  }
+
+  function renderGapContext() {
+    if (!gapsData) return;
+    const entry = (gapsData.province_years || []).find(
+      item => item.province === view.province && item.year === view.year);
+    if (!entry) {
+      gapContext.replaceChildren(el('span', { class: 'pg-tag', 'data-tone': 'warn' }, t('admission.thisProvinceYearIsOutsideTheStatement')));
+      return;
+    }
+    const statusTag = (label, status) => {
+      const good = ['ok', 'native', 'official'].includes(status);
+      return el('span', { class: 'pg-tag', 'data-tone': good ? 'ok' : 'warn' },
+        `${label}：${GAP_LABELS[status] || status}`);
+    };
+    const children = [
+      el('strong', {}, t('admission.text', { v1: entry.province_name, v2: entry.year })),
+      statusTag(t('admission.rank_3'), entry.rank),
+      statusTag(t('admission.controlScoreLine'), entry.control),
+      statusTag(t('admission.plannedCount'), entry.plan),
+      statusTag(t('admission.category'), entry.category),
+      (entry.missing_tables || []).length
+        ? el('span', { class: 'pg-tag', 'data-tone': 'warn' },
+          t('admission.missingTables', { v1: entry.missing_tables.map(table => TABLE_LABELS[table] || table).join('、') }))
+        : null,
+    ].filter(Boolean);
+    gapContext.replaceChildren(...children);
+  }
+
   /* ---------------- 初始化 ---------------- */
 
   async function onFiltersChange() {
@@ -703,6 +805,7 @@ export async function renderAdmission(container, version) {
     const ok = await loadFilters(seq);
     if (!ok || !current(version)) return;
     renderPanel();
+    renderGapContext();
   }
 
   provinceSelect.addEventListener('change', onFiltersChange);
@@ -714,28 +817,30 @@ export async function renderAdmission(container, version) {
 
   const filterCard = el('section', { class: 'card filter-card' },
     el('div', { class: 'pg-admit-filters' },
-      field('省份', provinceSelect),
-      field('年份', yearSelect),
-      field('科类', categorySelect, '留空自动选择数据最多的科类')));
+      field(t('admission.province'), provinceSelect),
+      field(t('practice.year'), yearSelect),
+      field(t('admission.category'), categorySelect, t('admission.leaveBlankToAutoSelectTheCategory'))));
 
   renderTabs();
   container.replaceChildren(
-    heading('GAOKAO COMPASS', '志愿查询',
-      '用一分一段表把分数换算成位次，再按冲 / 稳 / 保查看可报院校、专业录取线与招生计划。'),
+    heading('GAOKAO COMPASS', t('nav.admission'),
+      t('admission.convertYourScoreIntoARankWith')),
     filterCard,
     statsGrid,
     completenessBar,
     tabBar,
     panel,
+    gapsBox,
     el('p', { class: 'footer-note' },
-      '数据来源：GaokaoCompass（Hugging Face，MIT 许可，Copyright (c) 2025 choucisan），整理自各省教育考试院等公开渠道。',
+      t('admission.dataSourceGaokaocompassHuggingFaceMitLicense'),
       el('br'),
-      '非官方数据，可能存在缺字段或误差，志愿填报请以各省考试院正式公布为准。',
+      t('admission.unofficialDataFieldsMayBeMissingOr'),
       el('br'),
-      '完整来源、许可与修改说明见项目根目录 THIRD_PARTY_NOTICES.md。')
+      t('admission.seeThirdPartyNoticesMdInThe'))
   );
 
   await loadFilters(++filterSeq);
   if (!current(version)) return;
   renderPanel();
+  loadGaps();
 }

@@ -1,4 +1,5 @@
 import { el, button, downloadText } from '../core/dom.js';
+import { t } from '../core/i18n.js';
 
 const BRANCH_COLORS = ['#147d70', '#48689e', '#b56e2d', '#7a5195', '#2c7a5b', '#a84a54', '#2e7d9b'];
 
@@ -11,7 +12,7 @@ function cleanNodeLabel(raw) {
     .replace(/^\[(.*)\]$/, '$1')
     .replace(/^["']|["']$/g, '')
     .trim();
-  return s || '节点';
+  return s || t('mindmap.node');
 }
 
 export function parseMermaidMindmap(source) {
@@ -22,7 +23,7 @@ export function parseMermaidMindmap(source) {
     const indent = raw.match(/^(\s*)/)[1].replace(/\t/g, '  ').length;
     items.push({ indent, label: cleanNodeLabel(raw), children: [] });
   }
-  if (!items.length) return { label: '知识导图', children: [] };
+  if (!items.length) return { label: t('mindmap.knowledgeMap'), children: [] };
   const root = items[0];
   const stack = [root];
   for (let i = 1; i < items.length; i++) {
@@ -37,7 +38,7 @@ export function parseMermaidMindmap(source) {
 }
 
 export function markdownToMindmapTree(title, mdText) {
-  const root = { label: cleanNodeLabel(title || '知识清单'), level: 0, children: [] };
+  const root = { label: cleanNodeLabel(title || t('nav.notes')), level: 0, children: [] };
   const stack = [root];
   for (const rawLine of String(mdText || '').split(/\r?\n/)) {
     const hm = rawLine.trim().match(/^(#{1,4})\s+(.+)$/);
@@ -98,7 +99,7 @@ function layoutTree(root) {
   return { root, width: totalW, height: totalH };
 }
 
-export function renderMindmapWidget(treeOrMermaid, { title = '思维导图' } = {}) {
+export function renderMindmapWidget(treeOrMermaid, { title = t('mindmap.mindMap') } = {}) {
   const tree = typeof treeOrMermaid === 'string' ? parseMermaidMindmap(treeOrMermaid) : treeOrMermaid;
   const { root, width, height } = layoutTree(tree);
   const ns = 'http://www.w3.org/2000/svg';
@@ -176,10 +177,10 @@ export function renderMindmapWidget(treeOrMermaid, { title = '思维导图' } = 
     el('div', { class: 'mindmap-toolbar' },
       el('strong', { class: 'small-text' }, `🗺 ${title}`),
       el('div', { class: 'row' },
-        button('缩小', () => { scale = Math.max(0.5, +(scale - 0.15).toFixed(2)); applyScale(); }, 'ghost small'),
-        button('重置', () => { scale = 1; applyScale(); }, 'ghost small'),
-        button('放大', () => { scale = Math.min(2.0, +(scale + 0.15).toFixed(2)); applyScale(); }, 'ghost small'),
-        button('下载 SVG', () => {
+        button(t('mindmap.zoomOut'), () => { scale = Math.max(0.5, +(scale - 0.15).toFixed(2)); applyScale(); }, 'ghost small'),
+        button(t('physics.reset'), () => { scale = 1; applyScale(); }, 'ghost small'),
+        button(t('mindmap.zoomIn'), () => { scale = Math.min(2.0, +(scale + 0.15).toFixed(2)); applyScale(); }, 'ghost small'),
+        button(t('mindmap.downloadSvg'), () => {
           const serialized = new XMLSerializer().serializeToString(svg);
           downloadText(`${title}.svg`, serialized, 'image/svg+xml;charset=utf-8');
         }, 'secondary small', 'download'))),

@@ -1,3 +1,4 @@
+import { t } from '../core/i18n.js';
 import { el, icon } from '../core/dom.js';
 
 export function filePicker(label, help, accept, onFiles, { multiple = false, capture = null } = {}) {
@@ -48,7 +49,7 @@ export function attachPasteImage(container, onImageFile) {
         const file = item.getAsFile();
         if (file) {
           event.preventDefault();
-          onImageFile(new File([file], `截图_${Date.now()}.png`, { type: file.type || 'image/png' }));
+          onImageFile(new File([file], `${t('common.screenshotName')}_${Date.now()}.png`, { type: file.type || 'image/png' }));
           break;
         }
       }

@@ -2,7 +2,7 @@ import { api, ensureCatalog, ensureKnowledgePoints, ensurePromptGrid } from '../
 import { state, onSessionReset } from '../core/state.js';
 import {
   el, fill, icon, button, badge, empty, heading, loading, notice, field, input, select,
-  dateText, downloadText, busy, toast, wireTabKeyboard,
+  dateText, downloadText, downloadBlob, busy, toast, wireTabKeyboard,
 } from '../core/dom.js';
 import { current, renderRoute } from '../core/router.js';
 import { markdown } from '../core/markdown.js';
@@ -12,6 +12,7 @@ import { filePicker } from '../components/filePicker.js';
 import { renderSources } from '../components/aiResultCard.js';
 import { createPromptGrid } from '../components/promptGrid.js';
 import { renderMindmapWidget, markdownToMindmapTree } from '../components/mindmap.js';
+import { t } from '../core/i18n.js';
 
 // OCR 逐页状态由后端给出：text=资料自带文本层，pending=待识别，recognized=已识别，
 // reviewed=人工校对，failed=识别失败。页面按覆盖度展示，而不是只显示“需 OCR”。
@@ -22,7 +23,7 @@ function pageNumberList(pages) {
 // 把页码压缩成 “1–3、7、31” 这样的可读区间（第 31 页与第 1 页不会互相吞掉）。
 function pageRangesText(pages) {
   const numbers = pageNumberList(pages);
-  if (!numbers.length) return '无';
+  if (!numbers.length) return t('common.none');
   const parts = [];
   for (let index = 0; index < numbers.length; index += 1) {
     const start = numbers[index];
@@ -91,11 +92,11 @@ function statusTag(text, tone, glyph) {
 // covered → 可识别，pending_pages → 待识别，failed_pages → 失败，reviewed_pages → 人工校对。
 function renderDocStatusTags(info) {
   const tags = el('span', { class: 'pg-status-row' });
-  if (info.coveredCount > 0) tags.append(statusTag(`可识别 ${info.coveredCount} 页`, 'ok', '✓'));
-  if (info.pending.length) tags.append(statusTag(`待识别 ${info.pending.length} 页`, 'warn', '!'));
-  if (info.failed.length) tags.append(statusTag(`失败 ${info.failed.length} 页`, 'bad', '✕'));
-  if (info.reviewed.length) tags.append(statusTag(`人工校对 ${info.reviewed.length} 页`, 'info', '校'));
-  if (!tags.childNodes.length) tags.append(statusTag('待识别', 'warn', '!'));
+  if (info.coveredCount > 0) tags.append(statusTag(t('notes.recognizablePages', { v1: info.coveredCount }), 'ok', '✓'));
+  if (info.pending.length) tags.append(statusTag(t('notes.pagesToRecognize', { v1: info.pending.length }), 'warn', '!'));
+  if (info.failed.length) tags.append(statusTag(t('notes.failedPages', { v1: info.failed.length }), 'bad', '✕'));
+  if (info.reviewed.length) tags.append(statusTag(t('notes.manuallyReviewedPages', { v1: info.reviewed.length }), 'info', t('notes.r')));
+  if (!tags.childNodes.length) tags.append(statusTag(t('home.importStatus.draft'), 'warn', '!'));
   return tags;
 }
 
@@ -103,20 +104,20 @@ function renderDocCoverage(doc) {
   const info = coverageSummary(doc);
   if (!info.pageCount) return null;
   const rows = [
-    el('span', {}, `覆盖 ${info.coveredCount}/${info.pageCount} 页（识别范围第 ${info.pageFrom}–${info.pageTo} 页）`),
+    el('span', {}, t('notes.coveredPagesRangePages', { v1: info.coveredCount, v2: info.pageCount, v3: info.pageFrom, v4: info.pageTo })),
   ];
   if (info.pending.length) {
-    rows.push(el('span', { class: 'pg-ocr-flag', 'data-tone': 'warn' }, `待识别：第 ${pageRangesText(info.pending)} 页`));
+    rows.push(el('span', { class: 'pg-ocr-flag', 'data-tone': 'warn' }, t('notes.toRecognizePage', { v1: pageRangesText(info.pending) })));
   }
   if (info.failed.length) {
-    rows.push(el('span', { class: 'pg-ocr-flag', 'data-tone': 'bad' }, `识别失败：第 ${pageRangesText(info.failed)} 页`));
+    rows.push(el('span', { class: 'pg-ocr-flag', 'data-tone': 'bad' }, t('notes.recognitionFailedPage', { v1: pageRangesText(info.failed) })));
   }
-  if (info.reviewed.length) rows.push(el('span', {}, `人工校对：第 ${pageRangesText(info.reviewed)} 页`));
+  if (info.reviewed.length) rows.push(el('span', {}, t('notes.manuallyReviewedPage', { v1: pageRangesText(info.reviewed) })));
   if (!info.complete && info.nextFrom !== null) {
-    rows.push(el('span', {}, `可继续识别：第 ${info.nextFrom}–${info.nextTo} 页`));
+    rows.push(el('span', {}, t('notes.canContinueRecognizingPages', { v1: info.nextFrom, v2: info.nextTo })));
   }
   return el('div', { class: 'pg-ocr-coverage' },
-    el('b', {}, `OCR 覆盖度 · 资料 v${info.docVersion}`), ...rows);
+    el('b', {}, t('notes.ocrCoverageMaterialV', { v1: info.docVersion })), ...rows);
 }
 
 
@@ -141,8 +142,8 @@ export async function renderNotes(container, version) {
   const listArea = el('div');
   const detailArea = el('section', { class: 'card pg-note-detail' });
 
-  const tabBar = el('div', { class: 'pg-mini-tabs', role: 'tablist', 'aria-label': '笔记来源筛选' });
-  for (const [key, label] of [['all', '全部笔记'], ['private', '我的笔记'], ['official', '官方清单']]) {
+  const tabBar = el('div', { class: 'pg-mini-tabs', role: 'tablist', 'aria-label': t('notes.filterNotesBySource') });
+  for (const [key, label] of [['all', t('home.notes.all')], ['private', t('notes.myNotes')], ['official', t('notes.officialList')]]) {
     tabBar.append(el('button', {
       type: 'button',
       class: 'pg-mini-tab',
@@ -158,7 +159,7 @@ export async function renderNotes(container, version) {
   wireTabKeyboard(tabBar);
 
   // Documents area — updates IN-PLACE without wiping the page or composer form (§9.1 bugfix!)
-  const docCountBadge = badge(`${allDocs.length} 份`);
+  const docCountBadge = badge(t('notes.documents', { v1: allDocs.length }));
   const docList = el('div');
   const uploadFeedback = el('div');
   const selectedDocIds = new Set();
@@ -171,8 +172,8 @@ export async function renderNotes(container, version) {
     const totalPages = Math.max(1, Number(docItem.pages) || 1);
     const startFrom = Math.min(totalPages, Math.max(1, Number(info.nextFrom) || 1));
     const startTo = Math.min(totalPages, Math.max(startFrom, Number(info.nextTo) || totalPages));
-    const pFrom = input('起始页', { type: 'number', value: startFrom, min: 1, max: totalPages });
-    const pTo = input('结束页', {
+    const pFrom = input(t('notes.startPage'), { type: 'number', value: startFrom, min: 1, max: totalPages });
+    const pTo = input(t('notes.endPage'), {
       type: 'number', value: Math.min(startTo, startFrom + 4), min: 1, max: totalPages,
     });
     const statusBox = el('div');
@@ -188,7 +189,7 @@ export async function renderNotes(container, version) {
           jobs.push({ from: start, to: Math.min(to, start + 29) });
         }
       }
-      if (!jobs.length) throw new Error('没有需要识别的页码。');
+      if (!jobs.length) throw new Error(t('notes.noPagesNeedRecognition'));
       // 逐段向服务端确认页数与费用，再一次性确认执行。
       const confirmations = [];
       for (const range of jobs) {
@@ -196,12 +197,12 @@ export async function renderNotes(container, version) {
           method: 'POST',
           data: { ...payload, page_from: range.from, page_to: range.to, confirmed: false },
         });
-        confirmations.push(estimate.notice || `即将用 ${payload.model} 识别第 ${range.from}–${range.to} 页。`);
+        confirmations.push(estimate.notice || t('notes.aboutToRecognizePagesWith', { v1: payload.model, v2: range.from, v3: range.to }));
       }
       if (!window.confirm(confirmations.join('\n\n'))) return null;
       const results = [];
       for (const range of jobs) {
-        statusBox.replaceChildren(loading(`正在用 ${payload.model} 识别第 ${range.from}–${range.to} 页…`));
+        statusBox.replaceChildren(loading(t('notes.recognizingPagesWith', { v1: payload.model, v2: range.from, v3: range.to })));
         const response = await api(`/documents/${docItem.id}/ocr`, {
           method: 'POST',
           data: { ...payload, page_from: range.from, page_to: range.to, confirmed: true },
@@ -243,9 +244,10 @@ export async function renderNotes(container, version) {
       return new Promise(resolve => {
         const progressMount = el('div', { class: 'pg-ocr-job-mount' });
         statusBox.replaceChildren(
-          notice(`识别已转入后台任务：第 ${range.from}–${range.to} 页`
-            + `${response.estimated_calls ? `，预计 ${response.estimated_calls} 次模型调用` : ''}。`
-            + '可关闭对话框先去整理其它资料，完成后资料卡会自动刷新。'),
+          notice(t('notes.recognitionMovedToABackgroundTaskPages', { v1: range.from, v2: range.to })
+            + (response.estimated_calls ? t('notes.estimatedModelCalls', { v1: response.estimated_calls }) : '')
+            + t('notes.periodEnd')
+            + t('notes.youCanCloseThisDialogAndOrganize')),
           progressMount);
         let finished = false;
         const finish = async job => {
@@ -253,7 +255,7 @@ export async function renderNotes(container, version) {
           finished = true;
           try { await refreshDocsInPlace(); } catch { /* 列表刷新失败不阻塞结果展示 */ }
           if (!job || !['completed', 'succeeded'].includes(job.status)) {
-            statusBox.prepend(notice('OCR 后台任务未完成（已取消或失败）。已识别的页面会保留，可稍后重试。', 'warning'));
+            statusBox.prepend(notice(t('notes.theOcrBackgroundTaskDidNotFinish'), 'warning'));
             resolve(null);
             return;
           }
@@ -268,7 +270,7 @@ export async function renderNotes(container, version) {
     }
 
     function retryFailedButton(failedPages) {
-      return button(`只重试失败页（第 ${pageRangesText(failedPages)} 页）`, ev => busy(ev.currentTarget, async () => {
+      return button(t('notes.retryFailedPagesOnlyPage', { v1: pageRangesText(failedPages) }), ev => busy(ev.currentTarget, async () => {
         const results = await runOcr(ocrPicker.payload(false), pageRanges(failedPages));
         if (!results) return;
         showResult(results);
@@ -293,21 +295,21 @@ export async function renderNotes(container, version) {
         : (allDocs.find(item => Number(item.id) === Number(docItem.id)) || docItem);
       const updated = coverageSummary(liveDoc);
       const blocks = [
-        notice(`识别结果已按页合并保存：覆盖 ${updated.coveredCount}/${updated.pageCount} 页，资料版本 v${updated.docVersion}。`),
+        notice(t('notes.recognitionResultsMergedAndSavedPerPage', { v1: updated.coveredCount, v2: updated.pageCount, v3: updated.docVersion })),
       ];
       if (preserved.length) {
         blocks.push(notice(
-          `第 ${pageRangesText(preserved)} 页此前已人工校对，本次识别结果没有改写这些页，已保留人工校对版本，请审阅新旧识别结果。`,
+          t('notes.pagesWerePreviouslyManuallyReviewedAndWere', { v1: pageRangesText(preserved) }),
           'warning',
         ));
       }
       if (failed.length) {
         const details = merged.ocr_pages
           .filter(page => failed.includes(Number(page.page)) && page.error)
-          .map(page => `第 ${page.page} 页：${page.error}`)
+          .map(page => t('notes.page', { v1: page.page, v2: page.error }))
           .join('；');
         blocks.push(notice(
-          `第 ${pageRangesText(failed)} 页识别失败${details ? `（${details}）` : ''}。其它页已正常保存，可只重试失败页。`,
+          t('notes.pageFailedRecognitionOtherPagesWereSaved', { v1: pageRangesText(failed), v2: details ? `（${details}）` : '' }),
           'error',
         ));
       }
@@ -323,39 +325,43 @@ export async function renderNotes(container, version) {
         ta: el('textarea', {
           rows: 5,
           value: page.text || '',
-          placeholder: page.state === 'failed' ? '该页识别失败，可人工补录该页文字后保存' : '',
+          placeholder: page.state === 'failed' ? t('notes.recognitionFailedForThisPageYouCan') : '',
         }),
       }));
       if (editors.length) {
-        blocks.push(notice('如需修正识别文字，请修改后保存；保存的页会标记为「人工校对」，之后重跑不会被改写。'));
+        blocks.push(notice(t('notes.toCorrectRecognizedTextEditItAnd')));
       }
-      const saveButton = editors.length ? button('保存校对后的文本（标记为人工校对）', ev => busy(ev.currentTarget, async () => {
+      const saveButton = editors.length ? button(t('notes.saveReviewedTextMarkedAsManuallyReviewed'), ev => busy(ev.currentTarget, async () => {
         const saved = await api(`/documents/${docItem.id}/ocr-text`, {
           method: 'PATCH',
           data: { pages: editors.map(ed => ({ page: ed.page, text: ed.ta.value })) },
         });
         const savedCoverage = coverageSummary(saved);
         toast(savedCoverage.complete
-          ? '校对文本已保存，资料已可用于整理。'
-          : `校对文本已保存；识别范围内还有 ${savedCoverage.missing.length} 页没文本。`,
+          ? t('notes.reviewedTextSavedTheMaterialIsReady')
+          : t('notes.reviewedTextSavedPagesInTheRange', { v1: savedCoverage.missing.length }),
         !savedCoverage.complete);
         dlg.close();
         await refreshDocsInPlace();
       }), '', 'check') : null;
       statusBox.replaceChildren(
         ...blocks,
-        ...editors.map(ed => field(`第 ${ed.page} 页识别文本${ed.failed ? '（识别失败，可人工补录）' : ''}`, ed.ta)),
+        ...editors.map(ed => field(
+          t('notes.pageRecognizedText', { v1: ed.page })
+            + (ed.failed ? t('notes.recognitionFailedManual') : ''),
+          ed.ta,
+        )),
         el('div', { class: 'row end', style: 'margin-top:12px' }, saveButton),
       );
       if (failed.length) retryBox.replaceChildren(retryFailedButton(failed));
       else retryBox.replaceChildren();
-      if (updated.complete) toast('识别范围内所有页都已有文本，资料可用于整理。');
+      if (updated.complete) toast(t('notes.everyPageInTheRangeHasText'));
     }
 
-    const runBtn = button('确认页数并执行视觉 OCR', e => busy(e.currentTarget, async () => {
+    const runBtn = button(t('notes.confirmPagesAndRunVisualOcr'), e => busy(e.currentTarget, async () => {
       const from = Math.max(1, Number(pFrom.value) || 1);
       const to = Math.min(totalPages, Number(pTo.value) || from);
-      if (to < from) throw new Error('结束页不能小于起始页。');
+      if (to < from) throw new Error(t('notes.theEndPageCannotBeBeforeThe'));
       const results = await runOcr(ocrPicker.payload(false), [{ from, to }]);
       if (!results) return;
       showResult(results);
@@ -364,23 +370,23 @@ export async function renderNotes(container, version) {
 
     const coverageNotices = [];
     coverageNotices.push(
-      `该 PDF 共 ${totalPages} 页；识别范围第 ${info.pageFrom}–${info.pageTo} 页，已覆盖 ${info.coveredCount}/${info.pageCount} 页。`,
+      t('notes.thisPdfHasPagesTheRecognitionRange', { v1: totalPages, v2: info.pageFrom, v3: info.pageTo, v4: info.coveredCount, v5: info.pageCount }),
     );
     if (info.pending.length) {
-      coverageNotices.push(`待识别：第 ${pageRangesText(info.pending)} 页；可继续识别范围为第 ${info.nextFrom}–${info.nextTo} 页。`);
+      coverageNotices.push(t('notes.toRecognizePageTheNextRangeAvailable', { v1: pageRangesText(info.pending), v2: info.nextFrom, v3: info.nextTo }));
     }
     if (info.failed.length) {
-      coverageNotices.push(`识别失败：第 ${pageRangesText(info.failed)} 页，可只重试这些页。`);
+      coverageNotices.push(t('notes.recognitionFailedPageYouCanRetryJust', { v1: pageRangesText(info.failed) }));
     }
     if (info.reviewed.length) {
-      coverageNotices.push(`已人工校对：第 ${pageRangesText(info.reviewed)} 页；重新识别会保留人工校对文本，只在结果中提示审阅。`);
+      coverageNotices.push(t('notes.manuallyReviewedPageReRecognitionKeepsThe', { v1: pageRangesText(info.reviewed) }));
     }
 
     dlg.append(
-      el('div', { class: 'card-header' }, el('h3', {}, `扫描件 OCR · ${docItem.title}`), button('关闭', () => dlg.close(), 'ghost small', 'close')),
+      el('div', { class: 'card-header' }, el('h3', {}, t('notes.scanOcr', { v1: docItem.title })), button(t('common.close'), () => dlg.close(), 'ghost small', 'close')),
       notice(coverageNotices.join(' '), info.failed.length ? 'warning' : ''),
       ocrPicker.node,
-      el('div', { class: 'form-grid', style: 'margin:12px 0' }, field('起始页', pFrom), field('结束页（单次≤30页）', pTo)),
+      el('div', { class: 'form-grid', style: 'margin:12px 0' }, field(t('notes.startPage'), pFrom), field(t('notes.endPageMax30PerRun'), pTo)),
       el('div', { class: 'row end', style: 'margin-bottom:12px' }, runBtn),
       retryBox,
       statusBox
@@ -394,7 +400,7 @@ export async function renderNotes(container, version) {
   }
 
   function renderDocsUI() {
-    docCountBadge.textContent = `${allDocs.length} 份`;
+    docCountBadge.textContent = t('notes.documents', { v1: allDocs.length });
     docList.replaceChildren();
     docCheckboxesWrap.replaceChildren();
 
@@ -407,35 +413,35 @@ export async function renderNotes(container, version) {
           el('div', { class: 'pg-doc-main' },
             el('div', { class: 'pg-doc-head' },
               el('strong', { class: 'pg-doc-title' }, d.title),
-              d.index_status === 'stale' ? statusTag('索引待重建', 'warn', '!') : null,
+              d.index_status === 'stale' ? statusTag(t('notes.indexNeedsRebuilding'), 'warn', '!') : null,
               renderDocStatusTags(info)),
-            el('p', { class: 'pg-doc-meta' }, `${d.pages || 0} 页 · ${d.chunks || 0} 个结构块`),
+            el('p', { class: 'pg-doc-meta' }, t('notes.pagesChunks', { v1: d.pages || 0, v2: d.chunks || 0 })),
             renderDocCoverage(d),
             info.failed.length
               ? el('p', { class: 'pg-doc-hint' },
-                '有页面识别失败，可只重试这些页：',
-                button(`重试第 ${pageRangesText(info.failed)} 页`, () => openOcrDialog(d, { retryFailed: true }),
+                t('notes.somePagesFailedRecognitionYouCanRetry'),
+                button(t('notes.retryPage', { v1: pageRangesText(info.failed) }), () => openOcrDialog(d, { retryFailed: true }),
                   'ghost small', 'rotate'))
               : null),
           el('div', { class: 'pg-doc-actions' },
             d.index_status === 'stale'
-              ? button('重建索引', e => busy(e.currentTarget, async () => {
+              ? button(t('notes.rebuildIndex'), e => busy(e.currentTarget, async () => {
                 // 4.5/3.2-12：OCR 校对后向量可能过期，需要显式重建语义索引。
                 const res = await api(`/documents/${d.id}/reindex`, { method: 'POST' });
-                toast(res.notice || '索引已重建，语义检索已恢复。');
+                toast(res.notice || t('notes.indexRebuiltSemanticSearchIsAvailableAgain'));
                 await refreshDocsInPlace();
               }), 'soft small', 'rotate')
               : null,
-            canOcr ? button(d.status === 'partial' ? '继续 OCR' : 'OCR 识别',
+            canOcr ? button(d.status === 'partial' ? t('notes.continueOcr') : t('notes.ocrRecognition'),
               () => openOcrDialog(d), 'soft small', 'scan') : null,
-            info.failed.length ? button('只重试失败页',
+            info.failed.length ? button(t('notes.retryFailedPagesOnly'),
               () => openOcrDialog(d, { retryFailed: true }), 'ghost small', 'rotate') : null,
             button('', e => busy(e.currentTarget, async () => {
-              if (!window.confirm(`删除资料「${d.title}」？`)) return;
+              if (!window.confirm(t('notes.deleteMaterial', { v1: d.title }))) return;
               await api(`/documents/${d.id}`, { method: 'DELETE' });
               selectedDocIds.delete(d.id);
               await refreshDocsInPlace();
-            }), 'ghost small', 'trash', { 'aria-label': `删除 ${d.title}` }))));
+            }), 'ghost small', 'trash', { 'aria-label': t('notes.delete', { v1: d.title }) }))));
 
         if (d.status === 'ready') {
           const cb = el('input', {
@@ -447,14 +453,14 @@ export async function renderNotes(container, version) {
               updateMapEstimate();
             },
           });
-          docCheckboxesWrap.append(el('label', { class: 'doc-check-pill' }, cb, el('span', {}, `${d.title}（${d.chunks}块）`)));
+          docCheckboxesWrap.append(el('label', { class: 'doc-check-pill' }, cb, el('span', {}, t('notes.chunks', { v1: d.title, v2: d.chunks }))));
         }
       }
     } else {
-      docList.append(el('p', { class: 'help' }, '还没有资料。上传课件、笔记或教材节选（支持多文档合并整理）。'));
+      docList.append(el('p', { class: 'help' }, t('notes.noMaterialsYetUploadSlidesNotesOr')));
     }
     if (!docCheckboxesWrap.childNodes.length) {
-      docCheckboxesWrap.append(el('p', { class: 'help' }, '暂无可用文字资料，请在上方上传或对扫描 PDF 执行 OCR。'));
+      docCheckboxesWrap.append(el('p', { class: 'help' }, t('notes.noTextMaterialsAvailableUploadAboveOr')));
     }
     updateMapEstimate();
   }
@@ -468,11 +474,11 @@ export async function renderNotes(container, version) {
   }
 
   const docPicker = filePicker(
-    '添加学习资料（不刷新表单）',
-    '支持 PDF、DOCX、TXT、Markdown；按标题结构智能分块；扫描 PDF 支持视觉 OCR。',
+    t('notes.addStudyMaterialWithoutRefreshingTheForm'),
+    t('notes.supportsPdfDocxTxtAndMarkdownSmart'),
     '.pdf,.docx,.txt,.md',
     async file => {
-      uploadFeedback.replaceChildren(loading('正在按标题结构解析资料…'));
+      uploadFeedback.replaceChildren(loading(t('notes.parsingTheMaterialByHeadingStructure')));
       try {
         const fd = new FormData();
         fd.set('file', file);
@@ -481,10 +487,10 @@ export async function renderNotes(container, version) {
         if (result.status === 'ready') selectedDocIds.add(result.id);
         const coverage = result.coverage || {};
         toast(result.status === 'needs_ocr'
-          ? `检测到 ${result.pages} 页扫描件，没有可提取文字；点击资料右侧「OCR 识别」后即可整理。`
+          ? t('notes.detectedScannedPagesWithNoExtractableText', { v1: result.pages })
           : result.status === 'partial'
-            ? `资料「${result.title}」只有部分页有文本（${coverage.covered_count || 0}/${coverage.page_count || result.pages} 页），可继续 OCR 未识别页。`
-            : `资料「${result.title}」已解析为 ${result.chunks} 个结构块。`);
+            ? t('notes.materialHasTextOnOnlySomePages', { v1: result.title, v2: coverage.covered_count || 0, v3: coverage.page_count || result.pages })
+            : t('notes.materialParsedIntoChunks', { v1: result.title, v2: result.chunks }));
         await refreshDocsInPlace();
       } catch (error) {
         uploadFeedback.replaceChildren(notice(error.message, 'error'));
@@ -495,8 +501,8 @@ export async function renderNotes(container, version) {
   docPicker.style.padding = '16px 12px';
 
   const docsArea = el('section', { class: 'card', style: 'margin-bottom:20px' },
-    el('div', { class: 'card-header' }, el('h3', {}, '我的资料'), docCountBadge),
-    docsRes.embedding_enabled ? notice('本站已启用语义检索。上传或执行 OCR 后，解析出的资料文字会发送到站点配置的向量服务。') : null,
+    el('div', { class: 'card-header' }, el('h3', {}, t('notes.myMaterials')), docCountBadge),
+    docsRes.embedding_enabled ? notice(t('notes.semanticSearchIsEnabledOnThisSite')) : null,
     docList, docPicker, uploadFeedback);
 
   const toggleManual = () => {
@@ -505,25 +511,25 @@ export async function renderNotes(container, version) {
   };
 
   // Manual Note Composer (also allows linking to Subject & KP for official notes!)
-  const manualTitle = input('例如：导数的几何意义 · 知识清单');
-  const manualSubj = select([{ value: '', label: '关联学科（可选）' }, ...(catalog.subjects || []).map(s => ({ value: s, label: s }))]);
-  const manualKp = select([{ value: '', label: '关联知识点（可选）' }]);
+  const manualTitle = input(t('notes.eGGeometricMeaningOfDerivativesKnowledge'));
+  const manualSubj = select([{ value: '', label: t('notes.linkedSubjectOptional') }, ...(catalog.subjects || []).map(s => ({ value: s, label: s }))]);
+  const manualKp = select([{ value: '', label: t('notes.linkedKnowledgePointOptional') }]);
   manualSubj.addEventListener('change', () => {
     const filtered = kps.filter(k => !manualSubj.value || k.subject === manualSubj.value);
     manualKp.replaceChildren(
-      el('option', { value: '' }, '关联知识点（可选）'),
-      ...filtered.map(k => el('option', { value: k.id }, `${k.level === 1 ? '【章】' : k.level === 2 ? '▸ ' : '　· '}${k.name}`))
+      el('option', { value: '' }, t('notes.linkedKnowledgePointOptional')),
+      ...filtered.map(k => el('option', { value: k.id }, `${k.level === 1 ? t('notes.chapterPrefix') : k.level === 2 ? '▸ ' : '\u3000· '}${k.name}`))
     );
   });
-  const manualContent = el('textarea', { class: 'note-editor', rows: 9, placeholder: '支持 Markdown 与 LaTeX 公式（$...$ / $$...$$）。管理员保存后可发布为官方知识点清单。' });
+  const manualContent = el('textarea', { class: 'note-editor', rows: 9, placeholder: t('notes.supportsMarkdownAndLatexFormulasAnAdministrator') });
   manualComposer.append(
-    el('div', { class: 'card-header' }, el('h2', {}, '新建知识笔记'), button('收起', toggleManual, 'ghost small')),
-    field('笔记标题', manualTitle),
-    el('div', { class: 'form-grid', style: 'margin-top:12px' }, field('学科', manualSubj), field('知识点', manualKp)),
-    el('div', { style: 'margin-top:14px' }, field('正文', manualContent)),
+    el('div', { class: 'card-header' }, el('h2', {}, t('notes.newKnowledgeNote')), button(t('question.collapse'), toggleManual, 'ghost small')),
+    field(t('notes.noteTitle'), manualTitle),
+    el('div', { class: 'form-grid', style: 'margin-top:12px' }, field(t('common.subject'), manualSubj), field(t('practice.knowledgePoint'), manualKp)),
+    el('div', { style: 'margin-top:14px' }, field(t('notes.body'), manualContent)),
     el('div', { class: 'row end', style: 'margin-top:16px' },
-      button('保存笔记', e => busy(e.currentTarget, async () => {
-        if (!manualTitle.value.trim() || !manualContent.value.trim()) throw new Error('请填写笔记标题和正文。');
+      button(t('notes.saveNote'), e => busy(e.currentTarget, async () => {
+        if (!manualTitle.value.trim() || !manualContent.value.trim()) throw new Error(t('notes.pleaseFillInTheNoteTitleAnd'));
         const note = await api('/notes', {
           method: 'POST',
           data: {
@@ -535,7 +541,7 @@ export async function renderNotes(container, version) {
         });
         state.selectedNote = note.id;
         state.noteTab = 'private';
-        toast('笔记已保存并记录 v1 版本。');
+        toast(t('notes.noteSavedAndRecordedAsVersion1'));
         await renderRoute();
       }), '', 'check'))
   );
@@ -545,21 +551,21 @@ export async function renderNotes(container, version) {
   state.notePreselectKp = null;
 
   const sourceModeSel = select([
-    { value: 'user_docs', label: '① 纯用我的上传资料（支持多文档合并）' },
-    { value: 'official_plus_docs', label: '② 官方清单为骨架 + 我的资料补充（双色标注）' },
-    { value: 'wrongbook', label: '③ 从我的错题本生成个人易错清单' },
+    { value: 'user_docs', label: t('notes.useOnlyMyUploadedMaterialsMultiDocument') },
+    { value: 'official_plus_docs', label: t('notes.officialListAsTheSkeletonMyMaterials') },
+    { value: 'wrongbook', label: t('notes.generateAPersonalMistakeListFromMy') },
   ], pre?.source_mode || 'user_docs');
 
   const agentSubj = select(
-    [{ value: '', label: '选择学科（启用学科专属提示词）' }, ...(catalog.subjects || []).map(s => ({ value: s, label: s }))],
+    [{ value: '', label: t('notes.chooseASubjectEnablesSubjectSpecificPrompts') }, ...(catalog.subjects || []).map(s => ({ value: s, label: s }))],
     pre?.subject || ''
   );
-  const agentKp = select([{ value: '', label: '关联知识点（可选，用于联动题库/官方/错题）' }]);
+  const agentKp = select([{ value: '', label: t('notes.linkedKnowledgePointOptionalLinksTheQuestion') }]);
   function populateAgentKps() {
     const filtered = kps.filter(k => !agentSubj.value || k.subject === agentSubj.value);
     agentKp.replaceChildren(
-      el('option', { value: '' }, '关联知识点（可选）'),
-      ...filtered.map(k => el('option', { value: k.id }, `${k.level === 1 ? '【章】' : k.level === 2 ? '▸ ' : '　· '}${k.name}`))
+      el('option', { value: '' }, t('notes.linkedKnowledgePointOptional')),
+      ...filtered.map(k => el('option', { value: k.id }, `${k.level === 1 ? t('notes.chapterPrefix') : k.level === 2 ? '▸ ' : '\u3000· '}${k.name}`))
     );
     if (pre?.kp_id) agentKp.value = String(pre.kp_id);
   }
@@ -567,7 +573,7 @@ export async function renderNotes(container, version) {
 
   const requirements = el('textarea', {
     rows: 2,
-    placeholder: '可选补充要求（L4 层，仅影响形式与侧重，不能覆盖安全与引用规则）…',
+    placeholder: t('notes.optionalAdditionalRequirementsL4OnlyAffectsForm'),
   });
   const promptGridComp = createPromptGrid(gridSpec, {
     initialConfig: pre?.source_mode === 'wrongbook' ? { format: 'mistakes', extras: ['my_wrongs'] } : null,
@@ -588,8 +594,8 @@ export async function renderNotes(container, version) {
       .reduce((count, d) => count + d.chunks, 0);
     mapExtractChk.disabled = chunks === 0;
     mapEstimate.textContent = chunks
-      ? `提纲前预计调用模型 ${chunks} 次。返回格式有误的块会重试一次。`
-      : '勾选已解析的资料后可使用。';
+      ? t('notes.aboutModelCallsBeforeTheOutlineBlocks', { v1: chunks })
+      : t('notes.availableAfterCheckingParsedMaterials');
     updateEstimate();
   }
   const controls = createModelPicker('notes', { showModeToggle: true });
@@ -609,12 +615,12 @@ export async function renderNotes(container, version) {
         await openNote(noteId);
       }
     } catch (error) {
-      toast(`笔记结果刷新失败：${error.message}`, true);
+      toast(t('notes.failedToRefreshTheNoteResult', { v1: error.message }), true);
     }
   }
 
   const docPickerField = el('div', { style: 'margin:14px 0' },
-    el('div', { class: 'field-label', style: 'margin-bottom:8px' }, '选择要整理的资料（可多选）'),
+    el('div', { class: 'field-label', style: 'margin-bottom:8px' }, t('notes.chooseMaterialsToOrganizeMultiSelect')),
     docCheckboxesWrap);
 
   const estimateBox = el('div', { class: 'pg-estimate', 'aria-live': 'polite' });
@@ -627,9 +633,9 @@ export async function renderNotes(container, version) {
   function modelSummary() {
     try {
       const payload = controls.payload(false);
-      return payload.cross_verify ? `${payload.model} + ${payload.verify_model}（交叉核验）` : payload.model;
+      return payload.cross_verify ? t('notes.crossVerified', { v1: payload.model, v2: payload.verify_model }) : payload.model;
     } catch (error) {
-      return `尚未就绪：${error.message}`;
+      return t('notes.notReadyYet', { v1: error.message });
     }
   }
 
@@ -638,21 +644,22 @@ export async function renderNotes(container, version) {
     const mode = sourceModeSel.value;
     const stats = selectedDocStats();
     const modeLabel = ({
-      user_docs: '我的上传资料',
-      official_plus_docs: '官方清单为骨架 + 我的资料补充',
-      wrongbook: '我的错题本易错清单',
+      user_docs: t('notes.myUploadedMaterials'),
+      official_plus_docs: t('notes.officialListSkeletonMyMaterials'),
+      wrongbook: t('notes.myWrongAnswerMistakeList'),
     })[mode] || mode;
-    const extra = mode !== 'wrongbook' && mapExtractChk.checked ? '逐块抽取后再生成提纲' : '直接按资料结构生成';
+    const extra = mode !== 'wrongbook' && mapExtractChk.checked ? t('notes.extractBlockByBlockThenGenerateThe') : t('notes.generateDirectlyFromTheMaterialStructure');
     estimateBox.replaceChildren(
-      el('p', {}, el('strong', {}, '生成前确认'), ' · 来源、资料块估算与使用模型'),
+      el('p', {}, el('strong', {}, t('notes.confirmBeforeGenerating')), t('notes.sourceChunkEstimateAndModelsUsed')),
       el('ul', { class: 'pg-estimate-list' },
-        el('li', {}, `整理来源：${modeLabel}`),
+        el('li', {}, t('notes.source', { v1: modeLabel })),
         el('li', {}, mode === 'wrongbook'
-          ? '资料块：使用你的错题记录，不占用资料库结构块'
-          : `资料块：已选 ${stats.count} 份资料 · 预计 ${stats.chunks} 个结构块`),
-        el('li', {}, `使用模型：${modelSummary()}`),
-        el('li', {}, `生成方式：${extra}${confirmOutlineChk.checked ? '；先生成提纲并暂停确认' : ''}`)),
-      el('p', { class: 'help' }, '生成前不会自动发起额外付费调用；模型调用按所选模型的单价计费。'));
+          ? t('notes.materialChunksUsesYourWrongAnswerRecords')
+          : t('notes.materialChunksDocumentsSelectedAboutChunks', { v1: stats.count, v2: stats.chunks })),
+        el('li', {}, t('notes.modelsUsed', { v1: modelSummary() })),
+        el('li', {}, t('notes.generationMethod', { v1: extra })
+          + (confirmOutlineChk.checked ? t('notes.generateOutlineFirstPause') : ''))),
+      el('p', { class: 'help' }, t('notes.noExtraPaidCallsAreMadeAutomatically')));
   }
 
   sourceModeSel.addEventListener('change', () => {
@@ -668,11 +675,11 @@ export async function renderNotes(container, version) {
   controls.node.addEventListener('change', updateEstimate);
   promptGridComp.node.addEventListener('click', updateEstimate);
 
-  const generateButton = button('启动知识整理 Agent', e => busy(e.currentTarget, async () => {
+  const generateButton = button(t('notes.startTheKnowledgeOrganizingAgent'), e => busy(e.currentTarget, async () => {
     const sMode = sourceModeSel.value;
     const docIds = [...selectedDocIds];
     if (sMode === 'user_docs' && !docIds.length) {
-      throw new Error('请先在上方勾选至少一份已解析的学习资料。');
+      throw new Error(t('notes.pleaseCheckAtLeastOneParsedStudy'));
     }
     const payload = controls.payload(false);
     const cfg = promptGridComp.getConfig();
@@ -699,44 +706,44 @@ export async function renderNotes(container, version) {
   }), '', 'sparkle');
 
   const advancedDetails = el('details', { class: 'pg-advanced' },
-    el('summary', {}, '高级设置 · 模型与多模型核验 / 提纲暂停 / 逐块抽取'),
+    el('summary', {}, t('notes.advancedSettingsModelsMultiModelVerificationOutline')),
     el('div', { class: 'pg-advanced-body' },
       el('div', {},
-        el('div', { class: 'field-label', style: 'margin-bottom:8px' }, '模型与交叉核验'),
+        el('div', { class: 'field-label', style: 'margin-bottom:8px' }, t('notes.modelsCrossVerification')),
         controls.node),
       el('label', { class: 'check-label', style: 'margin-top:12px' },
-        confirmOutlineChk, '人在环中：先生成提纲并暂停，待我勾选/修改章节后再分节并行生成正文'),
+        confirmOutlineChk, t('notes.humanInTheLoopGenerateTheOutline')),
       el('label', { class: 'check-label', style: 'margin-top:10px' },
-        mapExtractChk, '逐块抽取概念、公式、适用条件和例子（Map-Reduce），合并去重后再生成提纲'),
+        mapExtractChk, t('notes.extractConceptsFormulasConditionsAndExamplesBlock')),
       mapEstimate));
 
-  const stepOne = el('section', { class: 'pg-step', 'aria-label': '第 1 步：选资料' },
+  const stepOne = el('section', { class: 'pg-step', 'aria-label': t('notes.step1ChooseMaterials') },
     el('div', { class: 'pg-step-index', 'aria-hidden': 'true' }, '1'),
     el('div', { class: 'pg-step-body' },
-      el('h3', { class: 'pg-step-title' }, '选资料'),
-      el('p', { class: 'pg-card-sub' }, '从我的资料、官方清单 + 资料，或错题本生成；扫描件先完成 OCR。'),
-      field('整理来源模式', sourceModeSel),
+      el('h3', { class: 'pg-step-title' }, t('notes.chooseMaterials')),
+      el('p', { class: 'pg-card-sub' }, t('notes.generateFromMyMaterialsOfficialListMaterials')),
+      field(t('notes.sourceMode'), sourceModeSel),
       docPickerField));
 
-  const stepTwo = el('section', { class: 'pg-step', 'aria-label': '第 2 步：设目标与输出形态' },
+  const stepTwo = el('section', { class: 'pg-step', 'aria-label': t('notes.step2SetGoalsAndOutputFormat') },
     el('div', { class: 'pg-step-index', 'aria-hidden': 'true' }, '2'),
     el('div', { class: 'pg-step-body' },
-      el('h3', { class: 'pg-step-title' }, '设目标与输出形态'),
+      el('h3', { class: 'pg-step-title' }, t('notes.setGoalsAndOutputFormat')),
       el('p', { class: 'pg-card-sub' },
-        '输出形态、学段、详略、内容侧重与自定义要求直接在这里选择；模型与核验等技术参数收在「高级设置」。'),
+        t('notes.chooseOutputFormatStudyStageDetailLevel')),
       el('div', { class: 'pg-form-grid' },
-        field('学科适配（L2）', agentSubj),
-        field('联动知识点（用于调用题库真题、官方清单与个人错题工具）', agentKp)),
+        field(t('notes.subjectAdaptationL2'), agentSubj),
+        field(t('notes.linkedKnowledgePointUsedToCallQuestion'), agentKp)),
       el('div', { class: 'pg-grid-config', style: 'margin-top:16px' },
         el('div', {},
-          el('div', { class: 'field-label', style: 'margin-bottom:8px' }, '方格提示词组合（输出形态等 6 维）'),
+          el('div', { class: 'field-label', style: 'margin-bottom:8px' }, t('notes.promptGridCombination6DimensionsSuchAs')),
           promptGridComp.node),
-        field('自定义补充要求（L4）', requirements))));
+        field(t('notes.customAdditionalRequirementsL4'), requirements))));
 
-  const stepThree = el('section', { class: 'pg-step', 'aria-label': '第 3 步：确认生成' },
+  const stepThree = el('section', { class: 'pg-step', 'aria-label': t('notes.step3ConfirmGeneration') },
     el('div', { class: 'pg-step-index', 'aria-hidden': 'true' }, '3'),
     el('div', { class: 'pg-step-body' },
-      el('h3', { class: 'pg-step-title' }, '确认生成'),
+      el('h3', { class: 'pg-step-title' }, t('notes.confirmGeneration')),
       advancedDetails,
       estimateBox,
       el('div', { class: 'pg-form-actions' }, generateButton)));
@@ -744,10 +751,10 @@ export async function renderNotes(container, version) {
   composer.append(
     el('div', { class: 'pg-card-head' },
       el('div', {},
-        el('p', { class: 'pg-kicker' }, 'AI 整理 · 三步完成'),
-        el('h2', {}, '从资料到知识清单'),
+        el('p', { class: 'pg-kicker' }, t('notes.aiOrganizationThreeSteps')),
+        el('h2', {}, t('notes.fromMaterialsToKnowledgeNotes')),
         el('p', { class: 'pg-card-sub' },
-          '选资料 → 设目标与输出形态 → 确认生成。方格选择与自定义要求在主步骤可见；提纲暂停、Map-Reduce 与多模型核验保留在高级设置。'))),
+          t('notes.chooseMaterialsSetGoalsAndOutputFormat')))),
     el('div', { class: 'pg-steps' }, stepOne, stepTwo, stepThree),
     jobMount);
   updateEstimate();
@@ -758,16 +765,16 @@ export async function renderNotes(container, version) {
     noteSection = 'notes';
   } else if (pre || state.noteJobId) {
     noteSection = 'ai';
-    if (pre) toast(`已为你预设「${pre.name}」错题易错清单生成配置。`);
+    if (pre) toast(t('notes.presetTheMistakeListGenerationFor', { v1: pre.name }));
   }
 
   // ---------- 三个入口：我的笔记 / 资料库 / AI 整理 ----------
   const sectionDefs = [
-    ['notes', '我的笔记', 'notes'],
-    ['docs', '资料库', 'file'],
-    ['ai', 'AI 整理', 'sparkle'],
+    ['notes', t('notes.myNotes'), 'notes'],
+    ['docs', t('home.activity.library'), 'file'],
+    ['ai', t('notes.aiOrganize'), 'sparkle'],
   ];
-  const sectionTabs = el('div', { class: 'pg-tabs', role: 'tablist', 'aria-label': '知识清单分区' });
+  const sectionTabs = el('div', { class: 'pg-tabs', role: 'tablist', 'aria-label': t('notes.knowledgeNoteSections') });
   const sectionButtons = new Map();
   for (const [key, label, iconName] of sectionDefs) {
     const tab = el('button', {
@@ -798,7 +805,7 @@ export async function renderNotes(container, version) {
   },
     docsArea,
     el('p', { class: 'pg-panel-note' },
-      '扫描件按页显示 OCR 状态：可识别 / 待识别 / 失败 / 人工校对。人工校对过的页不会被重新识别覆盖。'));
+      t('notes.scansShowOcrStatusPerPageRecognizable')));
 
   const aiPanel = el('section', {
     class: 'pg-panel', role: 'tabpanel', id: 'notes-panel-ai', 'aria-labelledby': 'notes-tab-ai',
@@ -815,11 +822,11 @@ export async function renderNotes(container, version) {
 
   container.replaceChildren(
     el('div', { class: 'pg-page-head' },
-      heading('KNOWLEDGE WORKSPACE', '把零散的资料，连成知识。',
-        '我的笔记、资料库与 AI 整理分开展示；整理按「选资料 → 设目标 → 确认生成」推进。',
+      heading('KNOWLEDGE WORKSPACE', t('notes.connectScatteredMaterialsIntoKnowledge'),
+        t('notes.myNotesTheMaterialLibraryAndAi'),
         el('div', { class: 'pg-actions' },
-          button('新建笔记', () => { switchSection('notes'); toggleManual(); }, 'secondary', 'edit'),
-          button('AI 整理资料', () => switchSection('ai'), '', 'sparkle')))),
+          button(t('notes.newNote'), () => { switchSection('notes'); toggleManual(); }, 'secondary', 'edit'),
+          button(t('notes.organizeMaterialsWithAi'), () => switchSection('ai'), '', 'sparkle')))),
     sectionTabs,
     notesPanel, docsPanel, aiPanel);
   switchSection(noteSection);
@@ -840,7 +847,7 @@ export async function renderNotes(container, version) {
     const seq = ++noteOpenCounter;
     state.selectedNote = id;
     highlightActiveNote(id);
-    detailArea.replaceChildren(loading('正在打开笔记…'));
+    detailArea.replaceChildren(loading(t('notes.openingTheNote')));
     try {
       const note = await api(`/notes/${encodeURIComponent(id)}`);
       if (!current(version) || seq !== noteOpenCounter) return;
@@ -866,20 +873,20 @@ export async function renderNotes(container, version) {
       n.setAttribute('aria-selected', String(state.noteTab === key));
     });
     const items = allNotes.filter(n => state.noteTab === 'all' || n.origin === state.noteTab);
-    noteCount.textContent = `共 ${items.length} 份笔记`;
+    noteCount.textContent = t('notes.notes', { v1: items.length });
     listArea.replaceChildren();
     if (!items.length) {
       // Fix empty-state copy mismatch (§9.1): match actual button label "AI 整理资料"
       listArea.append(el('div', { class: 'card' }, empty(
-        state.noteTab === 'official' ? '官方清单尚未发布' : '还没有知识笔记',
+        state.noteTab === 'official' ? t('notes.noOfficialListPublishedYet') : t('notes.noKnowledgeNotesYet'),
         state.noteTab === 'official'
-          ? '管理员审核发布后会在这里展示，不会用自动生成内容冒充官方资料。'
-          : '切换到「AI 整理」或点击「新建笔记」，开始沉淀你的知识清单。',
+          ? t('notes.itemsAppearHereAfterAnAdministratorReviews')
+          : t('notes.switchToAiOrganizeOrClickNew'),
         null, 'notes'
       )));
       if (!state.selectedNote) {
-        detailArea.replaceChildren(empty('给知识，一个清晰的结构', '左侧选择笔记，在这里阅读、编辑、查看版本历史与资料来源。',
-          button('AI 整理资料', () => switchSection('ai'), 'soft small', 'sparkle'), 'notes'));
+        detailArea.replaceChildren(empty(t('notes.giveKnowledgeAClearStructure'), t('notes.selectANoteOnTheLeftTo'),
+          button(t('notes.organizeMaterialsWithAi'), () => switchSection('ai'), 'soft small', 'sparkle'), 'notes'));
       }
       return;
     }
@@ -894,7 +901,7 @@ export async function renderNotes(container, version) {
         onClick: () => openNote(note.id),
       },
         el('div', { class: 'row' },
-          badge(note.origin === 'official' ? '官方清单' : '我的笔记', note.origin === 'official' ? 'blue' : 'teal'),
+          badge(note.origin === 'official' ? t('notes.officialList') : t('notes.myNotes'), note.origin === 'official' ? 'blue' : 'teal'),
           note.subject ? badge(note.subject) : null),
         el('h3', {}, note.title),
         el('p', {}, dateText(note.updated_at || note.created_at))));
@@ -918,37 +925,47 @@ function renderNoteDetail(note, container, reload, onPatched = null) {
   const mindmapMount = el('div');
 
   const actions = el('div', { class: 'row pg-note-actions' });
-  if (own) actions.append(button('编辑', () => editNote(note, container, reload, onPatched), 'secondary small', 'edit'));
+  if (own) actions.append(button(t('settings.edit'), () => editNote(note, container, reload, onPatched), 'secondary small', 'edit'));
   actions.append(
-    button('思维导图视图', () => {
+    button(t('notes.mindMapView'), () => {
       if (mindmapMount.childNodes.length) { mindmapMount.replaceChildren(); return; }
       const tree = markdownToMindmapTree(note.title, note.content || '');
-      mindmapMount.replaceChildren(renderMindmapWidget(tree, { title: `${note.title} · 思维导图` }));
+      mindmapMount.replaceChildren(renderMindmapWidget(tree, { title: t('notes.mindMap', { v1: note.title }) }));
     }, 'soft small', 'eye'),
-    button('导出 MD', () => downloadText(`${note.title}.md`, note.content || ''), 'ghost small', 'download'),
+    button(t('notes.exportMd'), () => downloadText(`${note.title}.md`, note.content || ''), 'ghost small', 'download'),
     button('Anki CSV', async e => busy(e.currentTarget, async () => {
       const csv = await api(`/notes/${note.id}/export?format=anki`, { rawText: true });
       downloadText(`${note.title}_anki.csv`, csv, 'text/csv;charset=utf-8');
-      toast('已导出 Anki 卡片 CSV，可直接导入 Anki。');
+      toast(t('notes.ankiCardCsvExportedYouCanImport'));
     }), 'ghost small', 'download'),
-    button('导出 .mmd', async e => busy(e.currentTarget, async () => {
+    button(t('notes.ankiDeck'), async e => busy(e.currentTarget, async () => {
+      // .apkg 是二进制：不能走 api(rawText)，直接 fetch 后按 Blob 下载。
+      const response = await fetch(`/api/notes/${note.id}/export?format=apkg`, { credentials: 'same-origin' });
+      if (!response.ok) {
+        const data = await response.json().catch(() => ({}));
+        throw new Error(data.detail || t('notes.exportFailed', { v1: response.status }));
+      }
+      downloadBlob(await response.blob(), `${note.title}_anki.apkg`);
+      toast(t('notes.ankiDeckExportedDoubleClickToImport'));
+    }), 'ghost small', 'download'),
+    button(t('notes.exportMmd'), async e => busy(e.currentTarget, async () => {
       const mm = await api(`/notes/${note.id}/export?format=mindmap`, { rawText: true });
       downloadText(`${note.title}_mindmap.mmd`, mm, 'text/plain;charset=utf-8');
-      toast('已导出 Mermaid Mindmap 文件。');
+      toast(t('notes.mermaidMindMapFileExported'));
     }), 'ghost small', 'download'),
-    button('打印/PDF', () => window.print(), 'ghost small'),
-    button('版本历史', e => busy(e.currentTarget, async () => {
+    button(t('notes.printPdf'), () => window.print(), 'ghost small'),
+    button(t('notes.versionHistory'), e => busy(e.currentTarget, async () => {
       if (versionsMount.childNodes.length) { versionsMount.replaceChildren(); return; }
       const res = await api(`/notes/${note.id}/versions`);
       const box = el('div', { class: 'sources', style: 'margin:12px 0' },
-        el('strong', { class: 'small-text' }, `历史版本（共 ${res.items?.length || 0} 个）`));
+        el('strong', { class: 'small-text' }, t('notes.versionHistoryVersions', { v1: res.items?.length || 0 })));
       for (const v of res.items || []) {
         box.append(el('div', { class: 'row between source-block' },
-          el('div', {}, el('strong', {}, `v${v.version_no} · ${v.change_note || '保存'}`), el('div', { class: 'help' }, `${dateText(v.created_at)} · ${v.chars} 字`)),
-          own ? button('回滚到此版本', ev => busy(ev.currentTarget, async () => {
-            if (!window.confirm(`确认回滚到版本 v${v.version_no}？当前内容也会保留在版本记录中。`)) return;
+          el('div', {}, el('strong', {}, t('notes.versionLabel', { v1: v.version_no, v2: v.change_note || t('common.save') })), el('div', { class: 'help' }, t('notes.changedAtChars', { v1: dateText(v.created_at), v2: v.chars }))),
+          own ? button(t('notes.rollBackToThisVersion'), ev => busy(ev.currentTarget, async () => {
+            if (!window.confirm(t('notes.rollBackToVersionVTheCurrent', { v1: v.version_no }))) return;
             await api(`/notes/${note.id}/rollback/${v.id}`, { method: 'POST' });
-            toast(`已回滚至 v${v.version_no}。`);
+            toast(t('notes.rolledBackToV', { v1: v.version_no }));
             reload();
           }), 'soft small', 'history') : null));
       }
@@ -957,19 +974,19 @@ function renderNoteDetail(note, container, reload, onPatched = null) {
   );
 
   if (state.user.role === 'admin' && note.origin !== 'official') {
-    actions.append(button('发布为官方清单', e => busy(e.currentTarget, async () => {
-      if (!window.confirm('发布后所有账号都能阅读这份笔记。请确认内容与来源已经审核。')) return;
+    actions.append(button(t('notes.publishAsOfficialList'), e => busy(e.currentTarget, async () => {
+      if (!window.confirm(t('notes.afterPublishingAllAccountsCanReadThis'))) return;
       await api(`/notes/${note.id}/publish`, { method: 'POST' });
-      toast('已发布为官方清单。');
+      toast(t('notes.publishedAsAnOfficialList'));
       await renderRoute();
     }), 'soft small', 'shield'));
   }
   if (own) {
-    actions.append(button('删除', e => busy(e.currentTarget, async () => {
-      if (!window.confirm('删除这份笔记？此操作会移除保存的笔记及版本历史。')) return;
+    actions.append(button(t('common.delete'), e => busy(e.currentTarget, async () => {
+      if (!window.confirm(t('notes.deleteThisNoteThisRemovesTheSaved'))) return;
       await api(`/notes/${note.id}`, { method: 'DELETE' });
       state.selectedNote = null;
-      toast('笔记已删除。');
+      toast(t('notes.noteDeleted'));
       await renderRoute();
     }), 'danger small', 'trash'));
   }
@@ -977,7 +994,7 @@ function renderNoteDetail(note, container, reload, onPatched = null) {
   fill(container,
     el('div', { class: 'row between', style: 'margin-bottom:12px' },
       el('div', { class: 'row' },
-        badge(note.origin === 'official' ? '官方知识清单' : '私有笔记', note.origin === 'official' ? 'blue' : 'teal'),
+        badge(note.origin === 'official' ? t('home.noteOfficial') : t('home.notePrivate'), note.origin === 'official' ? 'blue' : 'teal'),
         note.subject ? badge(note.subject) : null),
       el('span', { class: 'help' }, dateText(note.updated_at || note.created_at))),
     el('h2', {}, note.title),
@@ -986,32 +1003,32 @@ function renderNoteDetail(note, container, reload, onPatched = null) {
     versionsMount,
     note.origin === 'official'
       ? null
-      : notice('这份笔记保存在你的私有空间，支持随时编辑与版本回滚。AI 生成内容与补充知识请结合资料原文核对。'),
+      : notice(t('notes.thisNoteIsStoredInYourPrivate')),
     markdown(note.content || ''),
     note.sources?.length ? renderSources(note.sources) : null
   );
 }
 
 function editNote(note, container, reload, onPatched = null) {
-  const title = input('笔记标题', { value: note.title });
-  const changeNote = input('本次修改说明（例如：补充易错反例）', { value: '手动编辑' });
+  const title = input(t('notes.noteTitle'), { value: note.title });
+  const changeNote = input(t('notes.changeDescriptionEGAddACounter'), { value: t('notes.manualEdit') });
   const content = el('textarea', { class: 'note-editor', value: note.content || '' });
   container.replaceChildren(
-    el('div', { class: 'card-header' }, el('h2', {}, '编辑知识笔记'), badge('Markdown + KaTeX')),
-    field('标题', title),
-    el('div', { style: 'margin-top:12px' }, field('修改说明（记录到版本历史）', changeNote)),
-    el('div', { style: 'margin-top:14px' }, field('笔记内容', content)),
+    el('div', { class: 'card-header' }, el('h2', {}, t('notes.editKnowledgeNote')), badge('Markdown + KaTeX')),
+    field(t('notes.title'), title),
+    el('div', { style: 'margin-top:12px' }, field(t('notes.changeDescriptionRecordedInVersionHistory'), changeNote)),
+    el('div', { style: 'margin-top:14px' }, field(t('notes.noteContent'), content)),
     el('div', { class: 'row end', style: 'margin-top:17px' },
-      button('取消', reload, 'secondary'),
-      button('保存笔记', e => busy(e.currentTarget, async () => {
-        if (!title.value.trim()) throw new Error('请填写笔记标题。');
+      button(t('common.cancel'), reload, 'secondary'),
+      button(t('notes.saveNote'), e => busy(e.currentTarget, async () => {
+        if (!title.value.trim()) throw new Error(t('notes.pleaseFillInTheNoteTitle'));
         const nextTitle = title.value.trim();
         await api(`/notes/${note.id}`, {
           method: 'PATCH',
-          data: { title: nextTitle, content: content.value, change_note: changeNote.value.trim() || '手动编辑' },
+          data: { title: nextTitle, content: content.value, change_note: changeNote.value.trim() || t('notes.manualEdit') },
         });
         onPatched?.({ title: nextTitle });
-        toast('笔记已保存并生成新版本。');
+        toast(t('notes.noteSavedAsANewVersion'));
         reload();
       }), '', 'check'))
   );

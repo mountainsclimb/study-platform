@@ -1,0 +1,431 @@
+/* =============================================================================
+   知序 · 广场工作台样式（Phase 2 前端之二：投稿台 / 评审台 / 编辑台）
+   —— 只由 WS16 追加，追加式维护：不要重写或删除已有规则。
+   依赖 styles.css 的设计令牌与 styles-pages.css 的 .pg-* 组件；这里只新增
+   .plzw-* 类名，颜色全部走令牌变量，暗色主题自动跟随。
+   断点：>960px 双栏；<=960px 单栏；<=640px 收紧内边距与按钮（移动端可用）。
+   ========================================================================== */
+
+/* ---------- 页面骨架 ---------- */
+.plzw-page {
+  display: grid;
+  gap: 16px;
+  min-width: 0;
+}
+
+.plzw-card {
+  min-width: 0;
+}
+
+.plzw-actions-bar {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+  align-items: center;
+}
+
+.plzw-grid {
+  display: grid;
+  grid-template-columns: minmax(0, 1.25fr) minmax(0, 1fr);
+  gap: 16px;
+  align-items: start;
+}
+
+.plzw-col {
+  display: grid;
+  gap: 16px;
+  min-width: 0;
+}
+
+/* ---------- 元信息与文本 ---------- */
+.plzw-meta {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+  align-items: center;
+  min-width: 0;
+}
+
+.plzw-meta > span,
+.plzw-source-lines > div {
+  color: var(--soft);
+  font-size: 13px;
+  line-height: 1.6;
+  overflow-wrap: anywhere;
+}
+
+.plzw-stem {
+  margin: 0;
+  color: var(--ink);
+  font-size: 14.5px;
+  line-height: 1.75;
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+}
+
+.plzw-stem.is-muted {
+  color: var(--soft);
+}
+
+.plzw-field {
+  display: grid;
+  gap: 6px;
+  margin-top: 12px;
+  min-width: 0;
+}
+
+.plzw-field-label {
+  color: var(--soft);
+  font-size: 12px;
+  font-weight: 650;
+  letter-spacing: 0.06em;
+}
+
+.plzw-source-lines {
+  display: grid;
+  gap: 3px;
+  padding: 10px 12px;
+  border: 1px dashed var(--line);
+  border-radius: 10px;
+  background: var(--rail);
+}
+
+.plzw-tags {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+  margin-top: 8px;
+  min-width: 0;
+}
+
+.plzw-options {
+  display: grid;
+  gap: 6px;
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+
+.plzw-options li {
+  padding: 6px 10px;
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  background: var(--rail);
+  color: var(--ink);
+  font-size: 14px;
+  line-height: 1.65;
+  overflow-wrap: anywhere;
+}
+
+.plzw-option-label {
+  margin-right: 8px;
+  color: var(--accent-deep);
+  font-weight: 650;
+}
+
+.plzw-parts {
+  display: grid;
+  gap: 10px;
+  margin: 0;
+  padding-left: 20px;
+}
+
+.plzw-parts > li {
+  padding-left: 4px;
+}
+
+/* ---------- 列表与卡片 ---------- */
+.plzw-list {
+  display: grid;
+  gap: 12px;
+  min-width: 0;
+}
+
+.plzw-item {
+  display: grid;
+  gap: 8px;
+  min-width: 0;
+  padding: 14px 16px;
+  border: 1px solid var(--line);
+  border-radius: 12px;
+  background: var(--surface);
+}
+
+.plzw-item-head {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+  align-items: center;
+  min-width: 0;
+}
+
+.plzw-item-actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+  align-items: center;
+  justify-content: flex-end;
+  margin-top: 2px;
+}
+
+/* ---------- 校验项 ---------- */
+.plzw-checks {
+  display: grid;
+  gap: 2px;
+  margin-top: 8px;
+}
+
+.plzw-check-row {
+  display: flex;
+  gap: 8px;
+  align-items: flex-start;
+  padding: 9px 0;
+  border-top: 1px dashed var(--line);
+  min-width: 0;
+}
+
+.plzw-check-row:first-child {
+  border-top: none;
+}
+
+.plzw-check-body {
+  min-width: 0;
+}
+
+.plzw-check-label {
+  color: var(--ink);
+  font-size: 14px;
+  font-weight: 550;
+  line-height: 1.5;
+}
+
+.plzw-checkbox {
+  display: flex;
+  gap: 8px;
+  align-items: flex-start;
+  margin: 10px 0 2px;
+  color: var(--ink);
+  font-size: 13.5px;
+  line-height: 1.6;
+  cursor: pointer;
+}
+
+.plzw-checkbox input {
+  margin-top: 3px;
+  accent-color: var(--accent, var(--teal));
+}
+
+/* ---------- 表单行 ---------- */
+.plzw-inline-field {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+  align-items: center;
+}
+
+.plzw-inline-field .input {
+  flex: 1 1 180px;
+  min-width: 140px;
+}
+
+/* ---------- 指标卡 ---------- */
+.plzw-metrics {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(150px, 1fr));
+  gap: 10px;
+  margin: 4px 0 12px;
+}
+
+.plzw-metric {
+  padding: 10px 12px;
+  border: 1px solid var(--line);
+  border-radius: 10px;
+  background: var(--rail);
+  min-width: 0;
+}
+
+.plzw-metric-label {
+  color: var(--soft);
+  font-size: 12px;
+  line-height: 1.5;
+}
+
+.plzw-metric-value {
+  margin-top: 2px;
+  color: var(--ink);
+  font-size: 18px;
+  font-weight: 650;
+  line-height: 1.4;
+  font-variant-numeric: tabular-nums;
+}
+
+/* ---------- 事件时间线 ---------- */
+.plzw-timeline {
+  display: grid;
+  gap: 10px;
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+
+.plzw-timeline > li {
+  padding: 2px 0 2px 12px;
+  border-left: 3px solid var(--line);
+  min-width: 0;
+}
+
+.plzw-timeline-host {
+  min-width: 0;
+}
+
+/* ---------- 评审结论选择 ---------- */
+.plzw-verdict-options {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+}
+
+.plzw-verdict {
+  display: inline-flex;
+  gap: 7px;
+  align-items: center;
+  padding: 8px 12px;
+  border: 1px solid var(--line);
+  border-radius: 10px;
+  background: var(--surface);
+  color: var(--ink);
+  font-size: 13.5px;
+  line-height: 1.4;
+  cursor: pointer;
+}
+
+.plzw-verdict:has(input:checked) {
+  border-color: var(--accent, var(--teal));
+  background: var(--tint);
+  color: var(--accent-deep);
+}
+
+.plzw-verdict.is-danger:has(input:checked) {
+  border-color: var(--wrong, #b34b48);
+  background: var(--wrong-bg, #f6e7e4);
+  color: var(--wrong, #b34b48);
+}
+
+.plzw-verdict input {
+  accent-color: var(--accent, var(--teal));
+}
+
+/* ---------- 能力探测占位 ---------- */
+.plzw-not-ready {
+  display: grid;
+  gap: 8px;
+  margin: 4px 0 12px;
+}
+
+/* ---------- 编辑台抽屉/弹层 ---------- */
+.plzw-admin-panel {
+  display: grid;
+  gap: 16px;
+  min-width: 0;
+}
+
+.plzw-dialog {
+  width: min(620px, calc(100vw - 32px));
+  max-height: calc(100vh - 64px);
+  padding: 20px;
+  overflow: auto;
+  border: 1px solid var(--line);
+  border-radius: 14px;
+  background: var(--surface);
+  color: var(--ink);
+}
+
+.plzw-dialog-body {
+  display: grid;
+  gap: 12px;
+  min-width: 0;
+}
+
+/* ---------- 响应式 ---------- */
+@media (max-width: 960px) {
+  .plzw-grid {
+    grid-template-columns: minmax(0, 1fr);
+  }
+}
+
+@media (max-width: 640px) {
+  .plzw-page {
+    gap: 12px;
+  }
+
+  .plzw-item {
+    padding: 12px;
+  }
+
+  .plzw-item-actions {
+    justify-content: flex-start;
+  }
+
+  .plzw-metrics {
+    grid-template-columns: repeat(auto-fit, minmax(120px, 1fr));
+  }
+
+  .plzw-metric-value {
+    font-size: 16px;
+  }
+
+  .plzw-dialog {
+    width: calc(100vw - 16px);
+    padding: 14px;
+  }
+
+  .plzw-verdict {
+    flex: 1 1 calc(50% - 8px);
+    justify-content: flex-start;
+  }
+}
+
+/* 暗色主题下补充对比（令牌已在 styles.css 覆盖，这里只处理虚线/占位底色）。 */
+html[data-theme="dark"] .plzw-source-lines,
+html[data-theme="dark"] .plzw-options li,
+html[data-theme="dark"] .plzw-metric {
+  background: rgba(255, 255, 255, 0.03);
+}
+
+/* ---------- 公开衍生图（初审通过后的可公开配图） ---------- */
+.plzw-figure-grid {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 10px;
+  margin-top: 4px;
+}
+
+.plzw-figure {
+  margin: 0;
+  max-width: min(320px, 100%);
+  padding: 6px;
+  border: 1px solid var(--line);
+  border-radius: 10px;
+  background: var(--surface);
+}
+
+.plzw-figure img {
+  display: block;
+  max-width: 100%;
+  height: auto;
+  border-radius: 6px;
+}
+
+.plzw-figure-fallback {
+  display: inline-flex;
+  align-items: center;
+  min-height: 64px;
+  padding: 10px 12px;
+  border: 1px dashed var(--line);
+  border-radius: 10px;
+  background: var(--rail);
+  color: var(--soft);
+  font-size: 12.5px;
+  line-height: 1.6;
+}
+

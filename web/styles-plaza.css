@@ -1,0 +1,582 @@
+/* =============================================================================
+   知序 · 广场公开页与访客壳样式（Phase 2 前端之一，只由 WS15 维护）
+
+   依赖 styles.css 的设计令牌（--paper/--surface/--ink/--soft/--muted/--line/
+   --accent/--accent-deep/--tint/--focus/--wrong 等）；颜色全部走变量，暗色主题自动跟随。
+   类名前缀：访客壳 .guest-*，广场页 .plaza-*；不覆盖 styles.css / styles-pages.css
+   已有规则，仅在必要时对访客壳里的 .brand/.topbar 做局部覆盖。
+   ========================================================================== */
+
+/* ---------------- 访客壳（未登录浏览广场时的最小壳层） ---------------- */
+.guest-layout {
+  display: block;
+}
+
+.guest-main {
+  width: 100%;
+  grid-column: auto;
+  display: flex;
+  flex-direction: column;
+  min-height: 100vh;
+}
+
+.guest-content {
+  width: 100%;
+  flex: 1 1 auto;
+}
+
+.guest-topbar {
+  height: 76px;
+  background: var(--surface);
+  border-bottom: 1px solid var(--line);
+}
+
+.guest-topbar .brand {
+  padding: 0;
+  color: var(--ink);
+  gap: 10px;
+}
+
+.guest-topbar .brand-name {
+  font-size: 1.3rem;
+  color: var(--ink);
+}
+
+.guest-topbar .brand-sub {
+  color: var(--muted);
+  font-size: 0.72rem;
+}
+
+.guest-topbar-left {
+  gap: 22px;
+  min-width: 0;
+  flex-wrap: wrap;
+}
+
+.guest-nav {
+  display: flex;
+  gap: 6px;
+  align-items: center;
+  min-width: 0;
+}
+
+.guest-nav-item {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  min-height: 44px;
+  padding: 8px 15px;
+  border-radius: 999px;
+  border: 1px solid var(--line);
+  background: var(--tint);
+  color: var(--accent-deep);
+  font-size: 0.9rem;
+  font-weight: 600;
+}
+
+.guest-nav-item:hover {
+  filter: brightness(0.97);
+}
+
+.guest-nav-item .icon {
+  width: 18px;
+  height: 18px;
+}
+
+.guest-topbar-actions {
+  gap: 10px;
+  flex-wrap: wrap;
+  justify-content: flex-end;
+}
+
+.guest-auth-button {
+  min-height: 44px;
+}
+
+.guest-auth-button .icon {
+  width: 16px;
+  height: 16px;
+}
+
+.auth-guest-back {
+  margin-top: 4px;
+}
+
+.auth-guest-back .text-button {
+  color: var(--accent-deep);
+}
+
+/* ---------------- 广场页容器与列表 ---------------- */
+.plaza-page {
+  display: flex;
+  flex-direction: column;
+  gap: 16px;
+  min-width: 0;
+}
+
+.plaza-back {
+  display: flex;
+  align-items: center;
+  margin-bottom: -4px;
+}
+
+.plaza-back .icon {
+  transform: rotate(180deg);
+}
+
+.plaza-filter-card {
+  padding: 18px 20px;
+}
+
+.plaza-search-line {
+  margin-bottom: 4px;
+}
+
+.plaza-filter-grid {
+  grid-template-columns: repeat(3, minmax(0, 1fr)) auto;
+  align-items: end;
+}
+
+.plaza-filter-reset {
+  justify-self: start;
+}
+
+.plaza-filter-reset .button {
+  min-height: 42px;
+}
+
+.plaza-list-head {
+  display: flex;
+  align-items: baseline;
+  justify-content: space-between;
+  gap: 12px;
+  flex-wrap: wrap;
+  color: var(--muted);
+  font-size: 0.85rem;
+  min-width: 0;
+}
+
+.plaza-list-summary {
+  overflow-wrap: anywhere;
+}
+
+.plaza-list-hint {
+  color: var(--soft);
+  font-size: 0.78rem;
+}
+
+.plaza-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(280px, 1fr));
+  gap: 16px;
+  min-width: 0;
+}
+
+.plaza-card {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+  padding: 18px;
+  min-width: 0;
+}
+
+.plaza-card-badges {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+  min-width: 0;
+}
+
+.plaza-card-title {
+  font-size: 1rem;
+  margin: 0;
+  line-height: 1.5;
+  overflow-wrap: anywhere;
+}
+
+.plaza-card-stem {
+  margin: 0;
+  color: var(--soft);
+  font-size: 0.9rem;
+  line-height: 1.75;
+  overflow-wrap: anywhere;
+  display: -webkit-box;
+  -webkit-line-clamp: 3;
+  -webkit-box-orient: vertical;
+  overflow: hidden;
+}
+
+.plaza-card-tags {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+  min-width: 0;
+}
+
+.plaza-card-tags .kp-chip {
+  cursor: default;
+  max-width: 100%;
+  overflow-wrap: anywhere;
+}
+
+.plaza-card-meta {
+  margin: 0;
+  font-size: 0.78rem;
+  color: var(--muted);
+  line-height: 1.6;
+}
+
+.plaza-card-actions {
+  margin-top: auto;
+  padding-top: 4px;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 10px;
+}
+
+.plaza-card-id {
+  font-family: Consolas, "Courier New", monospace;
+  font-size: 0.72rem;
+  color: var(--muted);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  max-width: 55%;
+}
+
+.plaza-pager {
+  margin: 8px 0 0;
+}
+
+/* ---------------- 广场详情 ---------------- */
+.plaza-detail-head {
+  display: flex;
+  flex-direction: column;
+  gap: 11px;
+}
+
+.plaza-detail-title {
+  margin: 0;
+  font-size: 1.5rem;
+  line-height: 1.45;
+  letter-spacing: -0.02em;
+  overflow-wrap: anywhere;
+}
+
+.plaza-detail-meta {
+  margin: 0;
+  color: var(--muted);
+  font-size: 0.85rem;
+}
+
+.plaza-section-title {
+  margin: 0 0 12px;
+  font-size: 0.95rem;
+  color: var(--accent-deep);
+  font-weight: 650;
+  letter-spacing: 0.01em;
+}
+
+.plaza-content .markdown {
+  font-size: 1rem;
+  color: var(--ink);
+}
+
+.plaza-stem {
+  font-size: 1.05rem;
+  line-height: 1.9;
+}
+
+.plaza-options {
+  margin: 18px 0 0;
+}
+
+.plaza-option {
+  cursor: default;
+}
+
+.plaza-option .option-content .markdown {
+  font-size: 0.95rem;
+}
+
+.plaza-parts {
+  display: grid;
+  gap: 14px;
+  margin-top: 14px;
+}
+
+.plaza-part {
+  border-top: 1px dashed var(--line);
+  padding-top: 13px;
+  min-width: 0;
+}
+
+.plaza-part:first-child {
+  border-top: 0;
+  padding-top: 0;
+}
+
+.plaza-part-head {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  margin-bottom: 8px;
+  color: var(--accent-deep);
+}
+
+.plaza-part .options {
+  margin-top: 12px;
+}
+
+.plaza-answer .button {
+  margin: 4px 0 12px;
+}
+
+.plaza-answer-body {
+  display: grid;
+  gap: 10px;
+  min-width: 0;
+}
+
+.plaza-answer-body.hide {
+  display: none;
+}
+
+.plaza-answers {
+  margin: 0;
+  padding-left: 20px;
+  line-height: 1.9;
+  overflow-wrap: anywhere;
+}
+
+.plaza-answer-item {
+  margin: 0;
+}
+
+.plaza-subtitle {
+  margin: 10px 0 0;
+  font-size: 0.9rem;
+  color: var(--soft);
+  font-weight: 600;
+}
+
+.plaza-explanation,
+.plaza-rubric {
+  font-size: 0.95rem;
+  line-height: 1.85;
+}
+
+.plaza-review-summary {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 8px;
+  padding: 10px 13px;
+  border-radius: 9px;
+  border: 1px solid var(--line);
+  background: var(--rail);
+  color: var(--soft);
+  font-size: 0.82rem;
+  line-height: 1.6;
+}
+
+.plaza-review-title {
+  font-weight: 650;
+  color: var(--accent-deep);
+}
+
+.plaza-review-counts {
+  overflow-wrap: anywhere;
+}
+
+/* 配图：只展示 payload 明确给出的公开图；加载失败退占位，不撑破布局。 */
+.plaza-figures .notice {
+  margin: 12px 0 0;
+}
+
+.plaza-figure-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(220px, 1fr));
+  gap: 14px;
+}
+
+.plaza-figure-item {
+  margin: 0;
+  padding: 8px;
+  border: 1px solid var(--line);
+  border-radius: 10px;
+  background: var(--surface);
+  min-width: 0;
+}
+
+.plaza-figure {
+  display: block;
+  max-width: 100%;
+  max-height: 380px;
+  margin: 0 auto;
+  object-fit: contain;
+  border-radius: 6px;
+}
+
+.plaza-figure-item figcaption {
+  margin-top: 6px;
+  font-size: 0.75rem;
+  color: var(--muted);
+  text-align: center;
+}
+
+.plaza-figure-placeholder {
+  margin: 0;
+}
+
+/* 来源与授权声明 */
+.plaza-source-card {
+  display: grid;
+  gap: 8px;
+}
+
+.plaza-source-row {
+  display: grid;
+  grid-template-columns: minmax(88px, 118px) minmax(0, 1fr);
+  gap: 10px;
+  font-size: 0.85rem;
+  line-height: 1.75;
+  min-width: 0;
+}
+
+.plaza-source-label {
+  color: var(--muted);
+}
+
+.plaza-source-value {
+  color: var(--ink);
+  overflow-wrap: anywhere;
+  text-decoration: none;
+}
+
+a.plaza-source-value {
+  color: var(--accent-deep);
+  text-decoration: underline;
+  text-underline-offset: 2px;
+}
+
+/* 登录后动作占位（收藏/投稿/报错） */
+.plaza-member-actions {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 8px;
+  padding: 13px 16px;
+  border: 1px dashed var(--line);
+  border-radius: 10px;
+  background: var(--surface);
+}
+
+.plaza-member-actions .help {
+  margin: 0 6px 0 0;
+}
+
+.plaza-detail-foot {
+  margin: 0;
+  padding-top: 4px;
+  color: var(--muted);
+  font-size: 0.75rem;
+  line-height: 1.8;
+  text-align: center;
+}
+
+/* ---------------- 响应式 ---------------- */
+@media (max-width: 900px) {
+  .plaza-grid {
+    grid-template-columns: repeat(auto-fill, minmax(240px, 1fr));
+    gap: 12px;
+  }
+
+  .plaza-filter-grid {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+    gap: 10px;
+  }
+
+  .plaza-filter-reset {
+    grid-column: 1 / -1;
+    justify-self: stretch;
+  }
+
+  .plaza-filter-reset .button {
+    width: 100%;
+    justify-content: center;
+  }
+}
+
+@media (max-width: 700px) {
+  .guest-topbar {
+    height: auto;
+    min-height: 64px;
+    padding: 10px 16px;
+    gap: 10px;
+    flex-wrap: wrap;
+  }
+
+  .guest-topbar-left {
+    gap: 12px;
+    flex: 1 1 auto;
+  }
+
+  .guest-topbar .brand-sub {
+    display: none;
+  }
+
+  .guest-topbar .brand-name {
+    font-size: 1.15rem;
+  }
+
+  .guest-topbar .brand-mark {
+    width: 34px;
+    height: 36px;
+    font-size: 1.2rem;
+    border-radius: 9px;
+  }
+
+  .guest-nav-item {
+    padding: 8px 10px;
+  }
+
+  .guest-nav-item span {
+    display: none;
+  }
+
+  .guest-topbar-actions {
+    gap: 6px;
+  }
+
+  .guest-auth-button {
+    padding: 8px 11px;
+    font-size: 0.8rem;
+  }
+
+  .guest-auth-button .icon {
+    display: none;
+  }
+
+  .plaza-grid {
+    grid-template-columns: 1fr;
+  }
+
+  .plaza-detail-title {
+    font-size: 1.25rem;
+  }
+
+  .plaza-card-actions .plaza-card-id {
+    max-width: 50%;
+  }
+
+  .plaza-source-row {
+    grid-template-columns: 1fr;
+    gap: 2px;
+  }
+
+  .plaza-figure-grid {
+    grid-template-columns: 1fr;
+  }
+}

@@ -2,86 +2,177 @@ import { api } from './api.js';
 import { state, onSessionReset } from './state.js';
 import { el, badge, button, notice, busy, toast, dateText, icon } from './dom.js';
 import { markdown } from './markdown.js';
+import { t, getMessageCount } from './i18n.js';
 import { renderAiResult } from '../components/aiResultCard.js';
 
-export const taskNames = {
-  explain: 'AI 详细解析',
-  grade: '作答交叉核验',
-  'question-analysis': '题目与题型分析',
-  notes: '知识清单整理',
-  recognize: '拍题视觉识别',
-  tagging: '知识点批量打标',
-  ocr: '扫描件 OCR 识别',
+/* 任务名 / 状态名 / 阶段名：这里只保存「文案键」，取值时再调用 t()。
+ * - 用 Proxy（taskNames/statusNames）与函数（stageName）保证语言切换后立刻生效，
+ *   同时兼容旧调用方 `taskNames[task]`、`Object.keys(taskNames)` 与动态写入
+ *   （classroomShared 会注册 `course-video` 之类的扩展任务名）。
+ * - 未收录的扩展任务名保留调用方写入的原文，避免破坏既有模块。 */
+const TASK_NAME_KEYS = {
+  explain: 'job.task.explain',
+  grade: 'job.task.grade',
+  'question-analysis': 'job.task.questionAnalysis',
+  notes: 'settings.task.notes',
+  recognize: 'job.task.recognize',
+  tagging: 'job.task.tagging',
+  ocr: 'job.task.ocr',
+  // 整合模块（OpenMAIC / Oh My Paper / 小鹿老师）扩展任务。
+  course: 'settings.task.course',
+  'paper-import': 'settings.task.paper-import',
+  'paper-enrich': 'settings.task.paper-enrich',
+  'paper-compose': 'settings.task.paper-compose',
+  'paper-revision': 'home.ai.revision.title',
+  'insight-report': 'settings.task.insight-report',
+  'course-narration': 'tasks.task.course-narration',
+  'course-video': 'job.task.courseVideo',
+  'assistant-turn': 'settings.task.assistant-turn',
 };
 
-export const statusNames = {
-  queued: '等待处理',
-  pending: '等待处理',
-  running: '正在处理',
-  cancel_requested: '取消中',
-  awaiting_outline: '待确认提纲',
-  completed: '已完成',
-  succeeded: '已完成',
-  failed: '未完成',
-  interrupted: '已中断',
-  cancelled: '已取消',
+const STATUS_NAME_KEYS = {
+  queued: 'job.status.queued',
+  pending: 'job.status.queued',
+  running: 'job.status.running',
+  cancel_requested: 'tasks.status.cancel_requested',
+  awaiting_outline: 'job.status.awaitingOutline',
+  completed: 'focus.completed',
+  succeeded: 'focus.completed',
+  failed: 'home.conversationStatus.failed',
+  interrupted: 'job.status.interrupted',
+  cancelled: 'tasks.status.cancelled',
 };
 
-const stageNames = {
-  queued: '等待处理',
-  starting: '准备中',
-  preparing: '准备资料',
-  extract: '解析资料',
-  extracting: '解析资料',
-  'reduce-chunks': '合并并去重知识条目',
-  outline: '生成提纲',
-  outlining: '生成提纲',
-  awaiting_outline: '等待确认提纲',
-  generate: '整理内容',
-  generating: '整理内容',
-  'generate-sections': '分节并行生成',
-  verify: '独立核验',
-  verifying: '独立核验',
-  validate: '核对引用',
-  'validate-citations': '核对来源引用',
-  resuming: '从检查点续跑',
-  completed: '已完成',
-  done: '已完成',
-  interrupted: '处理已中断',
-  cancelled: '已取消',
-  cancel_requested: '等待执行进程停止',
-  failed: '处理未完成',
-  ocr: '扫描页文字识别',
-  'ocr-preparing': '准备扫描件',
-  'ocr-saving': '保存识别结果',
-  tagging: '批量打标',
+// 旧代码动态注册的任务名（原文兜底，缺键时不再回退中文原文而破坏外部模块）。
+const extraTaskNames = Object.create(null);
+
+function taskNameKey(key) {
+  return typeof key === 'string' && Object.prototype.hasOwnProperty.call(TASK_NAME_KEYS, key)
+    ? TASK_NAME_KEYS[key]
+    : '';
+}
+
+// 语言包尚未加载时（模块在 initI18n 之前被 import）先返回文案键避免无谓的缺键告警；
+// 加载完成后 get 会正常返回 t()。
+function translateLazily(messageKey) {
+  return getMessageCount() > 0 ? t(messageKey) : messageKey;
+}
+
+export const taskNames = new Proxy(Object.create(null), {
+  get(_target, key) {
+    if (typeof key !== 'string') return undefined;
+    const messageKey = taskNameKey(key);
+    if (messageKey) return translateLazily(messageKey);
+    return extraTaskNames[key];
+  },
+  set(_target, key, value) {
+    if (typeof key === 'string' && !taskNameKey(key)) extraTaskNames[key] = value;
+    return true;
+  },
+  has(_target, key) {
+    return typeof key === 'string' && Boolean(taskNameKey(key) || key in extraTaskNames);
+  },
+  ownKeys() {
+    return [...new Set([...Object.keys(TASK_NAME_KEYS), ...Object.keys(extraTaskNames)])];
+  },
+  getOwnPropertyDescriptor(_target, key) {
+    if (typeof key === 'string' && (taskNameKey(key) || key in extraTaskNames)) {
+      return { enumerable: true, configurable: true };
+    }
+    return undefined;
+  },
+});
+
+export const statusNames = new Proxy(Object.create(null), {
+  get(_target, key) {
+    if (typeof key !== 'string') return undefined;
+    const messageKey = STATUS_NAME_KEYS[key];
+    return messageKey ? translateLazily(messageKey) : undefined;
+  },
+  has(_target, key) {
+    return typeof key === 'string' && Object.prototype.hasOwnProperty.call(STATUS_NAME_KEYS, key);
+  },
+  ownKeys() {
+    return Object.keys(STATUS_NAME_KEYS);
+  },
+  getOwnPropertyDescriptor(_target, key) {
+    if (typeof key === 'string' && Object.prototype.hasOwnProperty.call(STATUS_NAME_KEYS, key)) {
+      return { enumerable: true, configurable: true };
+    }
+    return undefined;
+  },
+});
+
+const STAGE_NAME_KEYS = {
+  queued: 'job.status.queued',
+  starting: 'job.stage.starting',
+  preparing: 'job.stage.preparing',
+  extract: 'job.stage.extract',
+  extracting: 'job.stage.extract',
+  'reduce-chunks': 'job.stage.reduceChunks',
+  outline: 'job.stage.outline',
+  outlining: 'job.stage.outline',
+  awaiting_outline: 'job.stage.awaitingOutline',
+  generate: 'job.stage.generating',
+  generating: 'job.stage.generating',
+  'generate-sections': 'job.stage.generateSections',
+  verify: 'job.stage.verify',
+  verifying: 'job.stage.verify',
+  validate: 'job.stage.validate',
+  'validate-citations': 'job.stage.validateCitations',
+  resuming: 'job.stage.resuming',
+  completed: 'focus.completed',
+  done: 'focus.completed',
+  interrupted: 'job.stage.interrupted',
+  cancelled: 'tasks.status.cancelled',
+  cancel_requested: 'job.stage.cancelRequested',
+  failed: 'job.stage.failed',
+  ocr: 'job.stage.ocr',
+  'ocr-preparing': 'job.stage.ocrPreparing',
+  'ocr-saving': 'job.stage.ocrSaving',
+  tagging: 'tasks.task.tagging',
+  // 整合模块阶段（扩展模块允许两种写法：这里的英文键，或直接下发中文阶段名）。
+  'course-outline': 'job.stage.courseOutline',
+  'course-scene': 'job.stage.courseScene',
+  'course-validate': 'job.stage.courseValidate',
+  'paper-render': 'job.stage.paperRender',
+  'paper-extract': 'job.stage.paperExtract',
+  'paper-save': 'job.stage.ocrSaving',
+  'enrich-question': 'job.stage.enrichQuestion',
+  'insight-collect': 'job.stage.insightCollect',
+  'insight-write': 'insight.ai.generate',
+  'assistant-think': 'job.stage.assistantThink',
+  'assistant-tool': 'job.stage.assistantTool',
 };
+
+function stageName(key) {
+  const messageKey = STAGE_NAME_KEYS[key];
+  return messageKey ? t(messageKey) : '';
+}
 
 export function stageLabel(stage) {
   const s = String(stage || '');
+  // 扩展任务允许直接下发可读的中文阶段名（如「生成第 2/6 个场景」），优先原样展示。
+  if (/[\u4e00-\u9fff]/.test(s)) return s;
   const read = s.match(/^read-batch-(\d+)-of-(\d+)$/);
-  if (read) return `阅读资料 · 第 ${read[1]} / ${read[2]} 批`;
+  if (read) return t('job.stage.readBatch', { v1: read[1], v2: read[2] });
   const mapChunk = s.match(/^map-chunk-(\d+)-of-(\d+)$/);
-  if (mapChunk) return `抽取知识条目 · 第 ${mapChunk[1]} / ${mapChunk[2]} 块`;
+  if (mapChunk) return t('job.stage.mapChunk', { v1: mapChunk[1], v2: mapChunk[2] });
   const verify = s.match(/^verify-batch-(\d+)-of-(\d+)$/);
-  if (verify) return `核对引用 · 第 ${verify[1]} / ${verify[2]} 批`;
+  if (verify) return t('job.stage.verifyBatch', { v1: verify[1], v2: verify[2] });
   const section = s.match(/^generate-sections-(\d+)-of-(\d+)$/);
-  if (section) return `分节生成 · 第 ${section[1]} / ${section[2]} 节`;
+  if (section) return t('job.stage.generateSection', { v1: section[1], v2: section[2] });
   const tag = s.match(/^tagging-(\d+)\/(\d+)$/);
-  if (tag) return `批量打标 · ${tag[1]} / ${tag[2]} 题`;
+  if (tag) return t('job.stage.taggingProgress', { v1: tag[1], v2: tag[2] });
   const ocr = s.match(/^ocr-(\d+)\/(\d+)$/);
-  if (ocr) return `识别扫描页 · 第 ${ocr[1]} / ${ocr[2]} 页`;
+  if (ocr) return t('job.stage.ocrProgress', { v1: ocr[1], v2: ocr[2] });
   const batch = s.match(/^([a-z][a-z0-9-]*)-(\d+)-of-(\d+)$/i);
-  if (batch) return `${stageNames[batch[1]] || '处理中'} · 第 ${batch[2]} / ${batch[3]} 步`;
+  if (batch) return t('job.stage.batchStep', { v1: stageName(batch[1]) || t('job.stage.processing'), v2: batch[2], v3: batch[3] });
   const slash = s.match(/^([a-z][a-z0-9-]*)-(\d+)\/(\d+)$/i);
-  if (slash) return `${stageNames[slash[1]] || '处理中'} · ${slash[2]} / ${slash[3]}`;
-  return stageNames[s] || '正在处理';
+  if (slash) return t('job.stage.progress', { v1: stageName(slash[1]) || t('job.stage.processing'), v2: slash[2], v3: slash[3] });
+  return stageName(s) || t('job.stage.processing');
 }
 
-/**
- * 从阶段文本解析确定进度：`read-batch-2-of-5`、`tagging-25/50`、`ocr-3/10` 等。
- * 返回 {current, total, percent} 或 null（无法确定进度时保持不确定态进度条）。
- */
 export function parseStageProgress(stage) {
   const text = String(stage || '').trim();
   if (!text) return null;
@@ -158,23 +249,23 @@ function syncJobPill() {
       type: 'button',
       class: 'topbar-pill job-pill',
       'data-job-pill': 'true',
-      title: '回到后台运行中的 AI 任务',
+      title: t('job.pillBackTitle'),
       onClick: () => {
         const first = [...jobPills.values()][0];
         const target = (first && first.route) || '#/';
         if ((location.hash || '#/') === target) return;
         location.hash = target;
       },
-    }, icon('clock'), el('span', { class: 'job-pill-text' }, '后台任务运行中'));
+    }, icon('clock'), el('span', { class: 'job-pill-text' }, t('job.pillRunning')));
   }
   if (!pillNode.isConnected) host.append(pillNode);
   const items = [...jobPills.values()];
   const text = items.length > 1
-    ? `${items.length} 个任务运行中`
-    : `${items[0].label}运行中`;
+    ? t('job.pillCount', { v1: items.length })
+    : t('job.pillOne', { v1: items[0].label });
   const textNode = pillNode.querySelector('.job-pill-text');
   if (textNode) textNode.textContent = text;
-  pillNode.setAttribute('aria-label', `${text}，点击查看`);
+  pillNode.setAttribute('aria-label', t('job.pillAria', { v1: text }));
 }
 
 async function pollBackgroundJobs() {
@@ -212,7 +303,7 @@ function registerJobPill(jobId, task) {
   const existing = jobPills.get(key);
   jobPills.set(key, {
     id: key,
-    label: taskNames[task] || existing?.label || 'AI 任务',
+    label: taskNames[task] || existing?.label || t('insight.summary.ai'),
     route: existing?.route || jobPillRoute(),
     since: existing?.since || Date.now(),
   });
@@ -349,7 +440,7 @@ export async function mountJob(container, id, onComplete = null, options = {}) {
     if (!refs || !card.isConnected) return;
     const status = job.status || 'running';
     const variant = statusBadgeVariant(status);
-    refs.title.textContent = taskNames[job.task] || 'AI 学习任务';
+    refs.title.textContent = taskNames[job.task] || t('upload.aiTaskFallback');
     refs.statusBadge.textContent = statusNames[status] || status;
     refs.statusBadge.className = `badge job-status-badge ${variant}`.trim();
     refs.statusBadge.setAttribute('data-job-status', status);
@@ -359,20 +450,20 @@ export async function mountJob(container, id, onComplete = null, options = {}) {
     const progress = parseStageProgress(job.stage);
     const cancelling = status === 'cancel_requested' || cancelRequested;
     refs.progressLabel.textContent = cancelling
-      ? '正在取消…'
-      : (progress ? `进度 ${progress.percent}%` : '处理中');
+      ? t('tasks.cancelling')
+      : (progress ? t('job.progress', { v1: progress.percent }) : t('job.stage.processing'));
     if (progress) refs.progressLabel.setAttribute('data-progress-percent', String(progress.percent));
     else refs.progressLabel.removeAttribute('data-progress-percent');
     refs.progress.classList.toggle('job-progress-determinate', Boolean(progress) && !cancelling);
     refs.progressFill.style.width = progress ? `${progress.percent}%` : '';
     if (cancelling) {
       refs.cancelBtn.disabled = true;
-      setButtonText(refs.cancelBtn, '正在取消…');
-      refs.cancelBtn.setAttribute('aria-label', '正在取消任务');
+      setButtonText(refs.cancelBtn, t('tasks.cancelling'));
+      refs.cancelBtn.setAttribute('aria-label', t('job.cancellingAria'));
     } else {
       refs.cancelBtn.disabled = false;
-      setButtonText(refs.cancelBtn, '取消任务');
-      refs.cancelBtn.setAttribute('aria-label', '取消任务');
+      setButtonText(refs.cancelBtn, t('tasks.cancelTask'));
+      refs.cancelBtn.setAttribute('aria-label', t('tasks.cancelTask'));
     }
   }
 
@@ -381,7 +472,7 @@ export async function mountJob(container, id, onComplete = null, options = {}) {
     const thinkingVisible = thinkingChars > 0 && !streamBuffer;
     refs.thinking.hidden = !thinkingVisible;
     if (thinkingVisible) {
-      refs.thinking.textContent = `模型正在深度思考…（已思考 ${thinkingChars} 字）`;
+      refs.thinking.textContent = t('job.thinking', { v1: thinkingChars });
     }
     refs.liveBody.replaceChildren(streamBuffer ? markdown(streamBuffer) : '');
     refs.body.classList.toggle('is-empty', !streamBuffer && !thinkingVisible);
@@ -411,19 +502,19 @@ export async function mountJob(container, id, onComplete = null, options = {}) {
   }
 
   function buildShell() {
-    const title = el('strong', { class: 'small-text job-title' }, taskNames[lastJob.task] || 'AI 学习任务');
+    const title = el('strong', { class: 'small-text job-title' }, taskNames[lastJob.task] || t('upload.aiTaskFallback'));
     const statusBadge = badge(statusNames[lastJob.status] || 'running', statusBadgeVariant(lastJob.status));
     statusBadge.classList.add('job-status-badge');
-    const attentionBadge = badge('需处理', 'amber');
+    const attentionBadge = badge(t('tasks.needsAttention'), 'amber');
     attentionBadge.classList.add('job-attention-badge');
     attentionBadge.hidden = true;
-    const cancelBtn = button('取消任务', event => requestCancel(event.currentTarget),
+    const cancelBtn = button(t('tasks.cancelTask'), event => requestCancel(event.currentTarget),
       'danger small', 'stop', { 'data-action': 'job-cancel' });
     const meta = el('p', { class: 'job-meta job-stage-line' });
     const progressFill = el('span', { class: 'job-progress-fill' });
     const progress = el('div', { class: 'job-progress job-progress-shell', 'aria-hidden': 'true' }, progressFill);
-    const progressLabel = el('span', { class: 'job-progress-label', 'aria-live': 'polite' }, '处理中');
-    const elapsed = el('span', { class: 'job-elapsed' }, '已用 00:00');
+    const progressLabel = el('span', { class: 'job-progress-label', 'aria-live': 'polite' }, t('job.stage.processing'));
+    const elapsed = el('span', { class: 'job-elapsed' }, t('job.elapsedInitial'));
     const thinking = el('p', { class: 'job-thinking' });
     thinking.hidden = true;
     const liveBody = el('div', { class: 'job-live-body', 'data-job-live-body': 'true' });
@@ -445,7 +536,7 @@ export async function mountJob(container, id, onComplete = null, options = {}) {
     if (Number.isFinite(createdMs)) { startAt = createdMs; elapsedAnchored = true; }
     const tick = () => {
       if (closed || !refs || !card.isConnected) return;
-      refs.elapsed.textContent = `已用 ${elapsedText(Date.now() - startAt)}`;
+      refs.elapsed.textContent = t('job.elapsed', { v1: elapsedText(Date.now() - startAt) });
     };
     tick();
     elapsedTimer = setInterval(tick, 1000);
@@ -482,7 +573,7 @@ export async function mountJob(container, id, onComplete = null, options = {}) {
     syncShell(lastJob);
     try {
       await api(`/ai/jobs/${encodeURIComponent(id)}/cancel`, { method: 'POST' });
-      toast('已发出取消请求，等待执行进程停止。');
+      toast(t('tasks.cancelSent'));
       try {
         const latest = await api(`/ai/jobs/${encodeURIComponent(id)}`);
         if (closed || !card.isConnected) return;
@@ -603,8 +694,8 @@ export async function mountJob(container, id, onComplete = null, options = {}) {
     if (!refs || !card.isConnected) return;
     refs.thinking.hidden = true;
     refs.liveBody.replaceChildren(
-      el('p', { class: 'job-error' }, error.message || '任务状态暂时无法读取。'),
-      button('重新获取任务', () => startPolling(2000, 0), 'secondary small', 'repeat'));
+      el('p', { class: 'job-error' }, error.message || t('job.statusUnreadable')),
+      button(t('job.retryFetch'), () => startPolling(2000, 0), 'secondary small', 'repeat'));
     refs.body.classList.remove('is-empty');
   }
 
@@ -625,8 +716,8 @@ export async function mountJob(container, id, onComplete = null, options = {}) {
       schedulePaint(true);
       if (polls >= 30) {
         refs.liveBody.append(el('div', { class: 'row between notice', style: 'margin-top:12px' },
-          el('span', {}, '任务耗时较长，仍在后台处理中。'),
-          button('继续查看', () => startPolling(2000, 0), 'secondary small', 'repeat')));
+          el('span', {}, t('job.longRunning')),
+          button(t('job.continueView'), () => startPolling(2000, 0), 'secondary small', 'repeat')));
         refs.body.classList.remove('is-empty');
         return;
       }
@@ -710,26 +801,26 @@ export async function mountJob(container, id, onComplete = null, options = {}) {
     const isTerminal = TERMINAL.has(job.status);
     const headerActions = el('div', { class: 'row' },
       badge(statusNames[job.status] || job.status, statusBadgeVariant(job.status)),
-      job.needs_attention ? badge('需处理', 'amber') : null);
+      job.needs_attention ? badge(t('tasks.needsAttention'), 'amber') : null);
     if (!isTerminal) {
       headerActions.append(job.status === 'cancel_requested'
-        ? button('正在取消…', null, 'ghost small', 'stop', { disabled: true })
-        : button('取消任务', event => busy(event.currentTarget, async () => {
+        ? button(t('tasks.cancelling'), null, 'ghost small', 'stop', { disabled: true })
+        : button(t('tasks.cancelTask'), event => busy(event.currentTarget, async () => {
           await api(`/ai/jobs/${id}/cancel`, { method: 'POST' });
-          toast('已发出取消请求，等待执行进程停止。');
+          toast(t('tasks.cancelSent'));
           renderFullJob(await api(`/ai/jobs/${id}`));
         }), 'danger small', 'stop'));
     } else if (['interrupted', 'failed', 'cancelled'].includes(job.status) && job.has_checkpoint) {
-      headerActions.append(button('续跑任务', event => busy(event.currentTarget, async () => {
+      headerActions.append(button(t('tasks.resume'), event => busy(event.currentTarget, async () => {
         await api(`/ai/jobs/${id}/resume`, { method: 'POST' });
-        toast('已开始续跑任务。');
+        toast(t('job.resumeStarted'));
         mountJob(container, id, onComplete, options);
       }), 'soft small', 'repeat'));
     }
 
     card.replaceChildren(
       el('div', { class: 'job-header' },
-        el('strong', { class: 'small-text' }, taskNames[job.task] || 'AI 学习任务'),
+        el('strong', { class: 'small-text' }, taskNames[job.task] || t('upload.aiTaskFallback')),
         headerActions),
       el('p', { class: 'job-meta' }, [stageLabel(job.stage), job.request?.model, job.created_at ? dateText(job.created_at) : null].filter(Boolean).join(' · '))
     );
@@ -737,26 +828,26 @@ export async function mountJob(container, id, onComplete = null, options = {}) {
     if (!isTerminal) card.append(el('div', { class: 'job-progress' }, el('span')));
     if (job.error) card.append(el('p', { class: 'job-error' }, job.error));
     if (job.needs_attention) {
-      card.append(notice('任务需要处理：可点击「续跑任务」从检查点继续，或重新发起。', 'warning'));
+      card.append(notice(t('job.needsAttentionNotice'), 'warning'));
     } else if (job.status === 'cancelled') {
-      card.append(notice('任务已取消。取消前已保存的讲解、笔记或评分会按任务规则保留，可在历史记录中查看。'));
+      card.append(notice(t('job.cancelledNotice')));
     }
 
     // Human-in-the-loop outline confirmation UI
     if (job.status === 'awaiting_outline' && job.result?.outline) {
       const outlineArea = el('textarea', { class: 'note-editor', style: 'min-height:220px', value: job.result.outline });
       card.append(
-        notice(job.result.notice || '提纲已生成，可自由增删、调整章节顺序，确认后将分节并行生成正文。'),
+        notice(job.result.notice || t('job.outlineNotice')),
         outlineArea,
         el('div', { class: 'row end', style: 'margin-top:12px' },
-          button('取消任务', event => busy(event.currentTarget, async () => {
+          button(t('tasks.cancelTask'), event => busy(event.currentTarget, async () => {
             await api(`/ai/jobs/${id}/cancel`, { method: 'POST' });
             renderFullJob(await api(`/ai/jobs/${id}`));
           }), 'secondary small', 'stop'),
-          button('确认提纲并生成正文', event => busy(event.currentTarget, async () => {
-            if (!outlineArea.value.trim()) throw new Error('提纲不能为空');
+          button(t('job.confirmOutline'), event => busy(event.currentTarget, async () => {
+            if (!outlineArea.value.trim()) throw new Error(t('job.outlineEmpty'));
             await api(`/ai/jobs/${id}/confirm-outline`, { method: 'POST', data: { outline: outlineArea.value.trim() } });
-            toast('提纲已确认，开始分节生成正文…');
+            toast(t('job.outlineConfirmed'));
             mountJob(container, id, onComplete, options);
           }), '', 'sparkle'))
       );

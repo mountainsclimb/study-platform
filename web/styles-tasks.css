@@ -1,0 +1,437 @@
+/* 任务中心页面样式（.task- 前缀）。复用 core/jobs.js 的任务卡与进度条基线。 */
+.task-page {
+  display: flex;
+  flex-direction: column;
+  gap: 16px;
+  min-width: 0;
+}
+.task-toolbar {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: flex-end;
+  justify-content: space-between;
+  gap: 12px;
+  padding: 14px 16px;
+  background: var(--surface);
+  border: 1px solid var(--line);
+  border-radius: 12px;
+}
+.task-filters {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+  min-width: 0;
+}
+.task-filter {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  min-height: 44px;
+  padding: 8px 14px;
+  border: 1px solid var(--line);
+  border-radius: 999px;
+  background: var(--surface);
+  color: var(--soft);
+  font: inherit;
+  font-size: 13px;
+  cursor: pointer;
+}
+.task-filter:hover {
+  background: var(--paper);
+  color: var(--ink);
+}
+.task-filter[aria-pressed='true'] {
+  background: var(--tint);
+  border-color: #bcd5c8;
+  color: var(--accent-deep);
+  font-weight: 650;
+}
+.task-filter:focus-visible {
+  outline: 2px solid var(--focus);
+  outline-offset: 2px;
+}
+.task-filter .task-filter-count {
+  font-size: 12px;
+  color: inherit;
+  opacity: 0.8;
+  font-variant-numeric: tabular-nums;
+}
+.task-task-filter {
+  display: flex;
+  align-items: flex-end;
+  gap: 10px;
+  min-width: 0;
+}
+.task-task-filter .field {
+  margin: 0;
+  min-width: 170px;
+}
+.task-task-filter select {
+  min-height: 44px;
+}
+.task-refresh-note {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  color: var(--soft);
+  font-size: 12.5px;
+}
+.task-refresh-note .spinner {
+  width: 12px;
+  height: 12px;
+}
+.task-list {
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+  min-width: 0;
+}
+.task-card {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  min-width: 0;
+  padding: 16px;
+  background: var(--surface);
+  border: 1px solid var(--line);
+  border-radius: 12px;
+  overflow-wrap: anywhere;
+}
+.task-card[data-active='true'] {
+  border-color: #bcd5c8;
+  box-shadow: 0 6px 18px #283b2709;
+}
+.task-card-head {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 8px 10px;
+  min-width: 0;
+}
+.task-task-name {
+  font-size: 15px;
+  font-weight: 650;
+  color: var(--ink);
+  overflow-wrap: anywhere;
+}
+.task-task-id {
+  color: var(--soft);
+  font-size: 12px;
+  font-variant-numeric: tabular-nums;
+}
+.task-card-head .badge {
+  flex: none;
+}
+.task-meta {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 4px 14px;
+  margin: 0;
+  color: var(--soft);
+  font-size: 12.5px;
+  line-height: 1.55;
+  min-width: 0;
+}
+.task-meta span {
+  overflow-wrap: anywhere;
+}
+.task-summary {
+  margin: 0;
+  padding: 8px 10px;
+  border-left: 3px solid #bcd5c8;
+  border-radius: 0 8px 8px 0;
+  background: var(--paper);
+  color: var(--ink);
+  font-size: 13px;
+  line-height: 1.6;
+  overflow-wrap: anywhere;
+}
+.task-error-line {
+  margin: 0;
+  color: var(--wrong);
+  font-size: 13px;
+  line-height: 1.55;
+  overflow-wrap: anywhere;
+}
+.task-progress {
+  height: 6px;
+  border-radius: 999px;
+  background: var(--rail);
+  overflow: hidden;
+}
+.task-progress > span {
+  display: block;
+  height: 100%;
+  border-radius: 999px;
+  background: var(--accent);
+  transition: width 0.3s ease;
+}
+.task-usage {
+  color: var(--soft);
+  font-size: 12px;
+  font-variant-numeric: tabular-nums;
+  overflow-wrap: anywhere;
+}
+.task-actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+  align-items: center;
+}
+.task-actions .button {
+  min-height: 44px;
+}
+.task-detail {
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+  margin-top: 4px;
+  padding-top: 12px;
+  border-top: 1px dashed var(--line);
+  min-width: 0;
+}
+.task-detail h3 {
+  margin: 0;
+  font-size: 13.5px;
+  color: var(--soft);
+  letter-spacing: 0.02em;
+}
+.task-kv {
+  display: grid;
+  grid-template-columns: 116px minmax(0, 1fr);
+  gap: 5px 12px;
+  margin: 0;
+  font-size: 13px;
+  min-width: 0;
+}
+.task-kv dt {
+  color: var(--soft);
+}
+.task-kv dd {
+  margin: 0;
+  min-width: 0;
+  overflow-wrap: anywhere;
+  white-space: pre-wrap;
+}
+.task-pre {
+  margin: 0;
+  max-height: 240px;
+  overflow: auto;
+  padding: 10px 12px;
+  border-radius: 8px;
+  background: #f4f7f8;
+  color: var(--ink);
+  font-size: 12px;
+  line-height: 1.55;
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+}
+.task-detail-live {
+  min-width: 0;
+}
+.task-detail-live .job-card {
+  margin: 0;
+}
+.task-detail-note {
+  margin: 0;
+  color: var(--soft);
+  font-size: 12.5px;
+  line-height: 1.6;
+}
+.task-empty-actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 10px;
+  justify-content: center;
+}
+.task-error-panel {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 12px;
+  padding: 16px;
+  border: 1px solid #e4c7bc;
+  border-radius: 12px;
+  background: var(--wrong-bg);
+  color: var(--wrong);
+  font-size: 13px;
+}
+.task-footer {
+  color: var(--soft);
+  font-size: 12px;
+  line-height: 1.7;
+}
+
+@media (max-width: 700px) {
+  .task-toolbar {
+    padding: 12px;
+  }
+  .task-filter {
+    flex: 1 1 calc(50% - 6px);
+    justify-content: center;
+  }
+  .task-task-filter {
+    width: 100%;
+  }
+  .task-task-filter .field {
+    flex: 1 1 auto;
+    min-width: 0;
+  }
+  .task-card {
+    padding: 13px 12px;
+  }
+  .task-actions .button {
+    flex: 1 1 auto;
+  }
+  .task-kv {
+    grid-template-columns: 86px minmax(0, 1fr);
+  }
+}
+
+@media print {
+  .task-toolbar,
+  .task-actions,
+  .task-page .button {
+    display: none !important;
+  }
+  .task-card {
+    break-inside: avoid;
+    border: 0;
+    padding: 6px 0;
+  }
+  .task-detail {
+    display: none;
+  }
+}
+
+/* ===== task-13：AI 费用估算（任务中心费用徽章/明细；只为少量新增控件补充样式） ===== */
+.task-cost {
+  margin: 0;
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  padding: 4px 10px;
+  border-radius: 999px;
+  background: var(--tint);
+  color: var(--accent-deep);
+  font-size: 12.5px;
+  font-variant-numeric: tabular-nums;
+  overflow-wrap: anywhere;
+}
+.task-cost[data-cost-known="false"] {
+  background: #fbf3e3;
+  border: 1px solid #e6d3ae;
+  color: #7a5a1f;
+}
+.task-cost-detail {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  min-width: 0;
+}
+.task-cost-table {
+  width: 100%;
+  border-collapse: collapse;
+  font-size: 12.5px;
+}
+.task-cost-table th,
+.task-cost-table td {
+  padding: 6px 8px;
+  border-bottom: 1px solid var(--line);
+  text-align: left;
+  vertical-align: top;
+}
+.task-cost-table th {
+  color: var(--soft);
+  font-weight: 500;
+  background: var(--paper);
+}
+.task-cost-connect {
+  color: var(--soft);
+  font-size: 11.5px;
+  margin-top: 2px;
+}
+.task-cost-cell {
+  white-space: nowrap;
+  font-variant-numeric: tabular-nums;
+}
+.task-cost-summary {
+  margin: 0;
+  font-size: 13px;
+  line-height: 1.6;
+  color: var(--ink);
+}
+@media (max-width: 700px) {
+  .task-cost-detail .table-wrap { overflow-x: auto; }
+  .task-cost-table { min-width: 520px; }
+}
+
+/* ===== task-13：设置页「AI 用量与费用估算」小节样式 =====
+ * 按 Lead 并发要求暂存在本文件末尾（styles-pages.css 正由其他代理追加样式），
+ * 均为 settings-usage-* 前缀，不影响其他页面。 */
+.settings-usage-card .card-header {
+  margin-bottom: 8px;
+}
+.settings-usage-summary {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px 16px;
+  margin: 2px 0 4px;
+  padding: 10px 12px;
+  border: 1px solid var(--line);
+  border-radius: 10px;
+  background: var(--paper);
+  font-size: 13px;
+  color: var(--ink);
+}
+.settings-usage-summary .settings-usage-cost {
+  font-weight: 650;
+  color: var(--accent-deep);
+  font-variant-numeric: tabular-nums;
+}
+.settings-usage-summary .settings-usage-warn {
+  color: #7a5a1f;
+}
+.settings-usage-source {
+  margin: 0 0 6px;
+}
+.settings-usage-table {
+  width: 100%;
+  border-collapse: collapse;
+  font-size: 13px;
+}
+.settings-usage-table th,
+.settings-usage-table td {
+  padding: 8px;
+  border-bottom: 1px solid var(--line);
+  text-align: left;
+  vertical-align: top;
+}
+.settings-usage-table td.settings-usage-cost {
+  white-space: nowrap;
+  font-variant-numeric: tabular-nums;
+}
+.settings-usage-connect {
+  color: var(--soft);
+  font-size: 12px;
+  margin-top: 2px;
+}
+@media (max-width: 700px) {
+  .settings-usage-summary { font-size: 12px; }
+  .settings-usage-table { display: block; overflow-x: auto; }
+}
+
+/* task-13：设置页任务默认模型行在 ≤700px 改为单列堆叠，避免 14 行时下拉框文字被截断。
+ * （原有 2 列紧凑布局在 styles.css，此处仅做移动端可读性覆盖；不影响桌面端。） */
+@media (max-width: 700px) {
+  .pg-task-defaults .pg-task-row {
+    grid-template-columns: 1fr;
+    grid-template-areas: "name" "primary" "verify" "provider" "clear";
+    align-items: stretch;
+  }
+  .pg-task-defaults .pg-task-row .pg-task-cell-name { grid-area: name; }
+  .pg-task-defaults .pg-task-row .pg-task-cell-primary { grid-area: primary; }
+  .pg-task-defaults .pg-task-row .pg-task-cell-verify { grid-area: verify; }
+  .pg-task-defaults .pg-task-row .pg-task-cell-provider { grid-area: provider; }
+  .pg-task-defaults .pg-task-row .pg-task-cell-clear { grid-area: clear; justify-self: start; }
+}

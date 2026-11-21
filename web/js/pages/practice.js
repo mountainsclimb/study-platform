@@ -7,12 +7,88 @@ import {
 import { current, setHashParams } from '../core/router.js';
 import { renderKpTree } from '../components/kpTree.js';
 import { openQuestion } from './question.js';
+import { t } from '../core/i18n.js';
 
+// 通用筛选字段：[参数名, 文案键, 目录字段]；文案在渲染时再取，避免模块加载时固定语言。
 const COMMON_FILTERS = [
-  ['subject', '学科', 'subjects'],
-  ['year', '年份', 'years'],
-  ['type', '题型', 'types'],
+  ['subject', 'common.subject', 'subjects'],
+  ['year', 'practice.year', 'years'],
+  ['type', 'upload.fieldType', 'types'],
 ];
+
+// 难度 / 掌握度是后端下发的中文枚举值：提交时保持原值，展示时按当前语言映射。
+const DIFFICULTY_KEYS = {
+  '待标注': 'practice.difficultyUnlabeled',
+  '简单': 'practice.difficultyEasy',
+  '中等': 'practice.difficultyMedium',
+  '困难': 'practice.difficultyHard',
+};
+const MASTERY_KEYS = {
+  '未掌握': 'practice.masteryNotMastered',
+  '初步掌握': 'practice.masteryInitial',
+  '比较掌握': 'practice.masteryFair',
+  '熟练掌握': 'practice.masteryMastered',
+};
+
+function difficultyLabel(value) {
+  const key = DIFFICULTY_KEYS[value];
+  return key ? t(key) : String(value);
+}
+
+function masteryLabel(value) {
+  const key = MASTERY_KEYS[value];
+  return key ? t(key) : String(value);
+}
+
+// 平台精选来源能力探测（WS19 契约：`/api/questions?source=bank|official|all`，
+// 合法 official 请求返回 200 且带 official_total）。旧后端会忽略未知参数、响应体没有
+// official_total → 视为未就绪。这里用**合法请求**探测：非法 source 虽然会 422，
+// 但浏览器会把 4xx 记成控制台资源错误，污染页面验收；200 探测更干净也不伪造能力。
+let officialSourceSupportPromise = null;
+
+export function detectOfficialSource() {
+  if (!officialSourceSupportPromise) {
+    officialSourceSupportPromise = api('/questions?page=1&page_size=1&source=official')
+      .then(data => Boolean(data && typeof data === 'object' && 'official_total' in data))
+      .catch(() => false);
+  }
+  return officialSourceSupportPromise;
+}
+
+// 来源与审核状态徽标：后端未下发 source 时按高考题库处理（旧接口无该字段）。
+const SOURCE_BADGE_KEYS = {
+  bank: 'practice.source.bank',
+  official: 'practice.source.official',
+  app: 'practice.source.app',
+};
+const REVIEW_STATUS_KEYS = {
+  community: 'practice.source.reviewCommunity',
+  community_review: 'practice.source.reviewCommunity',
+  verified: 'practice.source.reviewVerified',
+};
+
+function sourceKindOf(q) {
+  // WS19 契约：official 项带 source/public_id；旧式/精简 payload 只有 official:<id>
+  // 引用时按 qid 前缀兜底，避免把平台精选题误标成「高考题库」。
+  if (q?.source === 'official' || q?.official || String(q?.qid || '').startsWith('official:')) return 'official';
+  if (q?.source === 'app') return 'app';
+  return 'bank';
+}
+
+function sourceBadge(q) {
+  const kind = sourceKindOf(q);
+  const tone = kind === 'official' ? 'blue' : kind === 'app' ? 'teal' : '';
+  return badge(t(SOURCE_BADGE_KEYS[kind]), tone);
+}
+
+// 平台精选题额外显示审核状态；已发布时来源徽标本身就是「平台精选」，不重复。
+function reviewStatusBadge(q) {
+  if (sourceKindOf(q) !== 'official') return null;
+  const status = String(q?.review_status || '');
+  const key = REVIEW_STATUS_KEYS[status];
+  if (!key) return null;
+  return badge(t(key), status === 'verified' ? 'teal' : 'amber');
+}
 
 function parseCsv(value) {
   return String(value || '').split(',').map(item => item.trim()).filter(Boolean);
@@ -24,8 +100,8 @@ function parseCsv(value) {
  */
 function createMultiSelect({ label, emptyLabel, options, value = '', onChange }) {
   const selected = new Set(parseCsv(value).map(String));
-  const summary = el('span', { class: 'multi-select-summary' });
-  const panel = el('div', { class: 'multi-select-panel' });
+  const summary = el('span', { class: 'multi-select-summary', 'data-no-i18n': 'true' });
+  const panel = el('div', { class: 'multi-select-panel', 'data-no-i18n': 'true' });
   const root = el('details', { class: 'multi-select' },
     el('summary', { 'aria-label': label }, summary), panel);
 
@@ -37,7 +113,7 @@ function createMultiSelect({ label, emptyLabel, options, value = '', onChange })
   function renderSummary() {
     const labels = [...selected].map(optionLabel);
     summary.textContent = labels.length
-      ? (labels.length <= 2 ? labels.join('、') : `${labels.slice(0, 2).join('、')} 等 ${labels.length} 项`)
+      ? (labels.length <= 2 ? labels.join(t('common.listSeparator')) : t('practice.andMore', { v1: labels.slice(0, 2).join(t('common.listSeparator')), v2: labels.length }))
       : emptyLabel;
     summary.classList.toggle('muted', !labels.length);
   }
@@ -56,7 +132,7 @@ function createMultiSelect({ label, emptyLabel, options, value = '', onChange })
       });
       panel.append(el('label', { class: 'multi-select-option' }, checkbox, el('span', {}, opt.label)));
     }
-    if (!options.length) panel.append(el('p', { class: 'help' }, '暂无可选项'));
+    if (!options.length) panel.append(el('p', { class: 'help' }, t('practice.noOptionsAvailable')));
   }
 
   // 点击控件外部自动收起；控件被路由重建后自动解绑，避免监听器泄漏。
@@ -102,15 +178,19 @@ function createMultiSelect({ label, emptyLabel, options, value = '', onChange })
 function resultCard(q, { selected, keyword, onOpen, onSkipReview }) {
   const isReview = q.slot === 'review';
   const meta = [
-    [q.year, q.province].filter(Boolean).join(' · ') || '来源见详情',
-    q.number_label ? `原卷第${q.number_label}题` : '',
+    [q.year, q.province].filter(Boolean).join(' · ') || t('wrongbook.sourceSeeDetail'),
+    q.number_label ? t('question.originalNumber', { label: q.number_label }) : '',
   ].filter(Boolean).join(' · ');
   const badges = el('span', { class: 'result-card-meta' });
-  if (isReview) badges.append(badge('复习', 'amber'));
-  badges.append(badge(q.subject || '真题', 'teal'), badge(typeLabel(q, state.catalog)));
-  if (q.group_id) badges.append(badge('题组', 'blue'));
-  if (q.difficulty && q.difficulty !== '待标注') badges.append(badge(q.difficulty, 'blue'));
-  if (q.has_ai_explanation) badges.append(badge('AI讲解', 'teal'));
+  if (isReview) badges.append(badge(t('practice.review'), 'amber'));
+  // 来源徽标（高考题库/平台精选/我的题库）+ 平台精选题的审核状态。
+  badges.append(sourceBadge(q));
+  const reviewBadge = reviewStatusBadge(q);
+  if (reviewBadge) badges.append(reviewBadge);
+  badges.append(badge(q.subject || t('practice.realExam'), 'teal'), badge(typeLabel(q, state.catalog)));
+  if (q.group_id) badges.append(badge(t('practice.questionSet'), 'blue'));
+  if (q.difficulty && q.difficulty !== '待标注') badges.append(badge(difficultyLabel(q.difficulty), 'blue'));
+  if (q.has_ai_explanation) badges.append(badge(t('practice.aiExplanation'), 'teal'));
 
   const card = el('button', {
     type: 'button',
@@ -124,29 +204,30 @@ function resultCard(q, { selected, keyword, onOpen, onSkipReview }) {
       onOpen(q);
     },
   },
-    el('span', { class: 'result-card-title' },
+    el('span', { class: 'result-card-title', 'data-no-i18n': 'true' },
       // 4.1：列表摘要不直接露 [公式1]，公式/图片占位换成可读提示。
-      highlightKeyword(readableSummary(q, 120) || '查看完整题目', keyword)),
+      highlightKeyword(readableSummary(q, 120) || t('practice.viewFullQuestion'), keyword)),
     badges,
-    el('span', { class: 'result-card-meta' },
+    el('span', { class: 'result-card-meta', 'data-no-i18n': 'true' },
       el('span', {}, meta),
       isReview && q.review_label ? el('span', {}, q.review_label) : null,
       onSkipReview ? el('span', {
         class: 'skip-review-link', 'aria-hidden': 'true',
-        title: '本次跳过，下次再出现（仅鼠标/触屏可用）',
+        title: t('practice.skipThisTimeItWillAppearAgain'),
         onClick: event => { event.stopPropagation(); onSkipReview(q.qid); },
-      }, '跳过') : null));
+      }, t('practice.skip')) : null));
   return card;
 }
 
 function activeFilterChips(filters, catalog, onChange, names = {}) {
   const chips = el('div', { class: 'filter-chips' });
   const labels = {
-    q: '关键词', subject: '学科', type: '题型', year: '年份', year_from: '起始年份',
-    year_to: '截止年份', difficulty: '难度', province: '地区', status: '我的状态',
-    sort: '排序', has_answer: '有有效答案', has_solution: '有原卷解析',
-    has_ai_explanation: '已有AI讲解', include_ai_difficulty: '纳入AI预估难度',
-    kp_id: '知识点', method_id: '题型解法',
+    q: t('practice.keyword'), subject: t('common.subject'), type: t('upload.fieldType'), year: t('practice.year'), year_from: t('practice.startYear'),
+    year_to: t('practice.endYear'), difficulty: t('practice.difficulty'), province: t('practice.region'), status: t('practice.myStatus'),
+    source: t('practice.source.label'),
+    sort: t('practice.sort'), has_answer: t('practice.hasValidAnswer'), has_solution: t('practice.hasOriginalSolution'),
+    has_ai_explanation: t('practice.hasAiExplanation'), include_ai_difficulty: t('practice.includeAiEstimatedDifficulty'),
+    kp_id: t('practice.knowledgePoint'), method_id: t('practice.questionTypeSolution'),
   };
   const kpNames = names.knowledgePoints || new Map();
   const methodNames = names.methods || new Map();
@@ -155,20 +236,21 @@ function activeFilterChips(filters, catalog, onChange, names = {}) {
     if (!raw) continue;
     let text = String(raw);
     if (key === 'subject') text = raw;
-    else if (key === 'province') text = parseCsv(raw).join('、');
-    else if (key === 'type') text = parseCsv(raw).map(t => catalog?.type_labels?.[t] || t).join('、');
-    else if (key === 'sort') text = { year_desc: '最新年份', year_asc: '最早年份', difficulty: '难度优先', accuracy: '正确率由低到高', random: '随机抽题' }[raw] || raw;
-    else if (key === 'status') text = { unattempted: '未做过', wrong: '错题本中', due: '待复习错题' }[raw] || raw;
-    else if (['has_answer', 'has_solution', 'has_ai_explanation', 'include_ai_difficulty'].includes(key)) text = '已选';
+    else if (key === 'province') text = parseCsv(raw).join(t('common.listSeparator'));
+    else if (key === 'type') text = parseCsv(raw).map(t => catalog?.type_labels?.[t] || t).join(t('common.listSeparator'));
+    else if (key === 'sort') text = { year_desc: t('practice.newestFirst'), year_asc: t('practice.oldestFirst'), difficulty: t('practice.difficultyFirst'), accuracy: t('practice.accuracyAscending'), random: t('practice.random') }[raw] || raw;
+    else if (key === 'status') text = { unattempted: t('practice.notAttempted'), wrong: t('practice.inWrongBook'), due: t('practice.dueForReview') }[raw] || raw;
+    else if (key === 'source') text = { bank: t('practice.source.bank'), official: t('practice.source.official'), all: t('practice.source.all') }[raw] || raw;
+    else if (['has_answer', 'has_solution', 'has_ai_explanation', 'include_ai_difficulty'].includes(key)) text = t('kp.selected');
     else if (key === 'kp_id') {
       // 已选知识点显示中文名；映射缺失时退回 `#编号`，绝不出现空白芯片。
-      text = parseCsv(raw).map(id => kpNames.get(String(id)) || `知识点#${id}`).join('、');
+      text = parseCsv(raw).map(id => kpNames.get(String(id)) || t('practice.knowledgePoint_2', { v1: id })).join(t('common.listSeparator'));
     } else if (key === 'method_id') {
-      text = parseCsv(raw).map(id => methodNames.get(String(id)) || `题型#${id}`).join('、');
+      text = parseCsv(raw).map(id => methodNames.get(String(id)) || t('practice.type', { v1: id })).join(t('common.listSeparator'));
     }
-    chips.append(el('span', { class: 'filter-chip' }, `${label}：${text}`,
+    chips.append(el('span', { class: 'filter-chip' }, t('practice.filterChip', { label, text }),
       el('button', {
-        type: 'button', 'aria-label': `清除${label}筛选项`,
+        type: 'button', 'aria-label': t('practice.clearTheFilter', { v1: label }),
         onClick: () => onChange(key),
       }, '×')));
   }
@@ -176,11 +258,13 @@ function activeFilterChips(filters, catalog, onChange, names = {}) {
 }
 
 export async function renderPractice(container, version, urlParams) {
-  const [catalog, kps, prefs, methodsRes] = await Promise.all([
+  const [catalog, kps, prefs, methodsRes, officialSourceReady] = await Promise.all([
     ensureCatalog(),
     ensureKnowledgePoints(),
     ensurePreferences(),
     api('/methods').catch(() => ({ items: [] })),
+    // 平台精选来源筛选能力探测：旧后端未接 source 参数时整体隐藏来源筛选。
+    detectOfficialSource(),
   ]);
   if (!current(version)) return;
   const allMethods = methodsRes.items || [];
@@ -197,11 +281,16 @@ export async function renderPractice(container, version, urlParams) {
     const f = {};
     for (const k of ['q', 'subject', 'type', 'difficulty', 'province', 'year', 'year_from', 'year_to',
       'kp_id', 'method_id', 'status', 'sort', 'has_answer', 'has_solution', 'has_ai_explanation',
-      'include_ai_difficulty']) {
+      'include_ai_difficulty', 'source']) {
       if (urlParams.has(k)) f[k] = urlParams.get(k);
     }
     state.filters = f;
     state.page = Math.max(1, Number(urlParams.get('page')) || 1);
+    saveFilters();
+  }
+  // 后端未接入来源筛选时忽略 URL/本地状态里的 source，避免出现不存在的能力。
+  if (!officialSourceReady && state.filters.source) {
+    delete state.filters.source;
     saveFilters();
   }
   // 兼容只设置 state.selectedQid 的旧入口（例如从首页「继续练习」）。
@@ -211,8 +300,8 @@ export async function renderPractice(container, version, urlParams) {
   if (!state.practiceView) state.practiceView = 'results';
 
   const filterCard = el('section', { class: 'card filter-card' });
-  const keyword = input('搜索题干、材料或试卷名称', {
-    value: state.filters.q || '', 'aria-label': '搜索题目', type: 'search',
+  const keyword = input(t('practice.searchQuestionTextMaterialOrPaperName'), {
+    value: state.filters.q || '', 'aria-label': t('practice.searchQuestions'), type: 'search',
   });
   const runSearch = async () => {
     state.filters.q = keyword.value.trim();
@@ -222,7 +311,7 @@ export async function renderPractice(container, version, urlParams) {
     saveFilters();
     await loadSearch();
   };
-  const searchButton = button('搜索', runSearch, 'search-submit', 'search', { 'aria-label': '搜索题目' });
+  const searchButton = button(t('common.search'), runSearch, 'search-submit', 'search', { 'aria-label': t('practice.searchQuestions') });
   // 回车直接搜索（4.1）：输入框内 Enter 不再只移动焦点。
   keyword.addEventListener('keydown', event => {
     if (event.key !== 'Enter') return;
@@ -243,15 +332,15 @@ export async function renderPractice(container, version, urlParams) {
     });
     return control;
   };
-  const subjectSel = makeSelect('subject', '学科',
-    [{ value: '', label: '全部学科' }, ...(catalog.subjects || []).map(s => ({ value: s, label: s }))],
+  const subjectSel = makeSelect('subject', t('common.subject'),
+    [{ value: '', label: t('insight.subjectAll') }, ...(catalog.subjects || []).map(s => ({ value: s, label: s }))],
     async () => { refreshFilters(); await loadSearch(); });
-  const yearSel = makeSelect('year', '年份',
-    [{ value: '', label: '全部年份' }, ...(catalog.years || []).map(y => ({ value: String(y), label: `${y} 年` }))],
+  const yearSel = makeSelect('year', t('practice.year'),
+    [{ value: '', label: t('practice.allYears') }, ...(catalog.years || []).map(y => ({ value: String(y), label: t('common.yearLabel', { year: y }) }))],
     async () => { refreshFilters(); await loadSearch(); });
   const typeMulti = createMultiSelect({
-    label: '题型（可多选）',
-    emptyLabel: '全部题型',
+    label: t('practice.questionTypesMultiSelect'),
+    emptyLabel: t('practice.allTypes'),
     options: (catalog.types || []).map(t => ({ value: t, label: catalog.type_labels?.[t] || t })),
     value: state.filters.type || '',
     onChange: async values => {
@@ -273,53 +362,61 @@ export async function renderPractice(container, version, urlParams) {
       filterMore.hidden = !open;
       moreToggle.setAttribute('aria-expanded', String(open));
     },
-  }, icon('sliders'), '更多筛选', el('span', { class: 'filter-badge' }, '0'));
+  }, icon('sliders'), t('practice.moreFilters'), el('span', { class: 'filter-badge' }, '0'));
 
   const difficultySel = select(
-    [{ value: '', label: '全部难度' }, ...(catalog.difficulties || ['待标注', '简单', '中等', '困难']).map(d => ({ value: d, label: d }))],
-    state.filters.difficulty || '', { 'aria-label': '难度' });
+    [{ value: '', label: t('practice.allDifficulties') }, ...(catalog.difficulties || ['待标注', '简单', '中等', '困难']).map(d => ({ value: d, label: difficultyLabel(d) }))],
+    state.filters.difficulty || '', { 'aria-label': t('practice.difficulty') });
   const provinceMulti = createMultiSelect({
-    label: '地区（可多选）',
-    emptyLabel: '全部地区',
+    label: t('practice.regionsMultiSelect'),
+    emptyLabel: t('practice.allRegions'),
     options: (catalog.provinces || []).map(p => ({ value: p, label: p })),
     value: state.filters.province || '',
     onChange: () => applyAdvanced(),
   });
   const statusSel = select([
-    { value: '', label: '全部状态' },
-    { value: 'unattempted', label: '未做过' },
-    { value: 'wrong', label: '错题本中' },
-    { value: 'due', label: '待复习错题' },
-    { value: '未掌握', label: '未掌握' },
-    { value: '初步掌握', label: '初步掌握' },
-    { value: '比较掌握', label: '比较掌握' },
-    { value: '熟练掌握', label: '熟练掌握' },
-  ], state.filters.status || '', { 'aria-label': '我的状态' });
+    { value: '', label: t('practice.allStatuses') },
+    { value: 'unattempted', label: t('practice.notAttempted') },
+    { value: 'wrong', label: t('practice.inWrongBook') },
+    { value: 'due', label: t('practice.dueForReview') },
+    { value: '未掌握', label: masteryLabel('未掌握') },
+    { value: '初步掌握', label: masteryLabel('初步掌握') },
+    { value: '比较掌握', label: masteryLabel('比较掌握') },
+    { value: '熟练掌握', label: masteryLabel('熟练掌握') },
+  ], state.filters.status || '', { 'aria-label': t('practice.myStatus') });
   const sortSel = select([
-    { value: 'year_desc', label: '最新年份' },
-    { value: 'year_asc', label: '最早年份' },
-    { value: 'difficulty', label: '难度优先' },
-    { value: 'accuracy', label: '正确率由低到高' },
-    { value: 'random', label: '随机抽题' },
-  ], state.filters.sort || 'year_desc', { 'aria-label': '排序' });
-  const yearFrom = select([{ value: '', label: '不限' }, ...(catalog.years || []).map(y => ({ value: String(y), label: `${y}` }))],
-    state.filters.year_from || '', { 'aria-label': '起始年份' });
-  const yearTo = select([{ value: '', label: '不限' }, ...(catalog.years || []).map(y => ({ value: String(y), label: `${y}` }))],
-    state.filters.year_to || '', { 'aria-label': '截止年份' });
+    { value: 'year_desc', label: t('practice.newestFirst') },
+    { value: 'year_asc', label: t('practice.oldestFirst') },
+    { value: 'difficulty', label: t('practice.difficultyFirst') },
+    { value: 'accuracy', label: t('practice.accuracyAscending') },
+    { value: 'random', label: t('practice.random') },
+  ], state.filters.sort || 'year_desc', { 'aria-label': t('practice.sort') });
+  // 来源筛选：默认空值=高考题库（后端默认 bank，省略参数保持向后兼容）；
+  // 平台精选/全部来源依赖 WS19 的 source 参数，探测不通过时整个控件不渲染。
+  const sourceSel = select([
+    { value: '', label: t('practice.source.bank') },
+    { value: 'official', label: t('practice.source.official') },
+    { value: 'all', label: t('practice.source.all') },
+  ], state.filters.source || '', { 'aria-label': t('practice.source.label') });
+  const yearFrom = select([{ value: '', label: t('practice.any') }, ...(catalog.years || []).map(y => ({ value: String(y), label: `${y}` }))],
+    state.filters.year_from || '', { 'aria-label': t('practice.startYear') });
+  const yearTo = select([{ value: '', label: t('practice.any') }, ...(catalog.years || []).map(y => ({ value: String(y), label: `${y}` }))],
+    state.filters.year_to || '', { 'aria-label': t('practice.endYear') });
   const hasAnsChk = el('input', { type: 'checkbox', checked: state.filters.has_answer === 'true' });
   const hasSolChk = el('input', { type: 'checkbox', checked: state.filters.has_solution === 'true' });
   const hasAiChk = el('input', { type: 'checkbox', checked: state.filters.has_ai_explanation === 'true' });
   const aiDiffChk = el('input', { type: 'checkbox', checked: state.filters.include_ai_difficulty === 'true' });
   const methodSel = select(
-    [{ value: '', label: '全部题型/解法' }, ...allMethods.map(m => ({ value: String(m.id), label: `${m.subject}·${m.name} (${m.question_count})` }))],
-    state.filters.method_id || '', { 'aria-label': '题型与解法' });
+    [{ value: '', label: t('practice.allTypesMethods') }, ...allMethods.map(m => ({ value: String(m.id), label: `${m.subject}·${m.name} (${m.question_count})` }))],
+    state.filters.method_id || '', { 'aria-label': t('practice.questionTypesMethods') });
 
-  const advancedControls = [difficultySel, statusSel, sortSel, yearFrom, yearTo, methodSel,
+  const advancedControls = [difficultySel, statusSel, sourceSel, sortSel, yearFrom, yearTo, methodSel,
     hasAnsChk, hasSolChk, hasAiChk, aiDiffChk];
   const applyAdvanced = async () => {
     state.filters.difficulty = difficultySel.value;
     state.filters.province = provinceMulti.value;
     state.filters.status = statusSel.value;
+    state.filters.source = officialSourceReady ? sourceSel.value : '';
     state.filters.sort = sortSel.value || 'year_desc';
     state.filters.year_from = yearFrom.value;
     state.filters.year_to = yearTo.value;
@@ -339,7 +436,7 @@ export async function renderPractice(container, version, urlParams) {
   }
 
   const kpPanel = el('div', { class: 'kp-drawer hide' });
-  const kpToggle = button('按知识点筛选', () => {
+  const kpToggle = button(t('practice.filterByKnowledgePoint'), () => {
     kpPanel.classList.toggle('hide');
     refreshKpPanel();
   }, 'ghost small', 'tag');
@@ -347,7 +444,7 @@ export async function renderPractice(container, version, urlParams) {
   const chipsMount = el('div');
   function refreshFilters() {
     moreToggle.lastChild.textContent = String(
-      ['difficulty', 'province', 'status', 'year_from', 'year_to', 'method_id',
+      ['difficulty', 'province', 'status', 'source', 'year_from', 'year_to', 'method_id',
         'has_answer', 'has_solution', 'has_ai_explanation', 'include_ai_difficulty', 'kp_id']
         .filter(key => state.filters[key]).length,
     );
@@ -374,6 +471,7 @@ export async function renderPractice(container, version, urlParams) {
     provinceMulti.value = state.filters.province || '';
     statusSel.value = state.filters.status || '';
     sortSel.value = state.filters.sort || 'year_desc';
+    if (officialSourceReady) sourceSel.value = state.filters.source || '';
     yearFrom.value = state.filters.year_from || '';
     yearTo.value = state.filters.year_to || '';
     methodSel.value = state.filters.method_id || '';
@@ -391,9 +489,9 @@ export async function renderPractice(container, version, urlParams) {
     kpPanel.replaceChildren(
       el('div', { class: 'row between', style: 'margin-bottom:10px' },
         el('strong', { class: 'small-text' }, state.filters.subject
-          ? `${state.filters.subject} · 知识点目录（支持多选）`
-          : '全部学科 · 知识点目录（建议先选学科）'),
-        selIds.length ? button('清除知识点筛选', async () => {
+          ? t('practice.knowledgePointOutlineMultiSelect', { v1: state.filters.subject })
+          : t('practice.allSubjectsKnowledgePointOutlineSelectA')),
+        selIds.length ? button(t('practice.clearKnowledgePointFilter'), async () => {
           state.filters.kp_id = '';
           saveFilters();
           refreshKpPanel();
@@ -419,25 +517,26 @@ export async function renderPractice(container, version, urlParams) {
 
   filterMore.append(
     el('div', { class: 'filter-more-grid' },
-      field('难度', difficultySel),
+      officialSourceReady ? field(t('practice.source.label'), sourceSel) : null,
+      field(t('practice.difficulty'), difficultySel),
       provinceMulti.node,
-      field('我的状态', statusSel),
-      field('排序', sortSel),
-      field('年份区间', el('div', { class: 'row' }, yearFrom, el('span', { class: 'help' }, '至'), yearTo)),
-      allMethods.length ? field('题型与解法', methodSel) : null),
+      field(t('practice.myStatus'), statusSel),
+      field(t('practice.sort'), sortSel),
+      field(t('practice.yearRange'), el('div', { class: 'row' }, yearFrom, el('span', { class: 'help' }, t('practice.to')), yearTo)),
+      allMethods.length ? field(t('practice.questionTypesMethods'), methodSel) : null),
     el('div', { class: 'row wrap', style: 'margin-top:12px' },
-      el('label', { class: 'check-label' }, hasAnsChk, '有有效答案'),
-      el('label', { class: 'check-label' }, hasSolChk, '有原卷解析'),
-      el('label', { class: 'check-label' }, hasAiChk, '已有AI讲解'),
-      el('label', { class: 'check-label' }, aiDiffChk, '纳入AI预估难度'),
+      el('label', { class: 'check-label' }, hasAnsChk, t('practice.hasValidAnswer')),
+      el('label', { class: 'check-label' }, hasSolChk, t('practice.hasOriginalSolution')),
+      el('label', { class: 'check-label' }, hasAiChk, t('practice.hasAiExplanation')),
+      el('label', { class: 'check-label' }, aiDiffChk, t('practice.includeAiEstimatedDifficulty')),
       kpToggle),
     kpPanel);
 
   filterCard.append(
     el('div', { class: 'filter-head' },
-      el('h2', {}, '题库练习'),
+      el('h2', {}, t('insight.activityMix.practice')),
       el('div', { class: 'row' }, moreToggle,
-        button('清空筛选', async () => {
+        button(t('practice.clearFilters'), async () => {
           state.filters = {};
           state.page = 1;
           state.selectedQid = null;
@@ -449,26 +548,26 @@ export async function renderPractice(container, version, urlParams) {
         }, 'ghost small', 'repeat'))),
     el('div', { class: 'filter-compact' },
       el('div', { class: 'search-wrap' }, icon('search'), keyword, searchButton),
-      field('学科', subjectSel), field('年份', yearSel), typeMulti.node),
+      field(t('common.subject'), subjectSel), field(t('practice.year'), yearSel), typeMulti.node),
     filterMore,
     chipsMount);
 
   const dueContainer = el('div');
   const resultsList = el('div', { class: 'question-list' });
   const resultsScroll = el('div', { class: 'results-scroll' }, resultsList);
-  const resultsCount = el('p', { class: 'results-count' }, '正在加载…');
-  const resultsPane = el('aside', { class: 'results-pane', 'aria-label': '题目列表' },
+  const resultsCount = el('p', { class: 'results-count' }, t('common.loading'));
+  const resultsPane = el('aside', { class: 'results-pane', 'aria-label': t('practice.questionList') },
     el('header', { class: 'results-heading' },
-      el('h2', {}, '题目列表'), resultsCount),
+      el('h2', {}, t('practice.questionList')), resultsCount),
     dueContainer, resultsScroll);
 
   const readingBack = el('button', {
     type: 'button', class: 'reading-back',
     onClick: () => showResults(true),
-  }, '← 返回结果');
+  }, t('practice.backToResults'));
   const detailContainer = el('div', { class: 'reading-content', id: 'question-detail' });
   const actionsHost = el('div', { class: 'reading-actions', id: 'reading-actions', hidden: true });
-  const readingPane = el('section', { class: 'reading-pane', 'aria-label': '题目阅读与作答' },
+  const readingPane = el('section', { class: 'reading-pane', 'aria-label': t('practice.questionReadingAnswering') },
     el('div', { class: 'reading-main' }, readingBack, detailContainer),
     actionsHost);
 
@@ -495,8 +594,8 @@ export async function renderPractice(container, version, urlParams) {
     el('div', { class: 'page-heading practice-page-heading', style: 'margin-bottom:12px' },
       el('div', {},
         el('div', { class: 'eyebrow' }, 'QUESTION LIBRARY'),
-        el('h1', {}, '把每一题，做明白。'),
-        el('p', {}, '桌面在左侧筛选、右侧阅读；手机先看结果，进入题目后可随时返回。'))),
+        el('h1', {}, t('practice.understandEverySingleQuestion')),
+        el('p', {}, t('practice.onDesktopFilterOnTheLeftAnd')))),
     filterCard,
     workspace);
 
@@ -556,19 +655,19 @@ export async function renderPractice(container, version, urlParams) {
     if (!reviews?.items?.length || prefs.show_review_strip === false) return;
     const strip = el('div', { class: 'due-strip' },
       el('div', { class: 'due-strip-title' }, icon('clock'),
-        `到期错题 ${reviews.total} 道`,
+        t('practice.wrongAnswersDue', { v1: reviews.total }),
         el('button', {
           type: 'button', class: 'reading-back', style: 'margin-left:auto;min-height:32px;display:inline-block',
           onClick: () => { dueContainer.replaceChildren(); },
-          'aria-label': '关闭到期复习提示',
+          'aria-label': t('practice.dismissTheDueReviewNotice'),
         }, '×')));
     const row = el('div', { class: 'due-items' });
     for (const item of reviews.items.slice(0, 4)) {
       const q = item.question || item;
       row.append(el('button', {
-        type: 'button', class: 'due-item',
+        type: 'button', class: 'due-item', 'data-no-i18n': 'true',
         onClick: () => openResult({ qid: q.qid || item.qid }),
-      }, `${q.subject || '错题'} · ${readableSummary(q, 20) || '重新练习'}`));
+      }, `${q.subject || t('practice.wrongAnswerFallback')} · ${readableSummary(q, 20) || t('practice.practiceAgain')}`));
     }
     strip.append(row);
     dueContainer.append(strip);
@@ -583,8 +682,8 @@ export async function renderPractice(container, version, urlParams) {
     } catch (error) {
       if (!current(version) || count !== searchCounter) return;
       dueContainer.replaceChildren(el('div', { class: 'notice warning' },
-        `到期错题暂时加载失败：${error.message}`,
-        button('重试', () => loadReviews(count), 'secondary small', 'repeat')));
+        t('practice.failedToLoadDueWrongAnswers', { v1: error.message }),
+        button(t('common.retry'), () => loadReviews(count), 'secondary small', 'repeat')));
     }
   }
 
@@ -593,8 +692,8 @@ export async function renderPractice(container, version, urlParams) {
     const hashParams = { ...state.filters, page: state.page > 1 ? state.page : '' };
     if (state.selectedQid) hashParams.qid = state.selectedQid;
     setHashParams('practice', hashParams, true);
-    resultsCount.textContent = '正在加载…';
-    resultsList.replaceChildren(loading('正在筛选题目…'));
+    resultsCount.textContent = t('common.loading');
+    resultsList.replaceChildren(loading(t('practice.filteringQuestions')));
     let results;
     try {
       results = await api(`/questions?${query({
@@ -607,9 +706,9 @@ export async function renderPractice(container, version, urlParams) {
     } catch (error) {
       if (!current(version) || count !== searchCounter) return;
       resultsList.replaceChildren(el('div', { class: 'error-panel' },
-        `题目列表加载失败：${error.message}`,
-        button('重新筛选', () => loadSearch(), 'secondary small', 'repeat')));
-      resultsCount.textContent = '加载失败';
+        t('practice.failedToLoadTheQuestionList', { v1: error.message }),
+        button(t('practice.searchAgain'), () => loadSearch(), 'secondary small', 'repeat')));
+      resultsCount.textContent = t('common.loadFailed');
       return;
     }
     if (!current(version) || count !== searchCounter) return;
@@ -622,9 +721,14 @@ export async function renderPractice(container, version, urlParams) {
     else if (state.selectedQid && !keepSelection && !items.some(item => item.qid === state.selectedQid)) {
       state.selectedQid = null;
     }
-    resultsCount.textContent = `找到 ${number(results.total)} 道题 · 第 ${results.page || state.page} 页`
-      + (lastReviewCount ? ` · 含 ${lastReviewCount} 道穿插复习` : '');
+    resultsCount.textContent = t('practice.questionsFoundPage', { v1: number(results.total), v2: results.page || state.page })
+      + (lastReviewCount ? t('practice.includesInterleavedReviewQuestions', { v1: lastReviewCount }) : '');
     resultsList.replaceChildren();
+    // WS19 的 official 列表只支持学科/题型/关键词筛选：明确提示哪些高级筛选不适用，
+    // 避免用户以为年份/地区/难度筛选「没生效」。
+    if (state.filters.source === 'official') {
+      resultsList.append(el('div', { class: 'notice' }, t('practice.source.officialFilterNotice')));
+    }
     for (const item of items) {
       resultsList.append(resultCard(item, {
         selected: item.qid === state.selectedQid,
@@ -637,18 +741,22 @@ export async function renderPractice(container, version, urlParams) {
       }));
     }
     if (!items.length) {
-      resultsList.append(empty('没有匹配的题目', '试试减少筛选条件，或者换一个关键词。'));
+      // 空态按来源给不同提示：平台精选刚上线时「无匹配」容易被误认为筛选出错。
+      const officialOnly = state.filters.source === 'official';
+      resultsList.append(empty(
+        officialOnly ? t('practice.source.emptyOfficial') : t('practice.noMatchingQuestions'),
+        officialOnly ? t('practice.source.emptyOfficialHint') : t('practice.tryFewerFiltersOrADifferentKeyword')));
     }
     const pages = Math.max(1, Math.ceil((results.total || 0) / state.pageSize));
     if (items.length) {
       resultsList.append(el('div', { class: 'pagination', style: 'margin:14px 4px 4px' },
-        button('上一页', () => {
+        button(t('common.prevPage'), () => {
           state.page = Math.max(1, state.page - 1);
           resultsScroll.scrollTop = 0;
           loadSearch();
         }, 'secondary small', null, { disabled: state.page <= 1 }),
         el('span', {}, `${state.page} / ${pages}`),
-        button('下一页', () => {
+        button(t('common.nextPage'), () => {
           state.page++;
           resultsScroll.scrollTop = 0;
           loadSearch();
@@ -679,7 +787,9 @@ export async function renderPractice(container, version, urlParams) {
       });
       if (!inPage && state.currentQuestion?.qid === targetQid) {
         detailContainer.prepend(el('p', { class: 'help', style: 'margin:0 0 12px' },
-          '该题不在当前筛选结果的这一页中，已单独打开；可点「返回结果」继续浏览列表。'));
+          targetQid.startsWith('app:')
+            ? t('practice.fromMyBankHint')
+            : t('practice.thisQuestionIsNotOnTheCurrent')));
       }
       return;
     }
@@ -702,7 +812,7 @@ export async function renderPractice(container, version, urlParams) {
         onSubmitted: () => loadSearch({ keepSelection: true }),
       });
     } else {
-      detailContainer.replaceChildren(empty('选一题，开始练习', '在左侧点选题目后，这里显示材料、选项与作答。'));
+      detailContainer.replaceChildren(empty(t('practice.pickAQuestionToStartPracticing'), t('practice.selectAQuestionOnTheLeftTo')));
     }
     // 手机上默认停在结果列表，进入题目后再切换视图。
     if (isMobile && !state.selectedQid) showResults();

@@ -1,4 +1,4 @@
-import { routes, state } from './state.js';
+import { routes, state, isPublicRoute } from './state.js';
 import { $, loading, heading, button, el } from './dom.js';
 import { closeJobStreams } from './jobs.js';
 
@@ -50,14 +50,22 @@ export function go(route, qid = null, paramsObj = null) {
 }
 
 export function current(version) {
-  return version === state.renderVersion && Boolean(state.user);
+  // 登录用户与访客壳都算「当前渲染有效」；仅靠 state.user 会把访客页的异步结果全部丢弃。
+  return version === state.renderVersion && Boolean(state.user || state.guest);
 }
 
 export async function renderRoute() {
-  if (!state.user || !$('#main-content')) return;
+  // 访客壳（state.guest）只渲染公开路由；白名单集中在 core/state.js 的 PUBLIC_ROUTES。
+  // 非公开路由或未进入访客壳时直接返回：由 main.js 的 hashchange / 登录流程接管，
+  // 保证访客不可能通过手改 hash 渲染个人页面。
   const { route: parsedRoute, params } = parseHash();
+  const guest = !state.user;
+  if (!$('#main-content')) return;
+  if (guest && (!state.guest || !isPublicRoute(parsedRoute))) return;
   let route = parsedRoute;
-  if (!(route in routes) || (route === 'admin' && state.user.role !== 'admin')) route = 'home';
+  if (!(route in routes)) route = 'home';
+  if (guest && !isPublicRoute(route)) return;
+  if (!guest && route === 'admin' && state.user.role !== 'admin') route = 'home';
   state.route = route;
   const version = ++state.renderVersion;
   document.title = `${routes[route][0]} · 知序`;
@@ -77,7 +85,7 @@ export async function renderRoute() {
     if (fn) await fn(container, version, params);
     if (current(version)) container.focus({ preventScroll: true });
   } catch (error) {
-    if (version !== state.renderVersion || !state.user) return;
+    if (version !== state.renderVersion || (!state.user && !state.guest)) return;
     container.replaceChildren(
       heading('LEARNING SPACE', routes[route][0], '请检查连接后重试。'),
       el('div', { class: 'error-panel' },

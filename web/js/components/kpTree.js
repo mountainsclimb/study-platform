@@ -1,4 +1,5 @@
 import { el, badge } from '../core/dom.js';
+import { t } from '../core/i18n.js';
 
 export function buildKpHierarchy(flatItems, subject = null) {
   const filtered = subject ? flatItems.filter(k => k.subject === subject) : flatItems;
@@ -22,7 +23,7 @@ export function renderKpTree(flatItems, { subject = '', selectedIds = [], multi 
   const roots = buildKpHierarchy(flatItems, subject || null);
   const wrap = el('div', { class: 'kp-tree' });
   if (!roots.length) {
-    wrap.append(el('p', { class: 'help' }, subject ? `学科「${subject}」暂无知识点。` : '选择学科后可展开知识点目录。'));
+    wrap.append(el('p', { class: 'help' }, subject ? t('kp.noKnowledgePointsUnderYet', { v1: subject }) : t('kp.chooseASubjectToBrowseItsKnowledge')));
     return wrap;
   }
 
@@ -50,8 +51,8 @@ export function renderKpTree(flatItems, { subject = '', selectedIds = [], multi 
           },
         }, node.name),
         el('span', { class: 'kp-counts' },
-          node.question_count ? badge(`${node.question_count}题`, 'blue') : null,
-          node.wrong_count ? badge(`错${node.wrong_count}`, 'red') : null,
+          node.question_count ? badge(t('kp.questions', { v1: node.question_count }), 'blue') : null,
+          node.wrong_count ? badge(t('kp.wrong', { v1: node.wrong_count }), 'red') : null,
           el('button', {
             type: 'button',
             class: `kp-pick-btn${isSel ? ' active' : ''}`,
@@ -60,7 +61,7 @@ export function renderKpTree(flatItems, { subject = '', selectedIds = [], multi 
               e.stopPropagation();
               toggleId(node.id);
             },
-          }, isSel ? '已选' : '筛选')));
+          }, isSel ? t('kp.selected') : t('kp.filter'))));
       det.append(sum);
       const childWrap = el('div', { class: 'kp-children' });
       for (const ch of node.children) childWrap.append(renderNode(ch));
@@ -75,7 +76,7 @@ export function renderKpTree(flatItems, { subject = '', selectedIds = [], multi 
       el('span', {}, node.name),
       el('span', { class: 'kp-counts' },
         node.question_count ? badge(`${node.question_count}`, 'blue') : null,
-        node.wrong_count ? badge(`错${node.wrong_count}`, 'red') : null));
+        node.wrong_count ? badge(t('kp.wrong', { v1: node.wrong_count }), 'red') : null));
   }
 
   for (const r of roots) wrap.append(renderNode(r));

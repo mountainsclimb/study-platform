@@ -173,6 +173,9 @@ export async function api(path, options = {}) {
 
   const json = await response.json().catch(() => ({}));
   if (!response.ok) {
+    // 会话过期（401）一律回落登录页：clearUserSession 同时清空 state.guest，
+    // 避免过期后仍停留在访客壳继续请求匿名接口。访客态的匿名公开请求没有
+    // state.user，因此不会触发这里；公开接口自身的 401/403 由页面按错误展示。
     if (response.status === 401 && state.user && !path.startsWith('/auth/')) {
       clearUserSession();
       if (authExpiredHandler) authExpiredHandler();
