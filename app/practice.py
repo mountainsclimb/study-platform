@@ -3046,10 +3046,13 @@ def _record_study_evidence(con, user_id, qid, attempt_id, verdict, can_grade):
     try:
         from . import study_evidence
 
+        # 练习/作答页不提供分步提示，答案在提交后判分（提交前未揭晓）→ 记录为
+        # 「无提示、作答前未揭晓」的独立作答；掌握路径的「两道不同题独立答对」据此核验。
+        # AI 复核重判只升版该事件，不改变提示/揭晓状态。
         study_evidence.record_attempt_evidence(
             user_id, ref=qid, attempt_id=int(attempt_id), verdict=verdict,
             grade_source="reference" if can_grade else "pending",
-            prompt_state="unknown", reveal_state="before", con=con,
+            prompt_state="none", reveal_state="before", con=con,
         )
     except Exception as error:  # noqa: BLE001 - 证据是投影，失败不阻断作答
         _log.warning("学习证据写入失败（作答已保存）：%s", type(error).__name__)

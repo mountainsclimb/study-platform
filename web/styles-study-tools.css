@@ -1,0 +1,895 @@
+/* M3 学习工具样式（方案 §5.4「Mafs 与 Excalidraw」/「逐步辅导」）。
+ *
+ * 覆盖三块 UI：
+ * - `.st-graph-*`：Mafs 兼容函数图（原生 SVG 坐标系、表达式/参数编辑、顶点标注）；
+ * - `.st-board-*`：Excalidraw 兼容解题白板（原生 canvas + 公式覆盖层 + 工具条）；
+ * - `.st-hint-*` / `.st-hints-*`：逐步提示弹层（进度、锁定步骤、尝试输入、完成状态）；
+ * - `.st-tools-*`：错题行 compact「解题工具」下拉菜单。
+ *
+ * 命名前缀统一 `.st-`（study tools），复用 styles.css 的浅色/暗色设计令牌
+ * （--paper / --surface / --ink / --line / --accent / --tint ...），暗色覆盖统一加
+ * `html[data-theme="dark"]` 前缀；触控目标 ≥40px；≤760px 弹层整屏。 */
+
+/* ================================================================== 弹层外壳 */
+
+.st-dialog {
+  width: min(1080px, 96vw);
+  max-width: 96vw;
+  max-height: 92vh;
+  max-height: 92dvh;
+  margin: auto;
+  padding: 0;
+  border: 1px solid var(--line);
+  border-radius: 16px;
+  background: var(--surface);
+  color: var(--ink);
+  box-shadow: 0 26px 80px #102b3545;
+  overflow: hidden;
+}
+.st-dialog[open] {
+  display: flex;
+  flex-direction: column;
+}
+.st-dialog::backdrop {
+  background: #0d1b20b0;
+}
+.st-hints-dialog {
+  width: min(760px, 96vw);
+}
+.st-dialog-head {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 12px;
+  padding: 16px 22px 12px;
+  border-bottom: 1px solid var(--line);
+}
+.st-dialog-eyebrow {
+  margin-bottom: 4px;
+  color: var(--accent-deep);
+  font-size: 11px;
+  font-weight: 700;
+  letter-spacing: 0.14em;
+  text-transform: uppercase;
+}
+.st-dialog-title {
+  margin: 0;
+  font-size: 1.06rem;
+  line-height: 1.5;
+  letter-spacing: -0.01em;
+  overflow-wrap: anywhere;
+}
+.st-dialog-subtitle {
+  margin: 2px 0 0;
+  color: var(--muted);
+  font-size: 12px;
+  line-height: 1.6;
+  overflow-wrap: anywhere;
+}
+.st-dialog-close {
+  flex: none;
+  width: 34px;
+  height: 34px;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  border: 1px solid var(--line);
+  border-radius: 50%;
+  background: var(--rail);
+  color: var(--soft);
+}
+.st-dialog-close:hover {
+  color: var(--ink);
+}
+.st-dialog-body {
+  flex: 1;
+  min-height: 0;
+  overflow: auto;
+  display: grid;
+  gap: 12px;
+  padding: 14px 22px 18px;
+  align-content: start;
+}
+.st-dialog-info {
+  display: grid;
+  gap: 4px;
+  padding-top: 10px;
+  border-top: 1px solid var(--line);
+}
+.st-dialog-meta {
+  margin: 0;
+  color: var(--soft);
+  font-size: 12px;
+  line-height: 1.7;
+  font-variant-numeric: tabular-nums;
+  overflow-wrap: anywhere;
+}
+.st-dialog-hint {
+  margin: 0;
+  color: var(--muted);
+  font-size: 12px;
+  line-height: 1.7;
+}
+.st-dialog-actions {
+  display: flex;
+  justify-content: flex-end;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 10px;
+  padding: 10px 22px 14px;
+  border-top: 1px solid var(--line);
+  background: var(--surface);
+}
+.st-dialog-actions .button.is-saved {
+  opacity: 0.8;
+}
+
+/* ============================================================== 函数图编辑器 */
+
+.st-graph {
+  display: grid;
+  gap: 10px;
+  min-width: 0;
+}
+.st-graph-hint {
+  margin: 0;
+  color: var(--muted);
+  font-size: 12px;
+  line-height: 1.7;
+}
+.st-graph-plot {
+  display: block;
+  width: 100%;
+  min-width: 0;
+  background: var(--paper);
+  border: 1px solid var(--line);
+  border-radius: 12px;
+  padding: 4px;
+}
+.st-graph-svg {
+  display: block;
+  width: 100%;
+  height: auto;
+  max-width: 100%;
+  border-radius: 9px;
+}
+.st-graph-bg {
+  fill: var(--surface);
+}
+.st-graph-frame {
+  fill: none;
+  stroke: var(--line);
+  stroke-width: 1;
+}
+.st-graph-grid-line {
+  stroke: var(--line);
+  stroke-width: 0.8;
+  opacity: 0.7;
+}
+.st-graph-axis-line {
+  stroke: var(--soft);
+  stroke-width: 1.4;
+}
+.st-graph-tick-line {
+  stroke: var(--soft);
+  stroke-width: 1;
+}
+.st-graph-tick-label {
+  fill: var(--muted);
+  font-size: 10px;
+  font-variant-numeric: tabular-nums;
+}
+.st-graph-axis-label {
+  fill: var(--soft);
+  font-size: 12px;
+  font-style: italic;
+  font-weight: 600;
+}
+.st-graph-curve {
+  fill: none;
+  stroke-linecap: round;
+  stroke-linejoin: round;
+}
+.st-graph-vertex-dot {
+  stroke: var(--surface);
+  stroke-width: 1.5;
+}
+.st-graph-vertex-label {
+  font-size: 11px;
+  font-weight: 650;
+  paint-order: stroke;
+  stroke: var(--surface);
+  stroke-width: 3px;
+  stroke-linejoin: round;
+}
+.st-graph-point {
+  fill: var(--accent);
+  stroke: var(--surface);
+  stroke-width: 1.4;
+}
+.st-graph-point-label,
+.st-graph-custom-label {
+  fill: var(--soft);
+  font-size: 11px;
+}
+.st-graph-status {
+  margin: 0;
+  min-height: 1em;
+  color: var(--muted);
+  font-size: 12px;
+  line-height: 1.7;
+}
+.st-graph-status.is-error {
+  color: var(--wrong);
+}
+.st-graph-section {
+  display: grid;
+  gap: 8px;
+  padding-top: 10px;
+  border-top: 1px solid var(--line);
+}
+.st-graph-section-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 10px;
+  flex-wrap: wrap;
+  color: var(--ink);
+  font-size: 13px;
+}
+.st-graph-expressions,
+.st-graph-params {
+  display: grid;
+  gap: 8px;
+}
+.st-graph-params-empty {
+  margin: 0;
+  color: var(--muted);
+  font-size: 12px;
+  line-height: 1.7;
+}
+.st-expr-row {
+  display: grid;
+  grid-template-columns: 14px 30px minmax(0, 1fr) auto auto;
+  align-items: center;
+  gap: 8px;
+  min-width: 0;
+}
+.st-expr-color {
+  width: 12px;
+  height: 12px;
+  border-radius: 50%;
+  border: 1px solid var(--line);
+}
+.st-expr-label {
+  color: var(--soft);
+  font-size: 13px;
+  font-family: ui-monospace, "SFMono-Regular", Consolas, monospace;
+}
+.st-expr-input {
+  min-width: 0;
+  min-height: 40px;
+  padding: 6px 10px;
+  border: 1px solid var(--line);
+  border-radius: 9px;
+  background: var(--surface);
+  color: var(--ink);
+  font-size: 13px;
+  font-family: ui-monospace, "SFMono-Regular", Consolas, monospace;
+}
+.st-expr-input:focus-visible {
+  outline: 2px solid var(--focus);
+  outline-offset: 1px;
+}
+.st-expr-input.is-invalid {
+  border-color: var(--danger);
+  background: var(--wrong-bg);
+}
+.st-expr-visible {
+  width: 18px;
+  height: 18px;
+  accent-color: var(--accent);
+}
+.st-expr-error {
+  grid-column: 2 / -1;
+  margin: -4px 0 0;
+  color: var(--wrong);
+  font-size: 12px;
+  line-height: 1.6;
+}
+.st-expr-error[hidden] {
+  display: none;
+}
+.st-expr-row.has-error .st-expr-label {
+  color: var(--wrong);
+}
+.st-icon-button {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 34px;
+  height: 34px;
+  padding: 0;
+  border: 1px solid var(--line);
+  border-radius: 9px;
+  background: var(--surface);
+  color: var(--soft);
+}
+.st-icon-button:hover:not(:disabled) {
+  color: var(--ink);
+  border-color: var(--focus);
+}
+.st-icon-button:disabled {
+  opacity: 0.4;
+}
+.st-param-row {
+  display: grid;
+  grid-template-columns: minmax(96px, 150px) minmax(0, 1fr) 34px;
+  align-items: center;
+  gap: 10px;
+}
+.st-param-label {
+  color: var(--ink);
+  font-size: 13px;
+  font-variant-numeric: tabular-nums;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+.st-param-slider {
+  width: 100%;
+  min-width: 0;
+  height: 32px;
+  accent-color: var(--accent);
+  cursor: pointer;
+}
+.st-param-slider:disabled {
+  cursor: default;
+  opacity: 0.55;
+}
+.st-param-form {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  flex-wrap: wrap;
+}
+.st-param-name-input,
+.st-param-value-input {
+  min-height: 36px;
+  padding: 5px 9px;
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  background: var(--surface);
+  color: var(--ink);
+  font-size: 12px;
+}
+.st-param-name-input {
+  width: 92px;
+}
+.st-param-value-input {
+  width: 84px;
+}
+.st-mini-button {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  min-height: 36px;
+  padding: 5px 11px;
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  background: var(--surface);
+  color: var(--accent-deep);
+  font-size: 12px;
+  line-height: 1.2;
+}
+.st-mini-button:hover {
+  border-color: var(--focus);
+}
+.st-mini-button .icon {
+  width: 14px;
+  height: 14px;
+}
+
+/* ============================================================ 解题白板编辑器 */
+
+.st-board {
+  display: grid;
+  gap: 10px;
+  min-width: 0;
+}
+.st-board-toolbar {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 8px;
+  padding: 8px;
+  border: 1px solid var(--line);
+  border-radius: 12px;
+  background: var(--rail);
+}
+.st-board-toolbar[hidden] {
+  display: none;
+}
+.st-board-group {
+  display: inline-flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 4px;
+  padding: 3px;
+  border-radius: 9px;
+  background: var(--surface);
+  border: 1px solid var(--line);
+}
+.st-tool,
+.st-action {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  min-height: 36px;
+  padding: 5px 10px;
+  border: 0;
+  border-radius: 7px;
+  background: transparent;
+  color: var(--soft);
+  font-size: 12px;
+  line-height: 1.2;
+}
+.st-tool:hover:not(:disabled),
+.st-action:hover:not(:disabled) {
+  color: var(--ink);
+  background: var(--tint);
+}
+.st-tool.is-active {
+  background: var(--accent);
+  color: #fff;
+  font-weight: 650;
+}
+.st-action:disabled {
+  opacity: 0.4;
+}
+.st-action .icon {
+  width: 14px;
+  height: 14px;
+}
+.st-swatch {
+  width: 28px;
+  height: 28px;
+  margin: 2px;
+  border: 2px solid transparent;
+  border-radius: 50%;
+  box-shadow: 0 0 0 1px var(--line) inset;
+}
+.st-swatch.is-active {
+  border-color: var(--focus);
+  box-shadow: 0 0 0 2px var(--surface) inset;
+}
+.st-width {
+  min-width: 30px;
+  min-height: 30px;
+  padding: 2px 6px;
+  border: 1px solid transparent;
+  border-radius: 7px;
+  background: transparent;
+  color: var(--soft);
+  font-size: 12px;
+  font-weight: 600;
+}
+.st-width.is-active {
+  border-color: var(--focus);
+  color: var(--ink);
+  background: var(--tint);
+}
+.st-board-stage {
+  position: relative;
+  width: 100%;
+  border: 1px solid var(--line);
+  border-radius: 12px;
+  background: #fff;
+  overflow: hidden;
+}
+.st-board-canvas {
+  display: block;
+  width: 100%;
+  height: auto;
+  touch-action: none;
+  user-select: none;
+  -webkit-user-select: none;
+}
+.st-board-overlay {
+  position: absolute;
+  inset: 0;
+  overflow: hidden;
+  pointer-events: none;
+}
+.st-board-formula {
+  position: absolute;
+  line-height: 1;
+  white-space: nowrap;
+  color: var(--ink);
+}
+.st-board-formula .katex {
+  font-size: 1em;
+}
+.st-board-hint {
+  margin: 0;
+  color: var(--muted);
+  font-size: 12px;
+  line-height: 1.7;
+}
+.st-board.is-read-only .st-board-hint {
+  display: block;
+}
+
+/* ================================================================ 逐步提示 */
+
+.st-hints-progress {
+  margin: 0;
+  padding: 7px 12px;
+  border-radius: 999px;
+  background: var(--tint);
+  color: var(--accent-deep);
+  font-size: 12px;
+  font-weight: 650;
+  line-height: 1.6;
+  width: max-content;
+  max-width: 100%;
+  font-variant-numeric: tabular-nums;
+}
+.st-hints-progress[hidden] {
+  display: none;
+}
+.st-hints-status {
+  display: grid;
+  gap: 8px;
+}
+.st-hints-loading {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  margin: 0;
+  color: var(--muted);
+  font-size: 13px;
+}
+.st-hints-alert {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  flex-wrap: wrap;
+  padding: 10px 12px;
+  border: 1px solid #eadfc6;
+  border-radius: 9px;
+  background: #fff7e8;
+  color: #7a5a1f;
+  font-size: 13px;
+  line-height: 1.7;
+}
+.st-hints-notice:empty {
+  display: none;
+}
+.st-hints-steps {
+  display: grid;
+  gap: 10px;
+}
+.st-hints-empty {
+  margin: 0;
+  color: var(--muted);
+  font-size: 13px;
+}
+.st-hint-step {
+  display: grid;
+  gap: 6px;
+  padding: 12px 14px;
+  border: 1px solid var(--line);
+  border-radius: 12px;
+  background: var(--paper);
+}
+.st-hint-step.is-locked {
+  background: var(--rail);
+  border-style: dashed;
+}
+.st-hint-step.is-unlocked {
+  background: var(--surface);
+}
+.st-hint-step-head {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  flex-wrap: wrap;
+  min-width: 0;
+}
+.st-hint-step-no {
+  flex: none;
+  padding: 1px 8px;
+  border-radius: 999px;
+  background: var(--tint);
+  color: var(--accent-deep);
+  font-size: 11px;
+  line-height: 1.7;
+  font-variant-numeric: tabular-nums;
+}
+.st-hint-step-title {
+  min-width: 0;
+  color: var(--ink);
+  font-size: 13.5px;
+  line-height: 1.6;
+  overflow-wrap: anywhere;
+}
+.st-hint-badge {
+  flex: none;
+  padding: 1px 8px;
+  border-radius: 999px;
+  background: var(--accent);
+  color: #fff;
+  font-size: 11px;
+  line-height: 1.7;
+}
+.st-hint-badge.is-ok {
+  background: var(--tint);
+  color: var(--accent-deep);
+}
+.st-hint-locked {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  margin: 0;
+  color: var(--muted);
+  font-size: 12px;
+  line-height: 1.7;
+}
+.st-hint-locked .icon {
+  width: 13px;
+  height: 13px;
+}
+.st-hint-body {
+  min-width: 0;
+  color: var(--ink);
+  font-size: 13.5px;
+  line-height: 1.75;
+}
+.st-hint-body .markdown > :first-child {
+  margin-top: 0;
+}
+.st-hint-body .markdown > :last-child {
+  margin-bottom: 0;
+}
+.st-hints-complete {
+  display: grid;
+  gap: 6px;
+  padding: 12px 14px;
+  border: 1px solid var(--line);
+  border-radius: 12px;
+  background: var(--tint);
+}
+.st-hints-complete-title {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  color: var(--accent-deep);
+  font-size: 13.5px;
+  line-height: 1.6;
+}
+.st-hints-complete-title .icon {
+  width: 15px;
+  height: 15px;
+}
+.st-hints-source {
+  margin: 0;
+  color: var(--soft);
+  font-size: 12px;
+  line-height: 1.7;
+}
+.st-hints-form-host[hidden] {
+  display: none;
+}
+.st-hints-form {
+  display: grid;
+  gap: 8px;
+  padding-top: 10px;
+  border-top: 1px solid var(--line);
+}
+.st-hints-input-label {
+  display: grid;
+  gap: 6px;
+  color: var(--soft);
+  font-size: 12px;
+  font-weight: 600;
+}
+.st-hints-input {
+  width: 100%;
+  min-height: 74px;
+  padding: 9px 11px;
+  border: 1px solid var(--line);
+  border-radius: 10px;
+  background: var(--surface);
+  color: var(--ink);
+  font-size: 13.5px;
+  line-height: 1.7;
+  resize: vertical;
+}
+.st-hints-input:focus-visible {
+  outline: 2px solid var(--focus);
+  outline-offset: 1px;
+}
+.st-hints-form .button {
+  justify-self: start;
+}
+
+/* ====================================================== 错题行「解题工具」菜单 */
+
+.st-tools-menu {
+  position: relative;
+  display: inline-block;
+}
+.st-tools-menu[open] {
+  z-index: 30;
+}
+.st-tools-summary {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  min-height: 34px;
+  padding: 5px 10px;
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  background: var(--surface);
+  color: var(--accent-deep);
+  font-size: 12px;
+  font-weight: 600;
+  line-height: 1.2;
+  cursor: pointer;
+  list-style: none;
+}
+.st-tools-summary::-webkit-details-marker {
+  display: none;
+}
+.st-tools-summary:hover {
+  border-color: var(--focus);
+}
+.st-tools-summary .icon {
+  width: 14px;
+  height: 14px;
+}
+.st-tools-menu[open] > .st-tools-summary {
+  border-color: var(--focus);
+  background: var(--tint);
+}
+.st-tools-list {
+  position: absolute;
+  left: 0;
+  top: calc(100% + 4px);
+  min-width: 168px;
+  display: grid;
+  gap: 2px;
+  padding: 6px;
+  border: 1px solid var(--line);
+  border-radius: 10px;
+  background: var(--surface);
+  box-shadow: 0 14px 34px #102b3530;
+}
+.st-tools-item {
+  display: block;
+  width: 100%;
+  min-height: 36px;
+  padding: 7px 10px;
+  border: 0;
+  border-radius: 7px;
+  background: transparent;
+  color: var(--ink);
+  font-size: 13px;
+  line-height: 1.4;
+  text-align: left;
+  white-space: nowrap;
+}
+.st-tools-item:hover,
+.st-tools-item:focus-visible {
+  background: var(--tint);
+  color: var(--accent-deep);
+}
+
+/* ================================================================== 暗色主题 */
+
+html[data-theme="dark"] .st-dialog {
+  border-color: var(--line);
+  box-shadow: 0 26px 80px #00000080;
+}
+html[data-theme="dark"] .st-dialog::backdrop {
+  background: #050b0ab8;
+}
+html[data-theme="dark"] .st-dialog-close {
+  background: var(--rail);
+}
+html[data-theme="dark"] .st-graph-bg {
+  fill: var(--surface);
+}
+html[data-theme="dark"] .st-hints-alert {
+  background: #3a2f1b;
+  border-color: #5c4a25;
+  color: #e8c07d;
+}
+html[data-theme="dark"] .st-tool.is-active {
+  color: #08110e;
+}
+html[data-theme="dark"] .st-hint-badge {
+  color: #08110e;
+}
+html[data-theme="dark"] .st-tools-list {
+  box-shadow: 0 14px 34px #00000090;
+}
+html[data-theme="dark"] .st-board-stage {
+  border-color: var(--line);
+}
+
+/* ==================================================================== 移动端 */
+
+@media (max-width: 760px) {
+  .st-dialog {
+    width: 100vw;
+    max-width: 100vw;
+    height: 100vh;
+    height: 100dvh;
+    max-height: 100vh;
+    max-height: 100dvh;
+    margin: 0;
+    border: 0;
+    border-radius: 0;
+  }
+  .st-dialog-head {
+    padding: 12px 14px 10px;
+  }
+  .st-dialog-body {
+    padding: 10px 12px 14px;
+    gap: 10px;
+  }
+  .st-dialog-actions {
+    padding: 10px 12px 14px;
+  }
+  .st-graph-hint,
+  .st-dialog-hint {
+    display: none;
+  }
+  .st-expr-row {
+    grid-template-columns: 14px minmax(0, 1fr) auto auto;
+  }
+  .st-expr-label {
+    display: none;
+  }
+  .st-expr-error {
+    grid-column: 1 / -1;
+  }
+  .st-param-row {
+    grid-template-columns: minmax(76px, 112px) minmax(0, 1fr) 34px;
+  }
+  .st-board-toolbar {
+    padding: 6px;
+    gap: 6px;
+  }
+  .st-tool,
+  .st-action {
+    min-height: 40px;
+    padding: 5px 9px;
+  }
+  .st-swatch {
+    width: 32px;
+    height: 32px;
+  }
+  .st-hints-progress {
+    width: 100%;
+    text-align: center;
+  }
+  .st-hints-form .button {
+    justify-self: stretch;
+  }
+  .st-tools-list {
+    right: auto;
+    left: 0;
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .st-dialog,
+  .st-board-toolbar,
+  .st-hint-step {
+    transition: none;
+    animation: none;
+  }
+}

@@ -1,7 +1,7 @@
 import { api, ensureCatalog, ensureKnowledgePoints, ensurePromptGrid } from '../core/api.js';
 import { state, onSessionReset } from '../core/state.js';
 import {
-  el, fill, icon, button, badge, empty, heading, loading, notice, field, input, select,
+  el, fill, icon, button, badge, empty, heading, loading, notice, field, input, select, query,
   dateText, downloadText, downloadBlob, busy, toast, wireTabKeyboard,
 } from '../core/dom.js';
 import { current, go, renderRoute } from '../core/router.js';
@@ -9,7 +9,6 @@ import { markdown } from '../core/markdown.js';
 import { mountJob } from '../core/jobs.js';
 import { createModelPicker } from '../components/modelPicker.js';
 import { filePicker } from '../components/filePicker.js';
-import { renderSources } from '../components/aiResultCard.js';
 import { createPromptGrid } from '../components/promptGrid.js';
 import { renderMindmapWidget, markdownToMindmapTree } from '../components/mindmap.js';
 import { t } from '../core/i18n.js';
@@ -436,6 +435,8 @@ export async function renderNotes(container, version, params = null) {
               () => openOcrDialog(d), 'soft small', 'scan') : null,
             info.failed.length ? button(t('notes.retryFailedPagesOnly'),
               () => openOcrDialog(d, { retryFailed: true }), 'ghost small', 'rotate') : null,
+            // M3：按资料查看已保存的原文摘录（失效可重新定位、可删除）。
+            button(tm('study.m3.viewExcerpts'), () => openDocExcerptDialog(d), 'ghost small', 'notes'),
             button('', e => busy(e.currentTarget, async () => {
               if (!window.confirm(t('notes.deleteMaterial', { v1: d.title }))) return;
               await api(`/documents/${d.id}`, { method: 'DELETE' });
@@ -1015,6 +1016,470 @@ function noteSourceVersionsNode(note) {
   return el('p', { class: 'help', 'data-no-i18n': 'true' }, t('notes.sourceVersionsLine', { v1: text }));
 }
 
+/* ===========================================================================
+ * M3：资料原文定位与摘录
+ * ---------------------------------------------------------------------------
+ * 数据来源（M3 后端接口，由后端并行实现；不可用时整体中文降级，不影响原有的
+ * 资料上传 / OCR / 笔记生成 / 编辑 / 发布 / 导出流程）：
+ *   POST   /api/documents/{document_id}/locate  {page?,chunk_id?,quote?}
+ *   POST   /api/doc-annotations                 {document_id,quote,note?,page?,chunk_id?,note_id?,color?}
+ *   GET    /api/doc-annotations?document_id=&note_id=&page=&limit=
+ *   POST   /api/doc-annotations/{id}/refresh     （migrated/valid 语义）
+ *   DELETE /api/doc-annotations/{id}
+ * 来源条目字段兼容 /notes/{id} 生成的 sources（text）以及导出/引用条目
+ * （quote / snippet / excerpt），缺失 document_id 时隐藏定位入口，不伪造数据。
+ * =========================================================================== */
+
+// 语言包缺键兜底：本轮新键由 Lead 统一补进 locales/*.json；缺键时先显示内置中文，
+// 避免界面回退成 `study.m3.*` 键名。补齐语言包后英文自动生效。
+const M3_TEXT = {
+  'study.m3.locateOriginal': '定位原文',
+  'study.m3.locating': '正在定位原文…',
+  'study.m3.locateFailedVersion': '当前资料版本中找不到这段摘录，请重新选择资料来源',
+  'study.m3.docMissing': '资料不存在或无权访问',
+  'study.m3.locateUnavailable': '原文定位服务暂不可用，请稍后再试',
+  'study.m3.locateInvalidWithReason': '无法定位：{reason}。请重新选择资料来源。',
+  'study.m3.matchExact': '精确匹配',
+  'study.m3.matchNormalized': '规范化匹配',
+  'study.m3.matchFuzzy': '近似匹配',
+  'study.m3.matchedQuote': '命中摘录',
+  'study.m3.pageLabel': '第 {page} 页',
+  'study.m3.docVersion': '版本 v{version}',
+  'study.m3.saveExcerpt': '保存为摘录',
+  'study.m3.saveExcerptHint': '保存后可在此笔记的「我的摘录」里回看，并在原文失效时重新定位。',
+  'study.m3.excerptNotePlaceholder': '备注（可选，便于以后回忆为什么要摘这段）',
+  'study.m3.excerptSave': '保存',
+  'study.m3.excerptCancel': '取消',
+  'study.m3.excerptSaved': '摘录已保存',
+  'study.m3.excerptExists': '这条摘录已保存，无需重复保存',
+  'study.m3.excerpts': '摘录',
+  'study.m3.myExcerpts': '我的摘录',
+  'study.m3.docExcerpts': '资料摘录',
+  'study.m3.viewExcerpts': '查看摘录',
+  'study.m3.excerptValid': '有效',
+  'study.m3.invalidExcerpt': '摘录已失效',
+  'study.m3.invalidReason': '失效原因：{reason}',
+  'study.m3.invalidReasonUnknown': '资料已更新，无法在原文中定位这段摘录',
+  'study.m3.excerptQuoteMissing': '（摘录内容缺失）',
+  'study.m3.excerptEmptyQuote': '这条来源没有可保存的摘录文本，请先定位原文',
+  'study.m3.refreshLocate': '重新定位',
+  'study.m3.refreshMigrated': '摘录已迁移到资料当前版本',
+  'study.m3.refreshSuccess': '摘录已重新定位到原文',
+  'study.m3.refreshStillInvalid': '仍无法定位：{reason}',
+  'study.m3.deleteExcerpt': '删除',
+  'study.m3.deleteExcerptConfirm': '删除这条摘录？删除后无法恢复。',
+  'study.m3.excerptDeleted': '摘录已删除',
+  'study.m3.excerptUnavailable': '摘录服务暂不可用，不影响笔记阅读与编辑',
+  'study.m3.excerptsEmpty': '还没有摘录：在下方来源条目点「保存为摘录」即可建立摘录。',
+  'study.m3.docExcerptsEmpty': '这份资料还没有摘录。',
+  'study.m3.excerptLoading': '正在加载摘录…',
+  'study.m3.createdAt': '保存于 {time}',
+  'study.m3.sourcesTitle': '参考来源（{count} 条）',
+};
+
+function tm(key, vars = null) {
+  const resolved = t(key, vars);
+  if (resolved !== key) return resolved;
+  const fallback = Object.prototype.hasOwnProperty.call(M3_TEXT, key) ? M3_TEXT[key] : key;
+  if (!vars) return fallback;
+  return fallback.replace(/\{(\w+)\}/g, (match, name) => (
+    vars[name] === undefined || vars[name] === null ? match : String(vars[name])
+  ));
+}
+
+const LOCATE_MATCH_KEYS = {
+  exact: 'study.m3.matchExact',
+  normalized: 'study.m3.matchNormalized',
+  fuzzy: 'study.m3.matchFuzzy',
+  approximate: 'study.m3.matchFuzzy',
+};
+
+// 与后端 app/doc_location.py 的校验上限对齐：摘录文本 ≤500 字、备注 ≤1000 字。
+const MAX_EXCERPT_QUOTE = 500;
+const MAX_EXCERPT_NOTE = 1000;
+
+function m3String(value) {
+  return typeof value === 'string' && value.trim() ? value.trim() : '';
+}
+
+function m3Number(value) {
+  const parsed = Number(value);
+  return Number.isFinite(parsed) && parsed > 0 ? parsed : 0;
+}
+
+/**
+ * 规整来源条目的定位锚点。字段名兼容多种来源形状：
+ * - 笔记生成 sources：{document_id,title,page,chunk_id,heading_path,text}
+ * - 导出/引用条目：{document_id,page,chunk_id,quote} 或 {doc_id,page_no,snippet}
+ * 缺少 document_id 或（页码/chunk/摘录）任一要素时返回 null（入口隐藏）。
+ */
+function locateAnchorOf(source) {
+  if (!source || typeof source !== 'object') return null;
+  const documentId = m3Number(source.document_id ?? source.doc_id ?? source.documentId);
+  if (!documentId) return null;
+  const page = m3Number(source.page ?? source.page_no ?? source.pageNo);
+  const chunkId = m3String(source.chunk_id ?? source.chunkId ?? source.chunk);
+  const quote = m3String(source.quote ?? source.text ?? source.snippet ?? source.excerpt);
+  if (!page && !chunkId && !quote) return null;
+  return { documentId, page, chunkId, quote };
+}
+
+/** 笔记 sources 容错：数组或 JSON 字符串；其它形状返回空数组。 */
+function noteSourceList(note) {
+  const raw = note?.sources;
+  if (Array.isArray(raw)) return raw.filter(item => item && typeof item === 'object');
+  if (typeof raw === 'string' && raw.trim()) {
+    try {
+      const parsed = JSON.parse(raw);
+      return Array.isArray(parsed) ? parsed.filter(item => item && typeof item === 'object') : [];
+    } catch {
+      return [];
+    }
+  }
+  return [];
+}
+
+function locatePayload(anchor) {
+  const payload = {};
+  if (anchor.page) payload.page = anchor.page;
+  if (anchor.chunkId) payload.chunk_id = anchor.chunkId;
+  // 来源里的 text 可能是整段 chunk（约 2000 字）；定位只需一段可检索的摘录，
+  // 截到 300 字既保持语义，也避免后端对 quote 长度设限导致 422。
+  if (anchor.quote) payload.quote = anchor.quote.length > 300 ? anchor.quote.slice(0, 300) : anchor.quote;
+  return payload;
+}
+
+function locateMatchLabel(match) {
+  const key = LOCATE_MATCH_KEYS[String(match || '').toLowerCase()];
+  return key ? tm(key) : '';
+}
+
+// api() 只抛出中文 detail，不暴露 HTTP 状态码；这里按后端中文原因做兜底归类，
+// 保证 404 / 422 两种关键失败都有明确的中文提示。
+function locateErrorText(error) {
+  const raw = m3String(error?.message);
+  // 接口整体缺失（后端未就绪）或网络失败时 api() 只给通用文案：按「服务暂不可用」降级，
+  // 不能误报成「资料不存在」。
+  if (!raw || /^请求失败（\d+）$/.test(raw) || /网络连接失败|Failed to fetch/i.test(raw)) {
+    return tm('study.m3.locateUnavailable');
+  }
+  if (/无权|不存在|not\s*found/i.test(raw)) return tm('study.m3.docMissing');
+  if (/版本|摘录|定位|找不到|未找到|无法匹配|不匹配|校验/i.test(raw)) {
+    return raw ? tm('study.m3.locateInvalidWithReason', { reason: raw }) : tm('study.m3.locateFailedVersion');
+  }
+  return raw || tm('study.m3.locateUnavailable');
+}
+
+function annotationInvalidReason(annotation) {
+  return m3String(annotation?.invalid_reason ?? annotation?.reason) || tm('study.m3.invalidReasonUnknown');
+}
+
+/** 前端简单判重：同一资料/笔记、同页码或 chunk、摘录正文一致时视为已存在。 */
+function sameExcerpt(annotation, anchor) {
+  if (!annotation || typeof annotation !== 'object') return false;
+  if (Number(annotation.document_id) !== Number(anchor.documentId)) return false;
+  if (anchor.chunkId && annotation.chunk_id && String(annotation.chunk_id) !== anchor.chunkId) return false;
+  if (anchor.page && annotation.page && Number(annotation.page) !== Number(anchor.page)) return false;
+  const normalize = value => String(value || '').replace(/\s+/g, ' ').trim();
+  const left = normalize(annotation.quote || annotation.snippet);
+  const right = normalize(anchor.quote);
+  if (!left || !right) return false;
+  if (left === right) return true;
+  const head = right.slice(0, 120);
+  return head.length >= 20 && (left.includes(head) || right.includes(left.slice(0, 120)));
+}
+
+/** 保存摘录（POST /api/doc-annotations）；已存在时返回 {duplicate:true} 并提示。 */
+async function saveExcerpt(anchor) {
+  const payload = { document_id: Number(anchor.documentId) };
+  // 后端 quote 上限 500 字：来源里的整段 chunk 文本需要先截成一段可保存的摘录。
+  const quote = m3String(anchor.quote);
+  if (!quote) throw new Error(tm('study.m3.excerptEmptyQuote'));
+  payload.quote = quote.length > MAX_EXCERPT_QUOTE ? quote.slice(0, MAX_EXCERPT_QUOTE) : quote;
+  if (anchor.page) payload.page = Number(anchor.page);
+  if (anchor.chunkId) payload.chunk_id = anchor.chunkId;
+  if (anchor.note) payload.note = anchor.note.slice(0, MAX_EXCERPT_NOTE);
+  if (anchor.noteId) payload.note_id = Number(anchor.noteId);
+  // 后端不保证幂等：先按同一资料 + 笔记查一次，避免重复写入。
+  try {
+    const existing = await api(`/doc-annotations?${query({
+      document_id: anchor.documentId, note_id: anchor.noteId || '', limit: 50,
+    })}`);
+    const items = Array.isArray(existing?.items) ? existing.items : [];
+    if (items.some(item => sameExcerpt(item, anchor))) {
+      toast(tm('study.m3.excerptExists'));
+      return { duplicate: true };
+    }
+  } catch {
+    /* 判重查询失败不阻塞保存：后端可能再次判重或允许重复。 */
+  }
+  return api('/doc-annotations', { method: 'POST', data: payload });
+}
+
+/** 定位命中后展开的摘要：页码、出处标题、heading_path、匹配方式与原文片段。 */
+function locateResultNode(result, anchor, noteId, onSaved) {
+  const page = m3Number(result?.page) || anchor.page;
+  const title = m3String(result?.title);
+  const version = m3Number(result?.doc_version);
+  const headingPath = m3String(result?.heading_path ?? result?.heading_path_text);
+  const matchLabel = locateMatchLabel(result?.match);
+  const quote = m3String(result?.quote) || anchor.quote;
+  const snippetText = m3String(result?.snippet);
+  const meta = [];
+  if (page) meta.push(tm('study.m3.pageLabel', { page }));
+  if (title) meta.push(title);
+  if (version) meta.push(tm('study.m3.docVersion', { version }));
+
+  const box = el('div', { class: 'm3-locate-panel' },
+    el('div', { class: 'm3-locate-head' },
+      el('strong', { class: 'm3-locate-meta', 'data-no-i18n': '' }, meta.join(' · ') || tm('study.m3.locateOriginal')),
+      matchLabel ? badge(matchLabel, 'blue') : null));
+  if (headingPath) {
+    box.append(el('p', { class: 'm3-locate-path', 'data-no-i18n': '' }, headingPath));
+  }
+  if (snippetText) {
+    box.append(el('blockquote', { class: 'm3-snippet-quote', 'data-no-i18n': '' }, snippetText));
+  }
+  if (quote && quote !== snippetText) {
+    box.append(
+      el('p', { class: 'm3-snippet-label' }, tm('study.m3.matchedQuote')),
+      el('blockquote', { class: 'm3-snippet-quote is-original', 'data-no-i18n': '' }, quote));
+  }
+  // 后端定位提示（例如「已按忽略空白/大小写匹配」「原片段失效已重新定位」）。
+  const noticeText = m3String(result?.notice);
+  if (noticeText) box.append(el('p', { class: 'help m3-locate-notice', 'data-no-i18n': '' }, noticeText));
+  const saveMount = el('div', { class: 'm3-source-save' });
+  // 仅当定位结果确实带生效摘录时才提供「保存为摘录」；纯页码锚点 quote 为空不伪造摘录。
+  if (quote) {
+    box.append(el('div', { class: 'm3-source-actions' },
+      button(tm('study.m3.saveExcerpt'), () => {
+        openExcerptComposer({
+          documentId: m3Number(result?.document_id) || anchor.documentId,
+          page: page || 0,
+          chunkId: m3String(result?.chunk_id) || anchor.chunkId,
+          quote: quote || anchor.quote,
+          noteId,
+        }, saveMount, onSaved);
+      }, 'soft small', 'notes')), saveMount);
+  }
+  return box;
+}
+
+/** 定位：POST /api/documents/{document_id}/locate，结果展开在条目下方。 */
+async function locateSource(anchor, mount, noteId, onSaved) {
+  mount.replaceChildren(loading(tm('study.m3.locating')));
+  try {
+    const result = await api(`/documents/${encodeURIComponent(anchor.documentId)}/locate`, {
+      method: 'POST',
+      data: locatePayload(anchor),
+    });
+    if (!result || result.valid === false) {
+      throw new Error(m3String(result?.invalid_reason) || tm('study.m3.locateFailedVersion'));
+    }
+    if (!mount.isConnected) return;
+    mount.replaceChildren(locateResultNode(result, anchor, noteId, onSaved));
+  } catch (error) {
+    if (!mount.isConnected) return;
+    mount.replaceChildren(notice(locateErrorText(error), 'warning'));
+  }
+}
+
+/** 行内摘录备注表单（定位成功或来源自带 quote 时显示）。 */
+function openExcerptComposer(anchor, mount, onSaved) {
+  if (mount.querySelector('.m3-excerpt-composer')) return;
+  const noteInput = input(tm('study.m3.excerptNotePlaceholder'), { maxlength: String(MAX_EXCERPT_NOTE) });
+  const form = el('div', { class: 'm3-excerpt-composer' },
+    el('p', { class: 'help' }, tm('study.m3.saveExcerptHint')),
+    el('div', { class: 'm3-excerpt-composer-main' }, noteInput,
+      el('div', { class: 'm3-excerpt-composer-actions' },
+        button(tm('study.m3.excerptCancel'), () => mount.replaceChildren(), 'ghost small'),
+        button(tm('study.m3.excerptSave'), event => busy(event.currentTarget, async () => {
+          const result = await saveExcerpt({ ...anchor, note: noteInput.value.trim() });
+          if (result?.duplicate) {
+            mount.replaceChildren();
+            return;
+          }
+          mount.replaceChildren();
+          toast(tm('study.m3.excerptSaved'));
+          onSaved?.();
+        }), '', 'check'))));
+  mount.replaceChildren(form);
+  noteInput.focus();
+}
+
+/**
+ * 摘录面板：GET /api/doc-annotations；失效条目展示 invalid_reason 与「重新定位」，
+ * 删除需二次确认。接口不可用时显示中文降级说明（不伪造摘录数据）。
+ * alwaysVisible=false 时无摘录/加载前整块隐藏（对应「无数据隐藏入口」）。
+ */
+function createExcerptPanel({ params = {}, title = '', emptyHint = '', alwaysVisible = false } = {}) {
+  // 资料弹层始终可见：先用加载态占位，避免打开弹层后出现空白区域。
+  const host = el('section', { class: `m3-excerpt-panel${alwaysVisible ? '' : ' hide'}` });
+  if (alwaysVisible) host.append(loading(tm('study.m3.excerptLoading')));
+  let seq = 0;
+
+  function panelHead() {
+    return el('div', { class: 'm3-excerpt-panel-head' },
+      el('h3', {}, title || tm('study.m3.excerpts')),
+      button(t('common.reload'), () => load(), 'ghost small', 'rotate'));
+  }
+
+  function itemActions(annotation) {
+    const invalid = annotation?.valid === false;
+    const actions = el('div', { class: 'm3-excerpt-actions' });
+    if (invalid && annotation?.annotation_id) {
+      actions.append(button(tm('study.m3.refreshLocate'), event => busy(event.currentTarget, async () => {
+        const result = await api(`/doc-annotations/${encodeURIComponent(annotation.annotation_id)}/refresh`, { method: 'POST' });
+        const valid = result?.valid === true || (result?.annotation && result.annotation.valid !== false);
+        // 后端只要重新定位成功就返回 migrated:true；是否有「版本迁移」看 doc_version 是否变化。
+        const versionChanged = Boolean(result?.annotation && annotation?.doc_version
+          && String(result.annotation.doc_version) !== String(annotation.doc_version));
+        if (valid) {
+          toast(versionChanged ? tm('study.m3.refreshMigrated') : tm('study.m3.refreshSuccess'));
+        } else {
+          toast(tm('study.m3.refreshStillInvalid', {
+            reason: annotationInvalidReason(result?.annotation || annotation),
+          }), true);
+        }
+        await load();
+      }), 'soft small', 'rotate'));
+    }
+    if (annotation?.annotation_id) {
+      actions.append(button(tm('study.m3.deleteExcerpt'), event => busy(event.currentTarget, async () => {
+        if (!window.confirm(tm('study.m3.deleteExcerptConfirm'))) return;
+        await api(`/doc-annotations/${encodeURIComponent(annotation.annotation_id)}`, { method: 'DELETE' });
+        toast(tm('study.m3.excerptDeleted'));
+        await load();
+      }), 'ghost small', 'trash'));
+    }
+    return actions;
+  }
+
+  function itemNode(annotation) {
+    const invalid = annotation?.valid === false;
+    const quote = m3String(annotation?.quote) || m3String(annotation?.snippet);
+    const meta = [];
+    if (annotation?.page) meta.push(tm('study.m3.pageLabel', { page: annotation.page }));
+    if (annotation?.heading_path) meta.push(String(annotation.heading_path));
+    if (annotation?.created_at) meta.push(tm('study.m3.createdAt', { time: dateText(annotation.created_at) }));
+    const node = el('article', {
+      class: `m3-excerpt-item${invalid ? ' is-invalid' : ''}`,
+      'data-annotation-id': String(annotation?.annotation_id ?? ''),
+    },
+    el('div', { class: 'm3-excerpt-item-head' },
+      badge(invalid ? tm('study.m3.invalidExcerpt') : tm('study.m3.excerptValid'), invalid ? 'red' : 'teal'),
+      meta.length ? el('span', { class: 'm3-excerpt-meta', 'data-no-i18n': '' }, meta.join(' · ')) : null),
+    el('blockquote', { class: 'm3-excerpt-quote', 'data-no-i18n': '' }, quote || tm('study.m3.excerptQuoteMissing')),
+    annotation?.note ? el('p', { class: 'm3-excerpt-note' }, annotation.note) : null);
+    if (invalid) {
+      node.append(el('p', { class: 'm3-invalid-reason' }, tm('study.m3.invalidReason', {
+        reason: annotationInvalidReason(annotation),
+      })));
+    }
+    const actions = itemActions(annotation);
+    if (actions.childNodes.length) node.append(actions);
+    return node;
+  }
+
+  function renderItems(items) {
+    if (!items.length) {
+      host.classList.toggle('hide', !alwaysVisible);
+      if (!alwaysVisible) {
+        host.replaceChildren();
+        return;
+      }
+      host.replaceChildren(panelHead(), el('p', { class: 'm3-excerpt-empty' }, emptyHint || tm('study.m3.excerptsEmpty')));
+      return;
+    }
+    host.classList.remove('hide');
+    host.replaceChildren(
+      panelHead(),
+      el('div', { class: 'm3-excerpt-list' }, ...items.map(itemNode)),
+    );
+  }
+
+  function renderError(error) {
+    const raw = m3String(error?.message);
+    host.classList.remove('hide');
+    host.replaceChildren(
+      panelHead(),
+      notice(tm('study.m3.excerptUnavailable') + (raw ? `（${raw}）` : ''), 'warning'),
+    );
+  }
+
+  async function load() {
+    const mine = ++seq;
+    try {
+      const result = await api(`/doc-annotations?${query({ ...params, limit: 50 })}`);
+      if (mine !== seq) return;
+      renderItems(Array.isArray(result?.items) ? result.items : []);
+    } catch (error) {
+      if (mine !== seq) return;
+      renderError(error);
+    }
+  }
+
+  return { node: host, load };
+}
+
+/** 资料摘录弹层：按 document_id 读取摘录，复用同一套失效/重新定位/删除交互。 */
+function openDocExcerptDialog(doc) {
+  const dialog = el('dialog', { class: 'modal-dialog m3-excerpt-dialog' });
+  const panel = createExcerptPanel({
+    params: { document_id: doc.id },
+    title: tm('study.m3.docExcerpts'),
+    emptyHint: tm('study.m3.docExcerptsEmpty'),
+    alwaysVisible: true,
+  });
+  dialog.append(
+    el('div', { class: 'card-header m3-excerpt-dialog-head' },
+      el('h3', {}, tm('study.m3.viewExcerpts')),
+      button(t('common.close'), () => dialog.close(), 'ghost small', 'close')),
+    el('p', { class: 'help', 'data-no-i18n': '' }, doc.title || ''),
+    panel.node);
+  document.body.append(dialog);
+  dialog.addEventListener('close', () => dialog.remove());
+  dialog.showModal();
+  panel.load();
+}
+
+/**
+ * 来源引用区：保留原有「参考来源」折叠结构，在每条带 document_id 的来源上追加
+ * 「定位原文」与（有摘录文本时）「保存为摘录」入口。
+ */
+function renderNoteSources(note, onExcerptSaved) {
+  const sources = noteSourceList(note);
+  if (!sources.length) return null;
+  const details = el('details', { class: 'sources m3-sources' },
+    el('summary', {}, tm('study.m3.sourcesTitle', { count: sources.length })));
+  for (const source of sources) {
+    const anchor = locateAnchorOf(source);
+    const locateMount = el('div', { class: 'm3-locate-mount' });
+    const saveMount = el('div', { class: 'm3-source-save' });
+    const actionRow = el('div', { class: 'm3-source-actions' });
+    if (anchor) {
+      actionRow.append(button(tm('study.m3.locateOriginal'), event => busy(event.currentTarget, () => locateSource(anchor, locateMount, note?.id, onExcerptSaved)), 'ghost small', 'search'));
+      if (anchor.quote) {
+        actionRow.append(button(tm('study.m3.saveExcerpt'), () => openExcerptComposer({
+          ...anchor, noteId: note?.id,
+        }, saveMount, onExcerptSaved), 'ghost small', 'notes'));
+      }
+    }
+    details.append(el('div', { class: 'source-block m3-source-block' },
+      el('strong', {}, [
+        source.title || t('result.source', { v1: source.document_id }),
+        source.page ? t('result.page', { v1: source.page }) : null,
+        source.heading_path || null,
+        source.chunk_id ? t('result.chunk', { v1: source.chunk_id }) : null,
+      ].filter(Boolean).join(' · ')),
+      source.text ? el('div', { class: 'm3-source-text', 'data-no-i18n': '' }, String(source.text)) : null,
+      actionRow.childNodes.length ? actionRow : null,
+      locateMount,
+      saveMount));
+  }
+  return details;
+}
+
 function renderNoteDetail(note, container, reload, onPatched = null) {
   const own = note.origin !== 'official' || state.user.role === 'admin';
   const versionsMount = el('div');
@@ -1087,6 +1552,12 @@ function renderNoteDetail(note, container, reload, onPatched = null) {
     }), 'danger small', 'trash'));
   }
 
+  // M3 摘录面板：无摘录时隐藏；接口不可用时显示中文降级说明。
+  const excerptPanel = createExcerptPanel({
+    params: { note_id: note.id },
+    title: tm('study.m3.myExcerpts'),
+  });
+
   fill(container,
     el('div', { class: 'row between', style: 'margin-bottom:12px' },
       el('div', { class: 'row' },
@@ -1103,8 +1574,10 @@ function renderNoteDetail(note, container, reload, onPatched = null) {
     noteQuestionRefsNode(note),
     noteSourceVersionsNode(note),
     markdown(note.content || ''),
-    note.sources?.length ? renderSources(note.sources) : null
+    renderNoteSources(note, () => excerptPanel.load()),
+    excerptPanel.node
   );
+  excerptPanel.load();
 }
 
 function editNote(note, container, reload, onPatched = null) {

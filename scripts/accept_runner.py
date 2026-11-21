@@ -80,6 +80,7 @@ STAGE_LABELS = {
     "editor-build": "编辑器构建产物一致性（-EditorBuild）",
     "ui-static": "前端静态契约与 ESM 解析",
     "round5": "第五轮共用学习数据层端到端（临时数据目录）",
+    "m3": "M3 逐步提示/资料定位/掌握路径端到端（临时数据目录）",
     "pytest": "pytest（全量）",
     "ui-server": "UI 服务器可达性",
     "ui-plaza": "广场端到端（投稿→评审→发布→撤回）",
@@ -424,6 +425,14 @@ def build_stages(
         command=[python, "scripts/integration/round5_accept.py"],
         cwd=root,
         description="第五轮端到端：证据/附件/四档复习/OCR 块（隔离数据目录，TestClient）",
+    )
+    candidates["m3"] = Stage(
+        key="m3", name=STAGE_LABELS["m3"],
+        # M3（方案 §5.2/§5.3/§5.4）：临时数据目录内跑通「逐步提示解锁协议 / 资料原文定位与摘录 /
+        # 掌握路径证据核验 / 函数图与白板学习附件」；不读写题库与生产数据，无需浏览器。
+        command=[python, "scripts/integration/m3_accept.py"],
+        cwd=root,
+        description="M3 端到端：逐步提示/资料定位/掌握路径/图形附件（隔离数据目录，TestClient）",
     )
     candidates["pytest"] = Stage(
         key="pytest", name=STAGE_LABELS["pytest"],

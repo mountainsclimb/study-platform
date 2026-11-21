@@ -430,3 +430,47 @@ for every public read path, and distribution changes must keep the fingerprint/.
     unified-caliber note and server-schedule/rated badges. `tests/test_review_due_unified.py` plus updated
     `tests/test_study_review.py` cover the authority direction, lazy migration, clock, two-account isolation and
     drift-free reconciliation.
+
+14. **M3 guided hints, document location and mastery paths (2026-11-21).** Three owner modules add server-side
+    learning flows; all new tables are created by their own `init_*()` and registered in `app/db.py::_ID_TABLES`.
+    - `app/guided_hint.py` (`/api/guided-hints`, tables `guided_hints/guided_steps/guided_attempts`) owns the
+      step-by-step tutoring protocol: a rule ladder (`focus` → `concept` → `first_step` → `solution`, the last one
+      locked) is generated from the *question stem and its solution first lines* (explicitly labelled non-AI in
+      `source_note`); step 0 is unlocked at creation and every other step unlocks only when the previous unlocked
+      step has a student attempt (`advance` unlocks at most one step; without an attempt it returns
+      `requires_attempt:true` and unlocks nothing). **Locked step bodies are never serialized** in any response;
+      attempt text is 1–2000 chars and unique per `(hint_id, position)`; sessions are idempotent per user+question
+      reference and foreign sessions are 404. No AI generation or assistant tool is wired in this round.
+    - `app/doc_location.py` (`POST /api/documents/{id}/locate`, `/api/doc-annotations`, table `doc_annotations`)
+      resolves an excerpt to a source location. `doc_version` is the content digest of `ai_documents.chunks_json`
+      (`sha256(..., sort_keys=True)[:16]`), no new version column. Locate order is `chunk_id` → normalized quote
+      (whitespace-folded, ASCII case-insensitive; returns original offsets and `match`) → `page`; quotes are limited
+      to 500 chars, annotations store the quote + doc_version + page/chunk/heading snapshot, lists re-validate on
+      read (`valid:false` + Chinese `invalid_reason` instead of 500), and `refresh` re-locates in the current version
+      (found → migrated; not found → 200 with `valid:false`). Foreign/deleted documents and notes are 404; a
+      document has at most 200 excerpts.
+    - `app/mastery_path.py` (`/api/mastery-paths`, tables `mastery_paths/mastery_path_nodes/mastery_path_events`)
+      builds evidence-driven paths: two nodes per knowledge point (`practice`: at least **2 distinct questions**
+      answered independently and correctly; `concept`: a 20–2000 char student restatement). Evidence is read from
+      `study_evidence`: `valid=1 AND verdict='correct' AND confidence='verified' AND (self_report='independent' OR
+      prompt_state='none')`; hinted/after-reveal answers and repeats of the same question never count, and
+      `refresh` keeps the node pending with `evidence.{distinct_questions,matched_questions,missing,note}` when
+      there are not enough independent questions. Restatement is an explicit `self_report=independent` record, not
+      a verified grade. Paths auto-select up to 3 weak knowledge points (422 with a Chinese "insufficient sample"
+      message when there is no evidence) or accept explicit `kp_ids` (≤8); identical active paths are reused
+      (`replayed`), `sample_status=insufficient` is surfaced honestly, progress/version update on every
+      recomputation, and archived paths reject node operations with 409.
+    - Practice evidence caliber: `app/practice.py::_record_study_evidence` records ordinary practice attempts with
+      `prompt_state="none"` (that entry offers no hints and grading happens after submit) so the mastery-path
+      practice node can be verified from real practice; `set_ai_grade` revises the same event without changing the
+      hint/reveal state.
+    - Frontend: `web/js/components/{functionGraph,sketchBoard}.js` implement Mafs- and Excalidraw-compatible data
+      models natively (no new dependencies, no CDN; the expression evaluator is a hand-written AST with no
+      `eval`/`Function`), saved as versioned `function_graph`/`whiteboard` study artifacts and reopened via
+      `/api/artifacts/by-target`; `question.js` adds 函数图像/画解题思路/按步骤提示 entries (lazy imports),
+      `wrongbook.js` reuses them in a per-row tools menu, `notes.js` adds locate/save-excerpt/my-excerpts with
+      invalid-state handling, and `insight.js` adds the mastery-path list/detail/restate/refresh/archive UI.
+      `web/index.html` loads `styles-study-tools.css` and `styles-m3-pages.css`; 218 new locale keys
+      (`study.tools.*` 118 + `study.m3.*` 100) keep zh/en aligned (5,010 keys each). `scripts/accept_runner.py`
+      gains an `m3` stage running `scripts/integration/m3_accept.py`, and `ui_static_accept.py` asserts the M3
+      component/page wiring and namespace minimums.

@@ -1,0 +1,714 @@
+/* ===========================================================================
+ * M3 前端补丁：资料原文定位 / 摘录（.m3-）与学情掌握路径（.m3-path- / .m3-node-）
+ * ---------------------------------------------------------------------------
+ * 设计令牌全部沿用 styles.css（--surface/--rail/--line/--ink/--soft/--accent/
+ * --accent-deep/--tint/--wrong/--wrong-bg/--danger/--radius），深浅色主题通过
+ * html[data-theme="dark"] 自动复用，只在语义色上做少量暗色补偿。
+ *
+ * 引入方式（index.html 不在本线写入范围，需 Lead 接线）：
+ *   <link rel="stylesheet" href="/static/styles-m3-pages.css">
+ * =========================================================================== */
+
+/* ---------------------------------------------------------------------------
+ * 1. 来源条目的原文定位 / 保存摘录（笔记详情）
+ * ------------------------------------------------------------------------- */
+.m3-source-block {
+  display: block;
+}
+
+.m3-source-text {
+  margin-top: 6px;
+  color: inherit;
+  overflow-wrap: anywhere;
+}
+
+.m3-source-actions {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 8px;
+  margin-top: 10px;
+}
+
+.m3-source-actions .button {
+  min-height: 32px;
+}
+
+.m3-locate-mount:empty,
+.m3-source-save:empty {
+  display: none;
+}
+
+.m3-locate-panel {
+  margin-top: 10px;
+  padding: 12px 14px;
+  border: 1px solid var(--line);
+  border-radius: 10px;
+  background: var(--rail);
+}
+
+.m3-locate-head {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 8px;
+}
+
+.m3-locate-meta {
+  font-size: 0.8125rem;
+  color: var(--ink);
+  line-height: 1.6;
+  overflow-wrap: anywhere;
+}
+
+.m3-locate-path {
+  margin: 6px 0 0;
+  font-size: 0.75rem;
+  line-height: 1.65;
+  color: var(--soft);
+  overflow-wrap: anywhere;
+}
+
+.m3-locate-panel .m3-source-actions {
+  margin-top: 10px;
+}
+
+.m3-snippet-label {
+  margin: 10px 0 0;
+  font-size: 0.75rem;
+  color: var(--soft);
+}
+
+.m3-snippet-quote {
+  margin: 8px 0 0;
+  padding: 9px 12px;
+  border-left: 3px solid var(--accent);
+  border-radius: 0 8px 8px 0;
+  background: var(--surface);
+  color: var(--ink);
+  font-size: 0.875rem;
+  line-height: 1.8;
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+}
+
+.m3-snippet-quote.is-original {
+  font-size: 0.8125rem;
+  color: var(--soft);
+}
+
+/* 行内摘录备注表单 */
+.m3-excerpt-composer {
+  margin-top: 10px;
+  padding: 12px 14px;
+  border: 1px dashed var(--line);
+  border-radius: 10px;
+  background: var(--surface);
+}
+
+.m3-excerpt-composer .help {
+  margin: 0 0 8px;
+}
+
+.m3-excerpt-composer-main {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: flex-start;
+  gap: 8px;
+}
+
+.m3-excerpt-composer-main .input {
+  flex: 1 1 220px;
+  min-width: 0;
+}
+
+.m3-excerpt-composer-actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+}
+
+/* ---------------------------------------------------------------------------
+ * 2. 摘录面板（笔记底部 / 资料摘录弹层）
+ * ------------------------------------------------------------------------- */
+.m3-excerpt-panel {
+  margin-top: 22px;
+  padding-top: 16px;
+  border-top: 1px solid var(--line);
+}
+
+.m3-excerpt-panel-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 10px;
+  margin-bottom: 10px;
+}
+
+.m3-excerpt-panel-head h3 {
+  margin: 0;
+  font-size: 0.9375rem;
+  color: var(--ink);
+}
+
+.m3-excerpt-list {
+  display: grid;
+  gap: 10px;
+}
+
+.m3-excerpt-item {
+  padding: 12px 14px;
+  border: 1px solid var(--line);
+  border-radius: 10px;
+  background: var(--surface);
+  min-width: 0;
+}
+
+.m3-excerpt-item.is-invalid {
+  border-color: #e3b9b3;
+  background: var(--wrong-bg);
+}
+
+.m3-excerpt-item-head {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 8px;
+  margin-bottom: 8px;
+}
+
+.m3-excerpt-meta {
+  font-size: 0.75rem;
+  color: var(--soft);
+  overflow-wrap: anywhere;
+}
+
+.m3-excerpt-quote {
+  margin: 0;
+  padding: 8px 12px;
+  border-left: 3px solid var(--accent);
+  border-radius: 0 8px 8px 0;
+  background: var(--rail);
+  color: var(--ink);
+  font-size: 0.875rem;
+  line-height: 1.8;
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+}
+
+.m3-excerpt-note {
+  margin: 8px 0 0;
+  font-size: 0.8125rem;
+  line-height: 1.7;
+  color: var(--soft);
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+}
+
+.m3-invalid-reason {
+  margin: 8px 0 0;
+  font-size: 0.8125rem;
+  line-height: 1.7;
+  color: var(--wrong);
+  overflow-wrap: anywhere;
+}
+
+.m3-excerpt-actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+  margin-top: 10px;
+}
+
+.m3-excerpt-actions .button {
+  min-height: 32px;
+}
+
+.m3-excerpt-empty {
+  margin: 0;
+  padding: 12px 14px;
+  border: 1px dashed var(--line);
+  border-radius: 10px;
+  background: var(--rail);
+  font-size: 0.8125rem;
+  line-height: 1.8;
+  color: var(--soft);
+}
+
+.m3-excerpt-dialog {
+  width: min(720px, calc(100vw - 32px));
+}
+
+.m3-excerpt-dialog-head {
+  margin-bottom: 8px;
+}
+
+.m3-excerpt-dialog-head h3 {
+  margin: 0;
+}
+
+.m3-excerpt-dialog .m3-excerpt-panel {
+  margin-top: 12px;
+  padding-top: 0;
+  border-top: 0;
+}
+
+/* ---------------------------------------------------------------------------
+ * 3. 学情页 · 掌握路径列表
+ * ------------------------------------------------------------------------- */
+.m3-paths-card {
+  grid-column: 1 / -1;
+}
+
+.m3-path-actions {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 10px;
+}
+
+.m3-path-actions:empty {
+  display: none;
+}
+
+.m3-path-selected {
+  font-size: 0.8125rem;
+  font-weight: 600;
+  color: var(--accent-deep);
+}
+
+.m3-path-notice:empty {
+  display: none;
+}
+
+.m3-path-notice .notice {
+  margin: 12px 0 0;
+}
+
+.m3-path-list {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(280px, 1fr));
+  gap: 12px;
+  margin-top: 4px;
+}
+
+.m3-path-list.is-empty {
+  display: block;
+}
+
+.m3-path-card {
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+  min-width: 0;
+  padding: 14px 15px;
+  border: 1px solid var(--line);
+  border-radius: var(--radius);
+  background: var(--surface);
+}
+
+.m3-path-card-head {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 10px;
+}
+
+.m3-path-card-title-wrap {
+  min-width: 0;
+}
+
+.m3-path-card-title {
+  margin: 0 0 6px;
+  font-size: 0.9375rem;
+  line-height: 1.5;
+  color: var(--ink);
+  overflow-wrap: anywhere;
+}
+
+.m3-path-badges {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 6px;
+}
+
+.m3-path-progress {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  min-width: 0;
+}
+
+.m3-progress-track {
+  height: 8px;
+  border-radius: 8px;
+  border: 1px solid var(--line);
+  background: var(--rail);
+  overflow: hidden;
+}
+
+.m3-progress-track > span {
+  display: block;
+  height: 100%;
+  border-radius: 8px;
+  background: var(--accent);
+  transition: width 0.25s ease;
+}
+
+.m3-path-progress-text {
+  font-size: 0.75rem;
+  color: var(--soft);
+}
+
+.m3-path-empty {
+  padding: 14px 16px;
+  border: 1px dashed var(--line);
+  border-radius: 10px;
+  background: var(--rail);
+}
+
+.m3-path-empty p {
+  margin: 0 0 6px;
+  font-size: 0.875rem;
+  line-height: 1.75;
+  color: var(--ink);
+}
+
+.m3-path-empty p.help {
+  margin-bottom: 10px;
+  color: var(--soft);
+}
+
+.m3-path-empty .notice {
+  margin: 0 0 10px;
+}
+
+/* 薄弱知识点条目上的「加入掌握路径」勾选 */
+.m3-kp-pick {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  width: max-content;
+  max-width: 100%;
+  margin-top: 10px;
+  padding: 7px 10px;
+  border: 1px dashed var(--line);
+  border-radius: 8px;
+  background: var(--surface);
+  font-size: 0.8125rem;
+  color: var(--soft);
+  cursor: pointer;
+}
+
+.m3-kp-pick:hover {
+  border-color: var(--accent);
+  color: var(--accent-deep);
+}
+
+.m3-kp-pick-box {
+  width: 15px;
+  height: 15px;
+  margin: 0;
+  accent-color: var(--accent);
+  flex: none;
+}
+
+/* 掌握路径接口不可用时隐藏生成入口，只保留中文降级说明 */
+.m3-paths-degraded .m3-kp-pick,
+.m3-paths-degraded .m3-path-actions {
+  display: none;
+}
+
+/* ---------------------------------------------------------------------------
+ * 4. 掌握路径详情弹层（节点列表 / 操作 / 完成态）
+ * ------------------------------------------------------------------------- */
+.m3-path-dialog {
+  width: min(760px, calc(100vw - 32px));
+}
+
+.m3-path-dialog-head {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 12px;
+  margin-bottom: 14px;
+  padding-bottom: 12px;
+  border-bottom: 1px solid var(--line);
+}
+
+.m3-path-dialog-title {
+  min-width: 0;
+}
+
+.m3-path-dialog-title h3 {
+  margin: 0 0 8px;
+  font-size: 1.1rem;
+  line-height: 1.4;
+  overflow-wrap: anywhere;
+}
+
+.m3-path-dialog-actions {
+  display: flex;
+  flex-wrap: wrap;
+  justify-content: flex-end;
+  gap: 8px;
+}
+
+.m3-dialog-progress {
+  margin-bottom: 12px;
+}
+
+.m3-sample-note {
+  margin: 0 0 12px;
+  overflow-wrap: anywhere;
+}
+
+.m3-path-completed {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  margin-bottom: 12px;
+  padding: 10px 14px;
+  border-radius: 10px;
+  background: var(--tint);
+  color: var(--accent-deep);
+  font-size: 0.875rem;
+  font-weight: 600;
+  line-height: 1.6;
+}
+
+.m3-path-completed .icon {
+  width: 18px;
+  height: 18px;
+  flex: none;
+}
+
+.m3-node-list {
+  display: grid;
+  gap: 10px;
+}
+
+.m3-path-node {
+  padding: 12px 14px;
+  border: 1px solid var(--line);
+  border-radius: 10px;
+  background: var(--surface);
+  min-width: 0;
+}
+
+.m3-path-node.is-done {
+  background: var(--tint);
+}
+
+.m3-path-node.is-in_progress {
+  border-color: var(--accent);
+}
+
+.m3-node-head {
+  display: flex;
+  align-items: flex-start;
+  gap: 10px;
+  margin-bottom: 8px;
+}
+
+.m3-node-index {
+  flex: none;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  min-width: 30px;
+  height: 22px;
+  padding: 0 6px;
+  border-radius: 6px;
+  background: var(--rail);
+  color: var(--soft);
+  font-size: 0.75rem;
+  font-weight: 600;
+  margin-top: 1px;
+}
+
+.m3-node-title-wrap {
+  min-width: 0;
+  flex: 1;
+}
+
+.m3-node-title {
+  display: block;
+  font-size: 0.9375rem;
+  line-height: 1.55;
+  color: var(--ink);
+  overflow-wrap: anywhere;
+}
+
+.m3-node-badges {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+  margin-top: 6px;
+}
+
+.m3-node-body p {
+  margin: 0 0 6px;
+  font-size: 0.8125rem;
+  line-height: 1.75;
+  color: var(--soft);
+  overflow-wrap: anywhere;
+}
+
+.m3-node-line strong {
+  color: var(--ink);
+  font-weight: 600;
+  margin-right: 2px;
+}
+
+.m3-node-line:last-child {
+  margin-bottom: 0;
+}
+
+.m3-node-actions {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: flex-start;
+  gap: 8px;
+  margin-top: 8px;
+}
+
+.m3-node-restate {
+  display: grid;
+  gap: 8px;
+  width: 100%;
+  margin-top: 4px;
+}
+
+.m3-node-restate .help {
+  margin: 0;
+}
+
+.m3-restate-input {
+  min-height: 74px;
+  resize: vertical;
+}
+
+.m3-restate-foot {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  justify-content: space-between;
+  gap: 10px;
+}
+
+.m3-restate-count {
+  font-size: 0.75rem;
+  color: var(--soft);
+}
+
+.m3-path-events {
+  margin-top: 14px;
+  padding-top: 10px;
+  border-top: 1px solid var(--line);
+}
+
+.m3-path-events summary {
+  cursor: pointer;
+  font-size: 0.8125rem;
+  color: var(--soft);
+}
+
+.m3-path-events-list p {
+  margin: 6px 0 0;
+  font-size: 0.75rem;
+  line-height: 1.7;
+  color: var(--soft);
+  overflow-wrap: anywhere;
+}
+
+/* ---------------------------------------------------------------------------
+ * 5. 暗色主题补偿（其余颜色走设计令牌，自动跟随）
+ * ------------------------------------------------------------------------- */
+html[data-theme="dark"] .m3-excerpt-item.is-invalid {
+  border-color: #5a3532;
+  background: var(--wrong-bg);
+}
+
+html[data-theme="dark"] .m3-snippet-quote,
+html[data-theme="dark"] .m3-excerpt-quote {
+  background: var(--rail);
+  color: var(--ink);
+}
+
+html[data-theme="dark"] .m3-locate-panel,
+html[data-theme="dark"] .m3-excerpt-composer,
+html[data-theme="dark"] .m3-excerpt-empty,
+html[data-theme="dark"] .m3-path-empty {
+  background: var(--rail);
+  border-color: var(--line);
+}
+
+html[data-theme="dark"] .m3-progress-track > span {
+  background: var(--accent-deep);
+}
+
+html[data-theme="dark"] .m3-path-completed,
+html[data-theme="dark"] .m3-path-node.is-done {
+  background: var(--tint);
+  color: var(--accent-deep);
+}
+
+html[data-theme="dark"] .m3-node-index {
+  background: var(--rail);
+  color: var(--soft);
+}
+
+/* ---------------------------------------------------------------------------
+ * 6. 移动端
+ * ------------------------------------------------------------------------- */
+@media (max-width: 900px) {
+  .m3-path-list {
+    grid-template-columns: 1fr;
+  }
+}
+
+@media (max-width: 700px) {
+  .m3-path-dialog-head {
+    flex-direction: column;
+    align-items: stretch;
+  }
+
+  .m3-path-dialog-actions {
+    justify-content: flex-start;
+  }
+
+  .m3-path-card-head {
+    flex-wrap: wrap;
+  }
+
+  .m3-excerpt-composer-main {
+    flex-direction: column;
+    align-items: stretch;
+  }
+
+  .m3-excerpt-composer-actions .button {
+    flex: 1;
+  }
+
+  .m3-node-head {
+    gap: 8px;
+  }
+
+  .m3-path-node,
+  .m3-excerpt-item {
+    padding: 11px 12px;
+  }
+}
+
+@media print {
+  .m3-path-actions,
+  .m3-kp-pick,
+  .m3-excerpt-composer,
+  .m3-excerpt-actions,
+  .m3-node-restate,
+  .m3-path-dialog {
+    display: none !important;
+  }
+}

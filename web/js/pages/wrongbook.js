@@ -2,11 +2,11 @@ import { api, ensureCatalog } from '../core/api.js';
 import { state } from '../core/state.js';
 import { t } from '../core/i18n.js';
 import {
-  el, button, badge, empty, heading, loading, notice, select, query,
+  el, button, badge, empty, heading, icon, loading, notice, select, query,
   number, dateText, sourceOf, typeLabel, resultBadge, busy, toast, readableSummary, downloadBlob,
 } from '../core/dom.js';
 import { go, current } from '../core/router.js';
-import { openQuestion } from './question.js';
+import { openQuestion, openGuidedHintsPanel, questionRefOf } from './question.js';
 import { openPresentationMode } from '../components/presentationMode.js';
 // 四档复习（fsrs-reference v5.0-local）：错题页只读复习卡接口，行内挂评分区；不改旧错题表语义。
 import {
@@ -16,6 +16,147 @@ import {
 // 讲错题入口：打开全屏讲解（数据由组件按只读 /api/reveal 拉取；未解锁时组件内提示先作答）。
 function openWrongPresentation(qid) {
   openPresentationMode({ qid }).catch(error => toast(error?.message || t('wrongbook.presentationFailed'), true));
+}
+
+/* ---------------------------------------------------------------------------
+ * M3「解题工具」入口（方案 §3 数学主流程第 2 步 / §5.4）
+ * ---------------------------------------------------------------------------
+ * 每行操作区一个 compact 下拉菜单：「画解题思路」「看图」「按步骤提示」，按统一题目引用
+ * 打开与题目详情相同的学习工具弹层（组件 / question.js 导出的 helper，不复制逻辑）。
+ * 工具接口未就绪时只中文提示，不影响四档评分/筛选/讲题/导出/标签/归档等原有逻辑。
+ * ------------------------------------------------------------------------- */
+
+/** 新 UI 文案：`study.tools.*` 键由 Lead 合并，缺键回退中文常量。 */
+function toolText(key, fallback, vars) {
+  const value = t(key, vars);
+  if (value !== key) return value;
+  return String(fallback).replace(/\{(\w+)\}/g, (match, name) => (
+    vars && vars[name] !== undefined && vars[name] !== null ? String(vars[name]) : match
+  ));
+}
+
+/** 错题行 → 统一题目引用（entry.ref 优先，其次 q.ref / qid 按 bank:/app:/official: 补齐）。 */
+function refOfWrongEntry(entry, question) {
+  const merged = { ...(question && typeof question === 'object' ? question : {}) };
+  if (entry && typeof entry === 'object') {
+    if (entry.ref) merged.ref = entry.ref;
+    if (entry.qid && !merged.qid) merged.qid = entry.qid;
+    if (entry.source && !merged.source) merged.source = entry.source;
+  }
+  return questionRefOf(merged);
+}
+
+/** 错题列表卡是否适用函数图：数学题或后端标记 has_formula（列表卡不保证带 stem_blocks）。 */
+function functionGraphEligibleForEntry(question) {
+  if (!question || typeof question !== 'object') return false;
+  if (String(question.subject || '').trim() === '数学') return true;
+  return question.has_formula === true;
+}
+
+async function openWrongbookBoard(entry, question, trigger) {
+  const ref = refOfWrongEntry(entry, question);
+  await busy(trigger, async () => {
+    try {
+      const module = await import('../components/sketchBoard.js');
+      await module.openSketchBoardForTarget({
+        ref,
+        trigger,
+        titleHint: String(question?.number_label || question?.qid || '').trim(),
+      });
+    } catch (error) {
+      toast(toolText('study.tools.open.failed', '打开解题白板失败：{v1}', {
+        v1: error?.message || '',
+      }), true);
+    }
+  });
+}
+
+async function openWrongbookGraph(entry, question, trigger) {
+  if (!functionGraphEligibleForEntry(question)) {
+    toast(toolText('study.tools.open.graphUnavailable', '当前题目不是数学题且未检测到公式，函数图像入口不可用。'), true);
+    return;
+  }
+  const ref = refOfWrongEntry(entry, question);
+  await busy(trigger, async () => {
+    try {
+      const module = await import('../components/functionGraph.js');
+      await module.openFunctionGraphForTarget({
+        ref,
+        trigger,
+        titleHint: String(question?.number_label || question?.qid || '').trim(),
+      });
+    } catch (error) {
+      toast(toolText('study.tools.open.failed', '打开函数图像失败：{v1}', {
+        v1: error?.message || '',
+      }), true);
+    }
+  });
+}
+
+function openWrongbookHints(entry, question) {
+  try {
+    openGuidedHintsPanel({
+      ref: refOfWrongEntry(entry, question),
+      label: [question?.subject, question?.number_label || question?.qid].filter(Boolean).join(' · '),
+    });
+  } catch (error) {
+    toast(toolText('study.tools.open.failed', '打开逐步提示失败：{v1}', {
+      v1: error?.message || '',
+    }), true);
+  }
+}
+
+let solutionToolsMenuBound = false;
+
+function closeSolutionToolMenus() {
+  for (const menu of document.querySelectorAll('.st-tools-menu[open]')) menu.open = false;
+}
+
+/** 下拉菜单的「点外部 / Esc 关闭」只需绑定一次，避免每次重渲染重复注册监听。 */
+function ensureSolutionToolsMenuDismiss() {
+  if (solutionToolsMenuBound) return;
+  solutionToolsMenuBound = true;
+  document.addEventListener('pointerdown', (event) => {
+    for (const menu of document.querySelectorAll('.st-tools-menu[open]')) {
+      if (!menu.contains(event.target)) menu.open = false;
+    }
+  });
+  document.addEventListener('keydown', (event) => {
+    if (event.key === 'Escape') closeSolutionToolMenus();
+  });
+}
+
+/** 错题行 compact「解题工具」菜单（three entries；函数图不适用时给出中文说明）。 */
+function solutionToolsEntry(entry, question) {
+  ensureSolutionToolsMenuDismiss();
+  const graphEligible = functionGraphEligibleForEntry(question);
+  const toolItem = (text, action, attrs = {}) => el('button', {
+    type: 'button',
+    class: 'st-tools-item',
+    role: 'menuitem',
+    ...attrs,
+    onClick: (event) => {
+      closeSolutionToolMenus();
+      action(event);
+    },
+  }, text);
+  return el('details', { class: 'st-tools-menu', 'data-study-tools-menu': 'true' },
+    el('summary', {
+      class: 'st-tools-summary',
+      title: toolText('study.tools.open.toolsMenuHint', '打开函数图像、白板与按步骤提示'),
+      'aria-label': toolText('study.tools.open.toolsMenu', '解题工具'),
+    }, icon('layers'), toolText('study.tools.open.toolsMenu', '解题工具')),
+    el('div', { class: 'st-tools-list', role: 'menu' },
+      toolItem(toolText('study.tools.open.board', '画解题思路'),
+        event => openWrongbookBoard(entry, question, event.currentTarget)),
+      toolItem(toolText('study.tools.open.graph', '看图'),
+        event => openWrongbookGraph(entry, question, event.currentTarget), {
+          title: graphEligible
+            ? toolText('study.tools.open.graphHint', '打开函数图像，拖动参数观察图像变化')
+            : toolText('study.tools.open.graphUnavailable', '当前题目不是数学题且未检测到公式，函数图像入口不可用。'),
+        }),
+      toolItem(toolText('study.tools.open.hints', '按步骤提示'),
+        () => openWrongbookHints(entry, question))));
 }
 
 export async function renderWrongbook(container, version) {
@@ -483,6 +624,7 @@ export async function renderWrongbook(container, version) {
         ];
         if (ratingSlot) children.push(ratingSlot);
         children.push(el('div', { class: 'pg-question-actions' },
+          solutionToolsEntry(entry, q),
           entry.archived
             ? button(t('wrongbook.restore'), e => busy(e.currentTarget, async () => {
                 await api('/wrongbook/restore', { method: 'POST', data: { qid: q.qid } });

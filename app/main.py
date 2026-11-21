@@ -21,6 +21,8 @@ from starlette.middleware.trustedhost import TrustedHostMiddleware
 from . import admission, assistant, auth, classroom, config_guard, db, focus, insight, paperlab, plaza
 # 第五轮共用接口：学习证据 / 学习附件 / 四档复习卡（各自 init_* 幂等建表）。
 from . import study_artifact, study_evidence, study_review
+# M3（§5.2/§5.3）：掌握路径、资料原文定位与摘录、逐步提示状态机。
+from . import doc_location, guided_hint, mastery_path
 
 WEB_DIR = Path(__file__).resolve().parents[1] / "web"
 health_log = logging.getLogger("zhixu.health")
@@ -214,6 +216,10 @@ async def lifespan(app):
     study_evidence.init_study_evidence()
     study_artifact.init_study_artifacts()
     study_review.init_study_review()
+    # M3：掌握路径、资料原文定位与摘录、逐步提示状态机。
+    mastery_path.init_mastery_path()
+    doc_location.init_doc_location()
+    guided_hint.init_guided_hints()
     dispatcher = asyncio.create_task(ai.recover_queued_jobs()) if ai.redis_url() else None
     try:
         yield
@@ -715,6 +721,11 @@ app.include_router(monitor.router)
 app.include_router(study_evidence.router)
 app.include_router(study_artifact.router)
 app.include_router(study_review.router)
+# M3（§5.2/§5.3）：掌握路径、资料原文定位与摘录、逐步提示。
+app.include_router(mastery_path.router)
+app.include_router(doc_location.router_docs)
+app.include_router(doc_location.router)
+app.include_router(guided_hint.router)
 
 app.mount("/static", StaticFiles(directory=str(WEB_DIR)), name="static")
 

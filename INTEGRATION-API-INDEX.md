@@ -1671,3 +1671,76 @@ checksum = sha256(`json.dumps(data, ensure_ascii=False, sort_keys=True, separato
 
 - `tests/test_review_due_unified.py`（5 项）：作答/评分/旧用户惰性迁移/两账号隔离/统一到期与对账无漂移。
 - `scripts/integration/round5_accept.py` 新增 M2 三项：错题到期来源、评分后四入口统一到期、镜像后对账无漂移（29/29）。
+
+## 26. M3 逐步提示 / 资料原文定位与摘录 / 掌握路径（2026-11-21）
+
+> 详细记录见 `docs/知序优化实施记录-20261121-第七轮.md`。全部路由需登录；私有资源他人/不存在统一 404
+> （不泄露存在性）；错误 `{detail: 中文}`。三张模块表由各自 `init_*()` 幂等建表并登记 `db.py::_ID_TABLES`。
+
+### 26.1 逐步提示 `/api/guided-hints`（`app/guided_hint.py`，6 条）
+
+| 方法/路径 | 请求 | 响应要点 |
+| --- | --- | --- |
+| `POST /api/guided-hints` | `{ref}` | 200/201 `{hint:{hint_id,question_ref,status,progress:{total,unlocked,next_position,done},source_note,created_at,updated_at},steps:[step],replayed?}`；同用户同题目幂等复用。 |
+| `GET /api/guided-hints` | `?limit=20` | `{items:[hint 摘要],total,limit}`（最近更新在前）。 |
+| `GET /api/guided-hints/by-ref` | `?ref=` | `{hint,steps}`；无会话 404。 |
+| `GET /api/guided-hints/{hint_id}` | — | 同上；他人 404。 |
+| `POST /api/guided-hints/{hint_id}/advance` | `{attempt?:str(1–2000)}` | 顶层 `{hint,steps,unlocked:{position,title,body,…}|null,requires_attempt,advanced,completed,message,attempt,replayed}`：末尾已解锁步骤有尝试才解锁下一步；无尝试返回 `requires_attempt=true` 且不解锁。 |
+| `POST /api/guided-hints/{hint_id}/attempt` | `{step_position:int,text:str}` | `{attempt,hint}`；仅已解锁位置（否则 422）；`(hint_id,position)` 唯一，重复 `replayed:true`。 |
+
+`step` 视图：已解锁 `{position,kind,title,body,requires_attempt,attempted,unlocked_at}`；
+未解锁 `{position,kind,title,locked:true,requires_attempt:true}`（**任何接口都不返回锁定正文**）。
+`kind ∈ focus|concept|first_step|solution`；`status ∈ active|completed`；`source_note` 明示为规则分步提示
+（非 AI 生成），完整解析仅在提交尝试后解锁。题目隔离/不可作答题 409；非法引用 422。
+
+### 26.2 资料原文定位与摘录（`app/doc_location.py`，5 条）
+
+| 方法/路径 | 请求 | 响应要点 |
+| --- | --- | --- |
+| `POST /api/documents/{document_id}/locate` | `{page?,chunk_id?,quote?}` | `{document_id,title,doc_version,pages,page,chunk_id,heading_path,quote,snippet,start,end,match:'exact'/'normalized',valid:true,notice}`；参数缺失/摘录找不到 422；他人 404。 |
+| `POST /api/doc-annotations` | `{document_id,quote,note?,page?,chunk_id?,note_id?,color?}` | 201 `{annotation}`：保存 quote + `doc_version` 快照 + 位置（page/chunk/heading_path）；quote ≤500、note ≤1000、color ∈ yellow/green/blue/pink、单文档 ≤200 条（422）；note_id 非本人 404。 |
+| `GET /api/doc-annotations` | `?document_id=&note_id=&page=&limit=` | `{items:[annotation],total}`；实时校验：`valid:true` 或 `valid:false` + `invalid_reason`（资料更新/已删除/当前版本找不到摘录），失效条目不 500。 |
+| `POST /api/doc-annotations/{annotation_id}/refresh` | — | 在新版本重新定位：`{annotation,migrated,valid,invalid_reason,notice}`；找不到仍 200 + `valid:false`（不迁怒 404）。 |
+| `DELETE /api/doc-annotations/{annotation_id}` | — | `{deleted:true,annotation_id}`；他人 404。 |
+
+版本口径：`doc_version = sha256(json.dumps(chunks, ensure_ascii=False, sort_keys=True))[:16]`（内容摘要即版本）。
+定位顺序：`chunk_id` 精确 → `quote`（空白折叠 + ASCII 大小写归一，返回原文偏移）→ `page`（该页首块起点）。
+
+### 26.3 掌握路径 `/api/mastery-paths`（`app/mastery_path.py`，6 条）
+
+| 方法/路径 | 请求 | 响应要点 |
+| --- | --- | --- |
+| `POST /api/mastery-paths` | `{subject?,kp_ids?:[int]≤8,title?,source_kind?}` | 201 `{path,nodes,progress,sample_note,replayed,note}`；同知识点集合 active 路径复用（200 + `replayed:true`）；非法知识点 422；自动选择无证据时 422「样本不足，无法自动生成掌握路径；请显式指定知识点」。 |
+| `GET /api/mastery-paths` | `?status=&limit=` | `{items:[{path_id,title,subject,status,progress:{nodes_total,nodes_done,percent},sample_status,created_at,updated_at}],total,limit,status,note}`。 |
+| `GET /api/mastery-paths/{path_id}` | — | `{path,nodes:[{node_id,position,kp_id,kp_name,title,kind,status,requirements,evidence,sample_status,completed_at}],progress,sample_note,recent_events[≤10],caliber}`；他人 404。 |
+| `POST /api/mastery-paths/{path_id}/nodes/{node_id}/restate` | `{text(20–2000)}` | 仅 `concept` 节点：写 `self_report=independent` 自评证据并完成节点；过短 422；`{node,path,progress}`。 |
+| `POST /api/mastery-paths/{path_id}/nodes/{node_id}/refresh` | — | 仅 `practice` 节点：按证据核验「≥2 道不同题独立答对」；不足保持 pending 并返回 `evidence.{distinct_questions,matched_questions,missing,note}`。 |
+| `POST /api/mastery-paths/{path_id}/archive` | — | 归档（幂等）；归档路径节点操作 409。 |
+
+完成条件口径：练习节点只认 `study_evidence` 有效、已核验、`verdict=correct` 且独立（`self_report=independent`
+或 `prompt_state=none`）的**不同题**，提示/揭晓后作答不计；概念复述是学生自评独立标记，不冒充核验结果；
+知识点关联题 <2 时 `sample_status=insufficient` 并显示「样本不足」，路径绝不伪造完成。
+
+### 26.4 前端接线与静态契约
+
+- `question.js`：「函数图像」（数学/含公式，懒加载 `functionGraph.js`）、「画解题思路」（懒加载 `sketchBoard.js`）、
+  「按步骤提示」（`/api/guided-hints`，锁定正文不缓存）；保存后不整页刷新。入口带
+  `data-study-tool-open="function-graph|whiteboard|guided-hints"`；导出 `questionRefOf`/`openGuidedHintsPanel` 供错题页复用。
+- `wrongbook.js`：每行「解题工具」菜单（画思路/看图/按步骤提示），复用题目页入口；四档评分与既有功能不变。
+- `notes.js`：资料/来源「定位原文」「保存为摘录」「我的摘录」（有效/失效、重新定位、删除）；接口不可用中文降级。
+- `insight.js`：掌握路径列表/生成（薄弱知识点勾选 ≤8 或自动）/详情（刷新核验、概念复述、完成横幅、归档、样本不足提示）。
+- 组件数据模型：`function_graph`（`source:"mafs-compatible"`，expressions/params/xRange/yRange）与
+  `whiteboard`（`source:"excalidraw-compatible"`，elements 七类）均保存为 `study_artifact` 附件（版本化、by-target 重开）；
+  函数图表达式用自写 AST 解析器求值（**不用 eval**）；白板预览 PNG 压缩 ≤64KiB。
+- 新增 locale 键 218 个（`study.tools.*` 118 + `study.m3.*` 100），zh/en 各 **5,010** 键对齐；
+  新增样式 `styles-study-tools.css`、`styles-m3-pages.css` 由 `web/index.html` 加载。
+- `scripts/integration/ui_static_accept.py` 新增 M3 断言：组件文件齐全、题目/错题/笔记/学情接入点、
+  样式加载、`study.tools./study.m3.` 命名空间下限与关键键。
+
+### 26.5 验收入口
+
+- `python -X utf8 scripts/integration/m3_accept.py`：端到端 27 项（逐步提示解锁协议/资料定位与摘录/
+  掌握路径证据核验/图形附件 by-target），报告 `screenshots/m3-accept-report.json`。
+- `scripts/accept_runner.py` 新增 `m3` 阶段（`bank → compileall → node-check → ui-static → round5 → m3 → pytest`）。
+- 专项测试：`tests/test_guided_hint.py`（20）、`tests/test_doc_location.py`（29）、
+  `tests/test_mastery_path.py`（27）、`tests/test_m3_integration.py`（6）。

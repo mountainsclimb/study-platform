@@ -13,6 +13,19 @@ import { renderAiResult } from '../components/aiResultCard.js';
 import { openKpDetailDialog } from '../components/kpDetailModal.js';
 import { openPresentationMode } from '../components/presentationMode.js';
 import { t } from '../core/i18n.js';
+import { markdown } from '../core/markdown.js';
+
+/**
+ * M3 学习工具文案：新 key 统一 `study.tools.*`，语言包由 Lead 合并；
+ * 缺键时回退中文常量（不破坏中英文界面切换，也不用改 locale JSON）。
+ */
+function toolText(key, fallback, vars) {
+  const value = t(key, vars);
+  if (value !== key) return value;
+  return String(fallback).replace(/\{(\w+)\}/g, (match, name) => (
+    vars && vars[name] !== undefined && vars[name] !== null ? String(vars[name]) : match
+  ));
+}
 
 // 掌握度是后端下发的中文枚举值：提交保持原值，界面展示按当前语言映射。
 const MASTERY_LEVEL_KEYS = {
@@ -560,7 +573,7 @@ function defaultPrincipleView(subject) {
 }
 
 // 统一题目引用：bank:<qid> / app:<id> / official:<public_id>；裸 qid 按题库题补 bank:。
-function questionRefOf(q) {
+export function questionRefOf(q) {
   const raw = String(q?.ref || q?.qid || '').trim();
   if (!raw) return '';
   if (/^(bank|app|official):/.test(raw)) return raw;
@@ -914,6 +927,435 @@ async function openPrincipleDialog(q, trigger) {
   }
 }
 
+/* ---------------------------------------------------------------------------
+ * M3 数学互动入口（方案 §3「数学主流程」第 2 步 / §5.4「Mafs 与 Excalidraw」「逐步辅导」）
+ * ---------------------------------------------------------------------------
+ * - 「函数图像」：数学题或题干含公式时显示；懒加载 components/functionGraph.js
+ *   （Mafs 兼容定义 + 原生 SVG），先按 by-target 取已保存的 function_graph 附件；
+ * - 「画解题思路」：所有题显示；懒加载 components/sketchBoard.js
+ *   （Excalidraw 兼容场景 + 原生 canvas），先按 by-target 取已保存的 whiteboard 附件；
+ * - 「按步骤提示」：所有题显示；直接调用 /api/guided-hints，未解锁步骤不缓存/不推测正文。
+ * 弹层保存成功后不刷新整页；组件不可用/接口未就绪时只中文提示，不影响作答主流程。
+ * ------------------------------------------------------------------------- */
+
+/** 函数图入口条件：数学题、后端标记 has_formula、或题干内容块含公式（latex）。 */
+function isFunctionGraphQuestion(q) {
+  if (!q || typeof q !== 'object') return false;
+  if (String(q.subject || '').trim() === '数学') return true;
+  if (q.has_formula === true) return true;
+  return blockList(q.stem_blocks).some((block) => {
+    if (!block || typeof block !== 'object') return false;
+    const kind = String(block.kind || block.type || '').toLowerCase();
+    return kind === 'math' || (typeof block.latex === 'string' && block.latex.trim() !== '');
+  });
+}
+
+/** 打开函数图工具（按需加载组件；先探测题目已保存附件，接口不可用时打开默认图像）。 */
+async function launchFunctionGraphTool(q, trigger) {
+  const ref = questionRefOf(q);
+  await busy(trigger, async () => {
+    try {
+      const module = await import('../components/functionGraph.js');
+      await module.openFunctionGraphForTarget({
+        ref,
+        trigger,
+        titleHint: String(q.number_label || q.qid || '').trim(),
+        fallbackItems: q.study && Array.isArray(q.study.artifacts) ? q.study.artifacts : [],
+      });
+    } catch (error) {
+      toast(toolText('study.tools.open.failed', '打开函数图像失败：{v1}', {
+        v1: error?.message || '',
+      }), true);
+    }
+  });
+}
+
+/** 打开解题白板工具（按需加载组件；先探测题目已保存白板附件）。 */
+async function launchSketchBoardTool(q, trigger) {
+  const ref = questionRefOf(q);
+  await busy(trigger, async () => {
+    try {
+      const module = await import('../components/sketchBoard.js');
+      await module.openSketchBoardForTarget({
+        ref,
+        trigger,
+        titleHint: String(q.number_label || q.qid || '').trim(),
+        fallbackItems: q.study && Array.isArray(q.study.artifacts) ? q.study.artifacts : [],
+      });
+    } catch (error) {
+      toast(toolText('study.tools.open.failed', '打开解题白板失败：{v1}', {
+        v1: error?.message || '',
+      }), true);
+    }
+  });
+}
+
+function functionGraphEntryButton(q) {
+  if (!isFunctionGraphQuestion(q)) return null;
+  return button(toolText('study.tools.open.graph', '函数图像'), event => {
+    launchFunctionGraphTool(q, event.currentTarget);
+  }, 'soft small', 'chart', {
+    title: toolText('study.tools.open.graphHint', '打开函数图像，拖动参数观察图像变化'),
+    'data-study-tool-open': 'function-graph',
+  });
+}
+
+function sketchBoardEntryButton(q) {
+  return button(toolText('study.tools.open.board', '画解题思路'), event => {
+    launchSketchBoardTool(q, event.currentTarget);
+  }, 'soft small', 'edit', {
+    title: toolText('study.tools.open.boardHint', '打开白板，画下你的解题思路'),
+    'data-study-tool-open': 'whiteboard',
+  });
+}
+
+function guidedHintsEntryButton(q) {
+  return button(toolText('study.tools.open.hints', '按步骤提示'), event => {
+    try {
+      openGuidedHintsPanel({
+        ref: questionRefOf(q),
+        trigger: event.currentTarget,
+        label: [q.subject, q.number_label || q.qid].filter(Boolean).join(' · '),
+      });
+    } catch (error) {
+      toast(toolText('study.tools.open.failed', '打开逐步提示失败：{v1}', {
+        v1: error?.message || '',
+      }), true);
+    }
+  }, 'soft small', 'message', {
+    title: toolText('study.tools.open.hintsHint', '按步骤提交尝试，逐级解锁完整解析'),
+    'data-study-tool-open': 'guided-hints',
+  });
+}
+
+/* ------------------------------------------------------------------------- *
+ * 逐步提示弹层（方案 §3「数学主流程」/ §5.3「逐步辅导」）
+ * - 先 GET /api/guided-hints/by-ref；不存在（404）再 POST /api/guided-hints 创建；
+ * - 完整解析是最后一步，必须在前面步骤提交尝试后逐级解锁；未解锁内容由服务端保留，
+ *   前端只渲染服务端下发的步骤（locked 步骤只有标题，不缓存/不推测正文）；
+ * - 每次提交尝试 POST /advance {attempt}，返回 requires_attempt 时按服务端 message 提示；
+ * - 全部解锁后展示完成状态与 source_note（默认「规则分步提示，完整解析仅在提交尝试后解锁」）。
+ * ------------------------------------------------------------------------- */
+
+const HINT_SOURCE_NOTE_FALLBACK = '规则分步提示，完整解析仅在提交尝试后解锁';
+
+/**
+ * 打开某道题的「按步骤提示」弹层（原生 dialog，Esc 关闭，焦点归还触发按钮）。
+ * @param {{ref: string, trigger?: HTMLElement, label?: string}} options
+ * @returns {{element: HTMLDialogElement, dialog: HTMLDialogElement, reload: Function,
+ *            close: Function, destroy: Function} | null}
+ */
+export function openGuidedHintsPanel(options = {}) {
+  const ref = String(options.ref || '').trim();
+  if (!ref) {
+    toast(toolText('study.tools.hints.noRef', '当前题目缺少统一引用，暂时无法使用逐步提示。'), true);
+    return null;
+  }
+  const labelText = String(options.label || '').trim();
+  const state = {
+    hint: null,
+    steps: [],
+    sourceNote: '',
+    loading: true,
+    error: '',
+    notice: '',
+  };
+  let requestSeq = 0;
+  let destroyed = false;
+
+  const dialog = el('dialog', {
+    class: 'st-dialog st-hints-dialog',
+    'data-study-tool': 'guided-hints-dialog',
+    'aria-label': toolText('study.tools.title.hints', '按步骤提示'),
+  });
+  const progressNode = el('p', { class: 'st-hints-progress', role: 'status', 'aria-live': 'polite' });
+  const statusHost = el('div', { class: 'st-hints-status' });
+  const noticeHost = el('div', { class: 'st-hints-notice', 'aria-live': 'polite' });
+  const stepsHost = el('div', { class: 'st-hints-steps' });
+  const completeHost = el('div', { class: 'st-hints-complete-host' });
+  const attemptInput = el('textarea', {
+    class: 'st-hints-input',
+    rows: '3',
+    maxlength: '2000',
+    placeholder: toolText('study.tools.hints.inputPlaceholder', '写下你这一步的尝试'),
+    'aria-label': toolText('study.tools.hints.inputPlaceholder', '写下你这一步的尝试'),
+  });
+  const submitButton = button(
+    toolText('study.tools.hints.submit', '提交并解锁下一步'),
+    () => submitAttempt(),
+    '',
+    'check',
+    { 'data-hints-submit': 'true' },
+  );
+  const form = el('form', { class: 'st-hints-form' },
+    el('label', { class: 'st-hints-input-label' },
+      el('span', {}, toolText('study.tools.hints.attemptLabel', '这一步的尝试')),
+      attemptInput),
+    submitButton);
+  form.addEventListener('submit', (event) => {
+    event.preventDefault();
+    submitAttempt();
+  });
+  const formHost = el('div', { class: 'st-hints-form-host' }, form);
+
+  dialog.append(
+    el('div', { class: 'st-dialog-head' },
+      el('div', {},
+        el('div', { class: 'st-dialog-eyebrow' }, toolText('study.tools.hints.eyebrow', '逐步辅导')),
+        el('h3', { class: 'st-dialog-title' }, toolText('study.tools.title.hints', '按步骤提示')),
+        labelText ? el('p', { class: 'st-dialog-subtitle', 'data-no-i18n': 'true' }, labelText) : null),
+      el('button', {
+        type: 'button',
+        class: 'st-dialog-close',
+        'aria-label': toolText('study.tools.close', '关闭'),
+        title: toolText('study.tools.close', '关闭'),
+        onClick: () => dialog.close(),
+      }, icon('close'))),
+    el('div', { class: 'st-dialog-body' },
+      progressNode,
+      statusHost,
+      noticeHost,
+      stepsHost,
+      completeHost,
+      formHost),
+    el('div', { class: 'st-dialog-actions' },
+      button(toolText('study.tools.close', '关闭'), () => dialog.close(), 'secondary')),
+  );
+
+  function progressOf() {
+    const hint = state.hint && typeof state.hint === 'object' ? state.hint : {};
+    const progress = hint.progress && typeof hint.progress === 'object' ? hint.progress : {};
+    const unlockedCount = state.steps.filter(step => step && !step.locked).length;
+    const totalRaw = Number(progress.total);
+    const total = Number.isFinite(totalRaw) && totalRaw > 0 ? totalRaw : state.steps.length;
+    const unlockedRaw = Number(progress.unlocked);
+    const unlocked = Number.isFinite(unlockedRaw) && unlockedRaw >= 0 ? unlockedRaw : unlockedCount;
+    const done = progress.done === true || hint.status === 'completed'
+      || (state.steps.length > 0 && state.steps.every(step => step && !step.locked));
+    return { total, unlocked: Math.min(unlocked, Math.max(total, unlocked)), done };
+  }
+
+  function applyPayload(payload) {
+    const hint = payload && payload.hint && typeof payload.hint === 'object' ? payload.hint : {};
+    state.hint = hint;
+    state.steps = Array.isArray(payload?.steps)
+      ? payload.steps.filter(step => step && typeof step === 'object')
+      : [];
+    state.sourceNote = String(payload?.source_note || hint.source_note || '').trim();
+  }
+
+  function render() {
+    if (destroyed) return;
+    const progress = progressOf();
+    dialog.setAttribute('data-hints-state', state.loading ? 'loading' : state.error ? 'error'
+      : progress.done ? 'completed' : 'active');
+
+    progressNode.hidden = state.loading || Boolean(state.error);
+    if (!progressNode.hidden) {
+      progressNode.textContent = toolText('study.tools.hints.progress', '已解锁 {v1}/{v2}', {
+        v1: progress.unlocked,
+        v2: progress.total,
+      });
+    }
+
+    if (state.loading) {
+      statusHost.replaceChildren(el('p', { class: 'st-hints-loading' },
+        el('span', { class: 'spinner' }),
+        toolText('study.tools.hints.loading', '正在读取逐步提示…')));
+      stepsHost.replaceChildren();
+      completeHost.replaceChildren();
+      formHost.hidden = true;
+    } else if (state.error) {
+      statusHost.replaceChildren(el('div', { class: 'st-hints-alert' },
+        toolText('study.tools.hints.unavailable', '逐步提示暂不可用：{v1}', { v1: state.error }),
+        button(toolText('study.tools.hints.retry', '重试'), () => load(), 'secondary small', 'repeat')));
+      stepsHost.replaceChildren();
+      completeHost.replaceChildren();
+      formHost.hidden = true;
+    } else {
+      statusHost.replaceChildren();
+      renderSteps();
+      renderComplete(progress);
+      formHost.hidden = progress.done;
+    }
+
+    if (state.notice) {
+      noticeHost.replaceChildren(el('div', { class: 'st-hints-alert' }, state.notice));
+    } else {
+      noticeHost.replaceChildren();
+    }
+  }
+
+  function renderSteps() {
+    const rows = state.steps.map((step, index) => {
+      const locked = Boolean(step.locked);
+      const position = Number(step.position);
+      const stepNumber = Number.isFinite(position) ? position + 1 : index + 1;
+      const row = el('section', {
+        class: `st-hint-step ${locked ? 'is-locked' : 'is-unlocked'}`,
+        'data-hint-position': String(Number.isFinite(position) ? position : index),
+      });
+      const head = el('div', { class: 'st-hint-step-head' },
+        el('span', { class: 'st-hint-step-no' }, toolText('study.tools.hints.step', '第 {v1} 步', { v1: stepNumber })),
+        el('strong', { class: 'st-hint-step-title', 'data-no-i18n': 'true' },
+          String(step.title || '') || toolText('study.tools.hints.untitled', '未命名步骤')));
+      if (!locked && step.kind === 'solution') {
+        head.append(el('span', { class: 'st-hint-badge' }, toolText('study.tools.hints.solution', '完整解析')));
+      }
+      if (!locked && step.attempted) {
+        head.append(el('span', { class: 'st-hint-badge is-ok' }, toolText('study.tools.hints.attempted', '已提交尝试')));
+      }
+      row.append(head);
+      if (locked) {
+        row.append(el('p', { class: 'st-hint-locked' },
+          icon('lock'), toolText('study.tools.hints.lockedHint', '提交你的尝试后可解锁')));
+      } else {
+        const bodyText = String(step.body || '').trim();
+        if (bodyText) {
+          // 已解锁步骤正文由服务端下发（Markdown）：走统一 markdown() 净化入口，不做 HTML 拼接。
+          row.append(el('div', { class: 'st-hint-body' }, markdown(bodyText)));
+        }
+      }
+      return row;
+    });
+    if (!rows.length) {
+      rows.push(el('p', { class: 'st-hints-empty' },
+        toolText('study.tools.hints.empty', '这道题暂时没有分步提示。')));
+    }
+    stepsHost.replaceChildren(...rows);
+  }
+
+  function renderComplete(progress) {
+    if (!progress.done) {
+      completeHost.replaceChildren();
+      return;
+    }
+    const note = state.sourceNote
+      || toolText('study.tools.hints.sourceNoteDefault', HINT_SOURCE_NOTE_FALLBACK);
+    completeHost.replaceChildren(el('div', { class: 'st-hints-complete', role: 'status' },
+      el('strong', { class: 'st-hints-complete-title' },
+        icon('check'), toolText('study.tools.hints.completed', '全部步骤已解锁，完整解析已显示。')),
+      el('p', { class: 'st-hints-source', 'data-no-i18n': 'true' }, note)));
+  }
+
+  function applyAdvance(response) {
+    const hint = response?.hint && typeof response.hint === 'object' ? response.hint : state.hint;
+    const unlocked = response?.unlocked && typeof response.unlocked === 'object' ? response.unlocked : null;
+    if (Array.isArray(response?.steps)) {
+      // 服务端在 advance 响应里给出完整步骤视图（已解锁含正文、未解锁只有标题）：
+      // 直接采用，避免本地合并产生状态漂移；未解锁正文仍只来自服务端。
+      state.steps = response.steps.filter(step => step && typeof step === 'object');
+    } else if (unlocked) {
+      const position = Number(unlocked.position);
+      const index = state.steps.findIndex(step => Number(step?.position) === position);
+      if (index >= 0) state.steps[index] = unlocked;
+      else state.steps.push(unlocked);
+    }
+    if (hint) state.hint = hint;
+    if (response?.source_note) state.sourceNote = String(response.source_note).trim();
+    if (unlocked) {
+      toast(toolText('study.tools.hints.unlockedNext', '已解锁下一步：{v1}', {
+        v1: String(unlocked.title || '').trim() || toolText('study.tools.hints.nextStep', '下一步'),
+      }));
+    } else if (response?.requires_attempt) {
+      state.notice = String(response.message || '').trim()
+        || toolText('study.tools.hints.requiresAttempt', '请先提交你这一步的尝试，再解锁下一步。');
+    } else if (response?.message) {
+      state.notice = String(response.message).trim();
+    } else {
+      state.notice = '';
+    }
+    render();
+  }
+
+  async function submitAttempt() {
+    if (state.loading || state.error || destroyed) return;
+    const hintId = String(state.hint?.hint_id || '').trim();
+    if (!hintId) {
+      state.notice = toolText('study.tools.hints.missingHint', '服务端未返回提示会话 ID，请关闭后重试。');
+      render();
+      return;
+    }
+    const text = String(attemptInput.value || '').trim();
+    if (text.length < 1) {
+      state.notice = toolText('study.tools.hints.emptyAttempt', '请先写下你这一步的尝试（至少 1 个字）。');
+      render();
+      attemptInput.focus();
+      return;
+    }
+    await busy(submitButton, async () => {
+      try {
+        const response = await api(`/guided-hints/${encodeURIComponent(hintId)}/advance`, {
+          method: 'POST',
+          data: { attempt: text },
+        });
+        if (destroyed) return;
+        attemptInput.value = '';
+        applyAdvance(response);
+      } catch (error) {
+        if (destroyed) return;
+        state.notice = toolText('study.tools.hints.advanceFailed', '提交失败：{v1}', {
+          v1: error?.message || '',
+        });
+        render();
+      }
+    });
+  }
+
+  async function load() {
+    const token = ++requestSeq;
+    state.loading = true;
+    state.error = '';
+    state.notice = '';
+    attemptInput.value = '';
+    render();
+    try {
+      let payload = null;
+      try {
+        // 优先读取已有会话；404（尚未创建）或接口暂不可用时回退 POST 创建（已存在会重放）。
+        payload = await api(`/guided-hints/by-ref?${query({ ref })}`);
+      } catch {
+        payload = await api('/guided-hints', { method: 'POST', data: { ref } });
+      }
+      if (destroyed || token !== requestSeq) return;
+      applyPayload(payload);
+      state.loading = false;
+      render();
+    } catch (error) {
+      if (destroyed || token !== requestSeq) return;
+      state.loading = false;
+      state.error = error?.message || '';
+      render();
+    }
+  }
+
+  dialog.addEventListener('close', () => {
+    destroyed = true;
+    requestSeq += 1;
+    dialog.remove();
+    try {
+      options.trigger?.focus?.();
+    } catch {
+      /* 焦点归还失败忽略 */
+    }
+  });
+  dialog.addEventListener('click', (event) => {
+    if (event.target === dialog) dialog.close();
+  });
+  document.body.append(dialog);
+  if (typeof dialog.showModal === 'function') dialog.showModal();
+  else dialog.setAttribute('open', '');
+  load();
+
+  return {
+    element: dialog,
+    dialog,
+    reload: load,
+    close: () => dialog.close(),
+    destroy: () => dialog.close(),
+  };
+}
+
 export async function openQuestion(qid, container = $('#question-detail'), { scrollOnMobile = false, onSubmitted = null } = {}) {
   if (!container) return;
   revokePreviewUrl();
@@ -1008,6 +1450,10 @@ export function renderQuestion(
       : null,
     // 方案界面落点：题目详情提供「查看原理」；仅六科显示（见 principleEntryButton）。
     principleEntryButton(q),
+    // M3 数学互动：函数图像（数学/公式题）、画解题思路（所有题）、按步骤提示（所有题）。
+    functionGraphEntryButton(q),
+    sketchBoardEntryButton(q),
+    guidedHintsEntryButton(q),
     button(t('question.presentationMode'), () => {
       openPresentationMode({ qid: q.qid, question: q })
         .catch(error => toast(error?.message || t('wrongbook.presentationFailed'), true));

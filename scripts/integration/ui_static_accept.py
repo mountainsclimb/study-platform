@@ -69,6 +69,9 @@ PRINCIPLE_ISO_JS = PRINCIPLE_DIR / "iso.js"
 PRINCIPLE_THREE_JS = PRINCIPLE_DIR / "threeLite.js"
 PRINCIPLE_PRESETS_JS = PRINCIPLE_DIR / "presets.js"
 ROUND5_STYLES = ("styles-formula.css", "styles-review.css", "styles-principles.css")
+# M3（§5.2/§5.3/§5.4）：函数图 / 白板工具、资料定位与掌握路径页面。
+M3_COMPONENTS = (JS / "components" / "functionGraph.js", JS / "components" / "sketchBoard.js")
+M3_STYLES = ("styles-study-tools.css", "styles-m3-pages.css")
 INDEX_HTML = WEB / "index.html"
 ANKI_PY = ROOT / "app" / "anki_export.py"
 APP_PRACTICE_PY = ROOT / "app" / "practice.py"
@@ -92,6 +95,9 @@ LOCALE_NAMESPACES = (
     ("study.formula.", 70),
     ("study.review.", 30),
     ("study.demo.", 40),
+    # M3 命名空间：题目/错题学习工具与资料定位/掌握路径（键量下限按本轮交付）。
+    ("study.tools.", 100),
+    ("study.m3.", 90),
 )
 
 #: 直接 t('literal') 键扫描的前端文件（WS30 相关页面/组件；其余页面键由既有 pytest 覆盖）。
@@ -535,10 +541,11 @@ class UiStaticAccept:
                         "scanned_files": len(LOCALE_SCAN_FILES)})
 
     def check_round5_components(self) -> None:
-        """第五轮（方案 §5.1/§5.2/§5.4）：公式输入、四档评分、原理演示的静态契约。
+        """第五轮/M2/M3（方案 §5.1/§5.2/§5.3/§5.4）：组件、工具与页面接线的静态契约。
 
         只做可脚本化的静态断言：组件文件存在、页面确有接入点、样式随主站加载、
-        本地资源（KaTeX / three.js）不引 CDN、演示有三视图与无 WebGL 降级分支。
+        本地资源（KaTeX / three.js）不引 CDN、演示有三视图与无 WebGL 降级分支、
+        逐步提示/资料定位/掌握路径的接口调用点齐全。
         """
         started = time.time()
         checks = []
@@ -585,6 +592,29 @@ class UiStaticAccept:
                        and "study.review.serverSchedule" in wrongbook,
                        "wrongbook.js 需按 due_source 显示统一口径说明与服务端排程徽标"))
 
+        # M3：函数图/白板工具 + 逐步提示 + 资料定位/摘录 + 掌握路径接线。
+        missing_m3 = [str(path.name) for path in M3_COMPONENTS if not path.is_file()]
+        checks.append(("M3 函数图/白板组件文件齐全", not missing_m3, f"缺少: {missing_m3}"))
+        question_source = self._read(QUESTION_JS)
+        checks.append(("题目详情接入函数图/白板/逐步提示",
+                       all(token in question_source for token in
+                           ("functionGraph.js", "sketchBoard.js", "/api/guided-hints")),
+                       "question.js 需懒加载两个组件并调用逐步提示接口"))
+        checks.append(("错题页复用解题工具入口",
+                       all(token in wrongbook for token in
+                           ("sketchBoard.js", "functionGraph.js", "openGuidedHintsPanel")),
+                       "wrongbook.js 需复用题目页的函数图/白板/逐步提示入口"))
+        notes = self._read(NOTES_JS)
+        checks.append(("资料页接入原文定位与摘录",
+                       all(token in notes for token in
+                           ("/locate", "/api/doc-annotations", "refresh")),
+                       "notes.js 需接入 locate 与摘录 CRUD/refresh"))
+        insight_source = self._read(INSIGHT_JS)
+        checks.append(("学情页接入掌握路径",
+                       all(token in insight_source for token in
+                           ("/api/mastery-paths", "restate", "refresh")),
+                       "insight.js 需接入掌握路径列表/详情/节点操作"))
+
         question = self._read(QUESTION_JS)
         checks.append(("题目详情接入「查看原理」并懒加载播放器",
                        "renderPrincipleDemo" in question and "study.demo.open" in question
@@ -608,8 +638,8 @@ class UiStaticAccept:
                        f"含外链: {external}"))
 
         index_source = self._read(INDEX_HTML)
-        styles_missing = [name for name in ROUND5_STYLES if name not in index_source]
-        checks.append(("主站加载第五轮样式表", not styles_missing,
+        styles_missing = [name for name in ROUND5_STYLES + M3_STYLES if name not in index_source]
+        checks.append(("主站加载第五轮与 M3 样式表", not styles_missing,
                        f"index.html 缺少: {styles_missing}"))
 
         zh = json.loads(self._read(LOCALES / "zh-CN.json"))
@@ -621,12 +651,16 @@ class UiStaticAccept:
             # M2：统一到期读路径的关键文案。
             "study.review.unifiedNote", "study.review.homeDue",
             "study.review.homeUnavailable", "study.review.serverSchedule",
+            # M3：学习工具/资料定位/掌握路径关键文案。
+            "study.tools.open.graph", "study.tools.open.board", "study.tools.open.hints",
+            "study.tools.hints.lockedHint", "study.m3.locateOriginal", "study.m3.saveExcerpt",
+            "study.m3.masteryPath", "study.m3.submitRestate", "study.m3.pathCompleted",
         )
         missing_keys = [key for key in required if key not in zh or key not in en]
         checks.append(("第五轮关键 locale 键存在（公式/四档/原理）", not missing_keys,
                        f"缺少: {missing_keys}"))
-        self.step("第五轮组件与页面接线静态契约", checks, started=started,
-                  data={"components": list(components), "styles": list(ROUND5_STYLES)})
+        self.step("第五轮/M2/M3 组件与页面接线静态契约", checks, started=started,
+                  data={"components": list(components), "styles": list(ROUND5_STYLES + M3_STYLES)})
 
     # -- 收尾 -------------------------------------------------------------
     def run(self) -> None:
