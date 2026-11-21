@@ -17,6 +17,7 @@ import {
   el, heading, button, badge, notice, empty, loading, busy, toast,
   field, input, select, dateText, number,
 } from '../core/dom.js';
+import { t } from '../core/i18n.js';
 import { current, go, renderRoute } from '../core/router.js';
 import { createWizardView } from '../components/classroomWizard.js';
 import { createPlayerView } from '../components/classroomPlayer.js';
@@ -391,6 +392,392 @@ function mountEditorEntry(node, courseId, version) {
   };
 }
 
+// ---------------------------------------------------------------------------
+// M4 课堂演示场景：把已保存的学习附件以「固定版本」插入课堂 / 删除演示场景
+// ---------------------------------------------------------------------------
+// - 附件列表 GET /api/artifacts?kind=<kind>&page_size=50（仅公开元数据，不含 data）；
+// - 插入 POST /api/classroom/courses/{id}/scenes/demo（带上当前版本号 → 后端固定版本）；
+// - 删除 DELETE /api/classroom/courses/{id}/scenes/{scene_id}（仅 demo 场景）；
+// - 接口缺失/失败时只做中文降级提示，不伪造列表或插入结果。
+
+const DEMO_ARTIFACT_KINDS = Object.freeze([
+  'function_graph', 'whiteboard', 'flow_animation', 'isometric', 'science_demo', 'demo_3d',
+]);
+
+/** kind → 文案键 + 中文兜底（kind 是后端枚举，不直接拼进界面文案）。 */
+const DEMO_KIND_META = Object.freeze({
+  function_graph: { key: 'study.m4.kind.functionGraph', fallback: '函数图' },
+  whiteboard: { key: 'study.m4.kind.whiteboard', fallback: '解题白板' },
+  flow_animation: { key: 'study.m4.kind.flowAnimation', fallback: '流程动画' },
+  isometric: { key: 'study.m4.kind.isometric', fallback: '等距结构' },
+  science_demo: { key: 'study.m4.kind.scienceDemo', fallback: '科学演示' },
+  demo_3d: { key: 'study.m4.kind.demo3d', fallback: '3D 演示' },
+});
+
+/** 取 `study.m4.*` 文案：locale 缺键时回退中文常量并做 `{name}` 插值。 */
+function m4Text(key, fallback, vars) {
+  const value = t(key, vars);
+  if (value !== key) return value;
+  return String(fallback).replace(/\{(\w+)\}/g, (match, name) => (
+    vars && vars[name] !== undefined && vars[name] !== null ? String(vars[name]) : match
+  ));
+}
+
+function demoKindLabel(kind) {
+  const meta = DEMO_KIND_META[String(kind || '')];
+  return meta ? m4Text(meta.key, meta.fallback) : m4Text('study.m4.kind.other', '学习附件');
+}
+
+/** 后端 meta.demo_artifact_kinds 优先（`{demo:[kind...]}` 或数组两种形状）；
+ *  未声明（后端未就绪）时按 6 类演示附件探测。 */
+function demoArtifactKinds(meta) {
+  const declared = meta?.demo_artifact_kinds;
+  let fromMeta = [];
+  if (Array.isArray(declared)) fromMeta = declared;
+  else if (declared && typeof declared === 'object') {
+    fromMeta = Object.values(declared)
+      .filter(Array.isArray)
+      .flat();
+  }
+  const kinds = fromMeta.map(kind => String(kind || '').trim()).filter(Boolean);
+  return kinds.length ? [...new Set(kinds)] : [...DEMO_ARTIFACT_KINDS];
+}
+
+function sceneKind(scene) {
+  return String(scene?.scene_type || scene?.type || '');
+}
+
+function demoSceneTitle(scene) {
+  const content = scene?.content && typeof scene.content === 'object' ? scene.content : {};
+  const artifact = content.artifact && typeof content.artifact === 'object' ? content.artifact : {};
+  return String(artifact.title || scene?.title || '').trim()
+    || m4Text('study.m4.demoStage.untitled', '未命名演示');
+}
+
+function demoSceneRevision(scene) {
+  const content = scene?.content && typeof scene.content === 'object' ? scene.content : {};
+  const artifact = content.artifact && typeof content.artifact === 'object' ? content.artifact : {};
+  const revision = Number(artifact.revision ?? content.fixed_revision);
+  return Number.isFinite(revision) && revision > 0 ? Math.round(revision) : 0;
+}
+
+/** 并行读取演示类学习附件 → 去重合并（列表只含公开元数据：标题/kind/当前版本）。 */
+async function loadDemoArtifactOptions() {
+  const meta = await loadClassroomMeta();
+  const kinds = demoArtifactKinds(meta);
+  const results = await Promise.allSettled(
+    kinds.map(kind => api(`/artifacts?kind=${encodeURIComponent(kind)}&page_size=50`)),
+  );
+  const seen = new Set();
+  const failedKinds = [];
+  const items = [];
+  results.forEach((result, index) => {
+    if (result.status !== 'fulfilled') { failedKinds.push(kinds[index]); return; }
+    const list = Array.isArray(result.value?.items) ? result.value.items : [];
+    for (const item of list) {
+      if (!item || typeof item !== 'object') continue;
+      const artifactId = String(item.artifact_id || '');
+      if (!artifactId || seen.has(artifactId)) continue;
+      seen.add(artifactId);
+      items.push(item);
+    }
+  });
+  items.sort((left, right) => String(right.updated_at || '').localeCompare(String(left.updated_at || '')));
+  return { items, failedKinds, totalKinds: kinds.length };
+}
+
+/**
+ * 「插入演示」弹层：选中一个学习附件 → 固定当前版本插入课堂。
+ * @param {{courseId:number, onInserted?:(result:object)=>void}} options
+ * @returns {HTMLDialogElement}
+ */
+function openDemoInsertDialog({ courseId, onInserted } = {}) {
+  const dialog = el('dialog', {
+    class: 'modal-dialog cls-demo-insert-dialog',
+    'aria-label': m4Text('study.m4.classroom.insertDialogTitle', '插入学习附件演示'),
+  });
+  const listHost = el('div', { class: 'cls-demo-insert-list' },
+    loading(m4Text('study.m4.classroom.insertLoading', '正在读取学习附件…')));
+  const status = el('p', { class: 'help cls-demo-insert-status', role: 'status', 'aria-live': 'polite' });
+  const titleInput = input(m4Text('study.m4.classroom.titlePlaceholder', '默认使用附件标题'), { maxlength: '120' });
+  const noteInput = el('textarea', {
+    class: 'cls-demo-insert-note',
+    rows: 2,
+    maxlength: '300',
+    placeholder: m4Text('study.m4.classroom.notePlaceholder', '会显示在课堂演示底部，说明演示出处或使用建议'),
+  });
+  const confirmButton = button(m4Text('study.m4.classroom.insertConfirm', '插入课堂'), null, '', 'plus', {
+    disabled: true,
+    'data-demo-insert-confirm': 'true',
+  });
+  let selected = null;
+  let loadSeq = 0;
+  let submitting = false;
+  const close = () => { try { dialog.close(); } catch { /* 已关闭时忽略 */ } };
+
+  function setStatus(text, isError = false) {
+    status.textContent = text || '';
+    status.classList.toggle('is-error', Boolean(isError));
+  }
+
+  function renderOptions({ items, failedKinds, totalKinds }) {
+    if (!items.length) {
+      listHost.replaceChildren(
+        el('p', { class: 'cls-demo-insert-empty' },
+          m4Text('study.m4.classroom.insertEmpty', '请先在题目页把函数图/演示保存为学习附件，再插入课堂')),
+        el('p', { class: 'help' },
+          m4Text('study.m4.classroom.insertEmptyHint', '支持流程动画、等距结构、3D 演示、科学演示、函数图与解题白板。')),
+        button(t('common.reload'), () => load(), 'secondary small', 'rotate'));
+      if (failedKinds.length && failedKinds.length >= totalKinds) {
+        setStatus(m4Text('study.m4.classroom.insertUnavailable', '学习附件暂不可用，请稍后重试。'), true);
+      } else if (failedKinds.length) {
+        setStatus(m4Text('study.m4.classroom.insertPartial', '部分类型读取失败，已列出可用附件。'));
+      }
+    } else {
+      listHost.replaceChildren(
+        el('p', { class: 'help cls-demo-insert-select-hint' },
+          m4Text('study.m4.classroom.selectHint', '选择一个学习附件插入课堂；插入后会固定当前版本。')));
+      const nodes = [];
+      const options = el('div', {
+        class: 'cls-demo-insert-items',
+        role: 'group',
+        'aria-label': m4Text('study.m4.classroom.insertDialogTitle', '插入学习附件演示'),
+      });
+      for (const item of items) {
+        const artifactId = String(item.artifact_id || '');
+        const revision = Number(item.current_revision) || 1;
+        const metaParts = [
+          demoKindLabel(item.kind),
+          m4Text('study.m4.common.version', '版本 v{version}', { version: revision }),
+          item.updated_at
+            ? m4Text('study.m4.common.updatedAt', '更新于 {time}', { time: dateText(item.updated_at) })
+            : null,
+        ].filter(Boolean);
+        const node = el('button', {
+          type: 'button',
+          class: 'cls-demo-insert-item',
+          'aria-pressed': 'false',
+          'data-artifact-id': artifactId,
+          onClick: () => {
+            selected = item;
+            for (const other of nodes) {
+              const active = other === node;
+              other.classList.toggle('is-selected', active);
+              other.setAttribute('aria-pressed', active ? 'true' : 'false');
+            }
+            confirmButton.disabled = false;
+            setStatus('');
+          },
+        },
+        el('span', { class: 'cls-demo-insert-item-main' },
+          el('strong', { class: 'cls-demo-insert-item-title', 'data-no-i18n': 'true' },
+            String(item.title || m4Text('study.m4.kind.other', '学习附件'))),
+          el('span', { class: 'help cls-demo-insert-item-meta' }, metaParts.join(' · '))),
+        el('span', { class: 'cls-demo-insert-check', 'aria-hidden': 'true' }, ''));
+        nodes.push(node);
+        options.append(node);
+      }
+      listHost.append(options);
+    }
+    if (items.length && failedKinds.length) {
+      setStatus(m4Text('study.m4.classroom.insertPartial', '部分类型读取失败，已列出可用附件。'));
+    }
+  }
+
+  async function load() {
+    const seq = ++loadSeq;
+    selected = null;
+    confirmButton.disabled = true;
+    listHost.replaceChildren(loading(m4Text('study.m4.classroom.insertLoading', '正在读取学习附件…')));
+    setStatus('');
+    try {
+      const result = await loadDemoArtifactOptions();
+      if (seq !== loadSeq || !dialog.isConnected) return;
+      renderOptions(result);
+    } catch (error) {
+      if (seq !== loadSeq || !dialog.isConnected) return;
+      listHost.replaceChildren(
+        el('p', { class: 'cls-demo-insert-empty' },
+          m4Text('study.m4.classroom.insertUnavailable', '学习附件暂不可用，请稍后重试。')),
+        button(t('common.reload'), () => load(), 'secondary small', 'rotate'));
+      setStatus(error?.message || '', true);
+    }
+  }
+
+  confirmButton.addEventListener('click', async () => {
+    if (!selected || submitting) return;
+    const revision = Number(selected.current_revision) || 1;
+    submitting = true;
+    confirmButton.disabled = true;
+    setStatus(m4Text('study.m4.classroom.inserting', '正在插入演示…'));
+    try {
+      const result = await api(`/classroom/courses/${courseId}/scenes/demo`, {
+        method: 'POST',
+        data: {
+          artifact_id: String(selected.artifact_id),
+          revision,
+          title: String(titleInput.value || '').trim() || undefined,
+          source_note: String(noteInput.value || '').trim() || undefined,
+        },
+      });
+      const pinned = Number(result?.scene?.content?.artifact?.revision) || revision;
+      submitting = false;
+      toast(m4Text('study.m4.classroom.insertSuccess', '已插入演示（固定版本 v{revision}）', { revision: pinned }));
+      close();
+      await onInserted?.(result);
+    } catch (error) {
+      submitting = false;
+      confirmButton.disabled = !selected;
+      setStatus(error?.message || m4Text('study.m4.classroom.insertFailed', '插入演示失败，请重试'), true);
+    }
+  });
+
+  dialog.append(
+    el('div', { class: 'cls-demo-insert-head' },
+      el('div', { class: 'cls-demo-insert-head-text' },
+        el('h3', {}, m4Text('study.m4.classroom.insertDialogTitle', '插入学习附件演示')),
+        el('p', { class: 'help' },
+          m4Text('study.m4.classroom.insertHint', '从已保存的演示/函数图/白板附件中选择一个，插入课堂后会固定当前版本；之后附件升版不影响这一页。'))),
+      button(t('common.close'), close, 'ghost small', 'close', { 'aria-label': t('common.close') })),
+    listHost,
+    el('div', { class: 'cls-demo-insert-form' },
+      field(m4Text('study.m4.classroom.titleField', '场景标题（可选）'), titleInput),
+      field(m4Text('study.m4.classroom.noteField', '插入说明（可选）'), noteInput)),
+    status,
+    el('div', { class: 'row end cls-demo-insert-actions' },
+      button(t('common.cancel'), close, 'secondary'),
+      confirmButton));
+  document.body.append(dialog);
+  dialog.addEventListener('close', () => dialog.remove());
+  dialog.addEventListener('click', event => { if (event.target === dialog) close(); });
+  dialog.showModal();
+  load();
+  return dialog;
+}
+
+/**
+ * 在播放器/生成工作台工具区挂载「插入演示」入口与演示场景管理列表。
+ * 播放器骨架是异步构建的，这里用短轮询等待锚点出现后再插入（与幻灯片编辑入口同一策略）。
+ * @returns {() => void} 清理函数（路由切换时调用）
+ */
+function mountDemoTools(node, courseId, version) {
+  let cancelled = false;
+  let tries = 0;
+  let timer = null;
+  let panel = null;
+  let courseScenes = [];
+
+  const cleanup = () => {
+    cancelled = true;
+    if (timer) { clearTimeout(timer); timer = null; }
+    if (panel) panel.remove();
+    panel = null;
+  };
+
+  /** 插入/删除后刷新课程数据；targetSceneId 用于把播放器进度指向新场景/相邻场景。 */
+  const refreshCourse = async (targetSceneId = 0) => {
+    if (!current(version)) return;
+    if (targetSceneId) {
+      try {
+        const detail = await api(`/classroom/courses/${courseId}`);
+        if (!current(version)) return;
+        await focusPlayerScene(courseId, targetSceneId, Array.isArray(detail?.scenes) ? detail.scenes : []);
+      } catch { /* 定位失败不阻塞刷新 */ }
+    }
+    if (!current(version)) return;
+    try { renderRoute(); } catch { /* 路由已变化时忽略 */ }
+  };
+
+  const deleteDemoScene = async (scene, scenesSnapshot) => {
+    const title = demoSceneTitle(scene);
+    if (!window.confirm(m4Text('study.m4.classroom.deleteConfirm',
+      '删除课堂演示场景「{title}」？只移除这个场景，不会删除学习附件。', { title }))) return;
+    try {
+      await api(`/classroom/courses/${courseId}/scenes/${scene.id}`, { method: 'DELETE' });
+      toast(m4Text('study.m4.classroom.deleteSuccess', '演示场景已删除'));
+      const index = scenesSnapshot.findIndex(item => String(item.id) === String(scene.id));
+      const remaining = scenesSnapshot.filter(item => String(item.id) !== String(scene.id));
+      const target = remaining[Math.min(Math.max(index, 0), remaining.length - 1)];
+      await refreshCourse(target?.id || 0);
+    } catch (error) {
+      toast(error?.message || m4Text('study.m4.classroom.deleteFailed', '删除演示场景失败，请重试'), true);
+    }
+  };
+
+  const renderPanelList = (demos) => {
+    const listHost = panel?.querySelector('.cls-demo-manage-list');
+    if (!listHost) return;
+    if (!demos.length) {
+      listHost.replaceChildren(el('p', { class: 'help cls-demo-manage-empty' },
+        m4Text('study.m4.classroom.demoManageEmpty',
+          '还没有插入演示场景：点击「插入演示」把已保存的学习附件固定到课堂。')));
+      return;
+    }
+    listHost.replaceChildren(...demos.map((scene) => {
+      const revision = demoSceneRevision(scene);
+      const metaParts = [
+        m4Text('study.m4.scene.demo', '原理演示'),
+        revision > 0
+          ? m4Text('study.m4.demoStage.fixedVersion', '固定版本 v{version}', { version: revision })
+          : null,
+      ].filter(Boolean);
+      return el('div', { class: 'cls-demo-manage-item', 'data-scene-id': String(scene.id) },
+        el('div', { class: 'cls-demo-manage-main' },
+          el('strong', { 'data-no-i18n': 'true' }, demoSceneTitle(scene)),
+          el('span', { class: 'help' }, metaParts.join(' · '))),
+        button(m4Text('study.m4.classroom.deleteDemo', '删除'),
+          event => busy(event.currentTarget, () => deleteDemoScene(scene, courseScenes)),
+          'ghost small', 'trash'));
+    }));
+  };
+
+  const place = () => {
+    if (cancelled || !current(version)) return;
+    const anchor = node.querySelector('.cls-player-top, .cls-wizard-toolbar');
+    if (!anchor) {
+      if (tries < 40 && node.isConnected) {
+        tries += 1;
+        timer = setTimeout(place, 100);
+      }
+      return;
+    }
+    panel = el('section', {
+      class: 'cls-demo-manage',
+      'data-demo-tools': '1',
+      'aria-label': m4Text('study.m4.classroom.panelTitle', '课堂演示场景'),
+    },
+    el('div', { class: 'cls-demo-manage-head' },
+      el('div', { class: 'cls-demo-manage-text' },
+        el('strong', {}, m4Text('study.m4.classroom.panelTitle', '课堂演示场景')),
+        el('p', { class: 'help' },
+          m4Text('study.m4.classroom.panelHint',
+            '演示场景以固定版本渲染；附件后续升版不会改变课堂内容。删除只移除课堂场景，不删除学习附件。'))),
+      el('div', { class: 'row cls-demo-manage-actions' },
+        button(m4Text('study.m4.classroom.insert', '插入演示'), () => openDemoInsertDialog({
+          courseId,
+          onInserted: result => refreshCourse(Number(result?.scene?.id) || 0),
+        }), '', 'layers', { 'data-demo-insert': 'true' }))),
+    el('div', { class: 'cls-demo-manage-list' }, loading()));
+    anchor.insertAdjacentElement('afterend', panel);
+    api(`/classroom/courses/${courseId}`)
+      .then((detail) => {
+        if (cancelled || !current(version)) return;
+        courseScenes = Array.isArray(detail?.scenes) ? detail.scenes : [];
+        renderPanelList(courseScenes.filter(scene => sceneKind(scene) === 'demo'));
+      })
+      .catch(() => {
+        if (cancelled || !current(version)) return;
+        const listHost = panel?.querySelector('.cls-demo-manage-list');
+        if (listHost) {
+          listHost.replaceChildren(el('p', { class: 'help' },
+            m4Text('study.m4.classroom.insertUnavailable', '学习附件暂不可用，请稍后重试。')));
+        }
+      });
+  };
+  place();
+  return cleanup;
+}
+
 function buildEditorEntryBar(course, slideScenes, allScenes = []) {
   const sceneSelect = select(
     slideScenes.map((scene) => {
@@ -439,8 +826,10 @@ function renderGenerate(container, version, courseId, jobId) {
   container.replaceChildren(heading('AI CLASSROOM', 'AI 课堂', '课程生成工作台：确认大纲后逐场景生成，可取消、可续跑、可单场景重生成。'));
   const wizard = createWizardView({ container, version, courseId, jobId });
   const detachEntry = mountEditorEntry(wizard.node, courseId, version);
+  const detachDemo = mountDemoTools(wizard.node, courseId, version);
   activeCleanup = () => {
     try { detachEntry(); } catch { /* 清理失败不影响新页面 */ }
+    try { detachDemo(); } catch { /* 清理失败不影响新页面 */ }
     try { wizard.destroy(); } catch { /* 清理失败不影响新页面 */ }
   };
 }
@@ -449,8 +838,10 @@ function renderPlayer(container, version, courseId) {
   container.replaceChildren();
   const player = createPlayerView({ container, version, courseId });
   const detachEntry = mountEditorEntry(player.node, courseId, version);
+  const detachDemo = mountDemoTools(player.node, courseId, version);
   activeCleanup = () => {
     try { detachEntry(); } catch { /* 清理失败不影响新页面 */ }
+    try { detachDemo(); } catch { /* 清理失败不影响新页面 */ }
     try { player.destroy(); } catch { /* 清理失败不影响新页面 */ }
   };
 }

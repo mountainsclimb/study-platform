@@ -1744,3 +1744,60 @@ checksum = sha256(`json.dumps(data, ensure_ascii=False, sort_keys=True, separato
 - `scripts/accept_runner.py` 新增 `m3` 阶段（`bank → compileall → node-check → ui-static → round5 → m3 → pytest`）。
 - 专项测试：`tests/test_guided_hint.py`（20）、`tests/test_doc_location.py`（29）、
   `tests/test_mastery_path.py`（27）、`tests/test_m3_integration.py`（6）。
+
+## 27. M4 课堂版本化演示 / 固定版本导出 / 手绘模板（2026-11-21）
+
+> 详细记录见 `docs/知序优化实施记录-20261121-第八轮.md`。`demo` 是**手工场景类型**，不参与 AI 生成：
+> `SCENE_TYPES` 仍为 `slide/quiz/interactive/pbl`，新增 `MANUAL_SCENE_TYPES=("demo",)`；`/meta.scene_types`
+> 不变，只追加手工场景能力字段。演示场景插入时冻结附件 revision 快照（data/preview/title），之后源附件升版
+> 不影响课堂与导出；只读快照不执行附件内容、不引外链。
+
+### 27.1 课堂演示场景（`app/classroom/{schema,api}.py`，2 条新路由）
+
+| 方法/路径 | 请求 | 响应要点 |
+| --- | --- | --- |
+| `POST /api/classroom/courses/{course_id}/scenes/demo` | `{artifact_id, revision?, title?, source_note?}` | 201 `{scene, course:{id,scene_count}}`：`scene_type="demo"`、`content.artifact.{artifact_id,revision,kind,title,data,preview}` 快照、`fixed=true`、`fixed_revision`、`source_note≤300`、`assumptions`、`step_count`；课程归属 404、运行中课程任务 409、场景数超限 409、他人/不存在附件 404、kind 非法或内容超限 422。 |
+| `DELETE /api/classroom/courses/{course_id}/scenes/{scene_id}` | — | 仅 `demo`（其他类型 409）；删除后 `order_index` 重排连续；`{deleted:true,scene_id,course:{id,scene_count}}`。 |
+
+- `GET /api/classroom/meta` 追加（既有字段不变）：`manual_scene_types:["demo"]`、
+  `demo_artifact_kinds:{demo:["function_graph","whiteboard","flow_animation","isometric","science_demo","demo_3d"]}`、
+  `limits.demo_content_bytes`。
+- `normalize_demo_content` 限额：artifact_id `^[a-zA-Z0-9_-]{6,64}$`、revision 1..100000、data ≤200KB、
+  preview PNG dataURI ≤200KB（SVG ≤60KB）、content ≤260KB、source_note ≤300、假设 ≤6×200、步骤 0..50。
+- `/scenes/{id}/html` 对 demo 返回 404 中文（不直出 HTML）；生成白名单拒绝 demo（422）。
+
+### 27.2 固定版本导出（`app/classroom/exports.py`、导入 `app/classroom/importer.py`）
+
+- **PPTX**：demo 独立页：标题 + 「原理演示 · kind 中文 · 固定版本 vN」+ 附件标题/ID + 出处/假设/步骤数，
+  `preview.png` 可解码则等比插图，否则中文提示；备注写固定版本与 artifact_id。
+- **离线 HTML / 打印 HTML（PDF）**：`section.cls-demo-scene[data-scene-type="demo"][data-artifact-id]
+  [data-fixed-revision]`：徽标/标题/PNG dataURI/出处/假设/步骤数 + `<script type="application/json">` 内嵌快照
+  （`</script>` 转义，不执行附件内容）。
+- **ZIP**：`demos/scene-<NN>-<artifact_id>.json` 快照 + manifest `demoScenes`/`capabilities: demo-scenes`；
+  课程 `scenes/*.json` 保留完整 demo content；资源包 PPTX 同样固定版本。
+- **导入**：`importer` 接受 `ALL_SCENE_TYPES`，demo 用 `normalize_demo_content` 重新校验，导回后保持原固定版本；
+  旧 ZIP（无 demo）行为不变。
+
+### 27.3 前端接线
+
+- `classroomPlayer.js`：demo 舞台（`.cls-demo-stage`），按 kind 懒加载 `principleDemo`/`functionGraph`/`sketchBoard`
+  只读渲染；标题/固定版本徽标/出处/假设/步骤数/海报；渲染完成 `data-demo-ready="1"` + `zhixu:demo-ready` 事件；
+  失败中文降级并展示海报；切换场景销毁组件。
+- `classroom.js`：「插入演示」弹层（六类演示附件去重/排序/失败忽略该类）、插入固定当前版本、演示管理列表
+  删除（仅删场景、confirm）；空列表中文引导。
+- `notes.js`：笔记「学习附件」区（`GET /api/artifacts/by-target?target_kind=note&target_key=<note id>`），
+  只读打开/下载海报/失效数量；无数据隐藏、接口不可用中文降级。
+- 模板与预设（`web/vendor/principles/{flow,iso,presets}.js`、`question.js`）：
+  flow 支持 `layout: flow|loop|timeline|state`、`style: clean|sketch`（确定性手绘，无随机数）；
+  iso 支持 `shape: box|cylinder|gear|plate|rod`、多行 labels、sketch；
+  新增预设 `flow-review-loop`/`flow-function-timeline`/`flow-photosynthesis-states`/`iso-anatomy-gearbox`/
+  `iso-biology-stomata`；题目「查看原理」按学科推荐 + 下拉切换（8 个预设、按 kind 分组、`source_ref`=预设 id）。
+- locale 新增 68 键（`study.m4.*`），zh/en 各 **5,078** 键对齐；ui_static 新增 M4 断言与命名空间下限。
+
+### 27.4 验收入口
+
+- `python -X utf8 scripts/integration/m4_accept.py`：端到端 20 项（附件→课堂固定版本场景→PPTX/HTML/ZIP/PDF
+  固定版本→ZIP 导回→笔记 by-target→两账号隔离→删除与序号），报告 `screenshots/m4-accept-report.json`。
+- `scripts/accept_runner.py` 新增 `m4` 阶段（… → round5 → m3 → m4 → pytest）。
+- 专项测试：`tests/test_classroom_demo_scenes.py`（7）、`tests/test_m4_integration.py`（6），
+  连同既有 `test_classroom_{api,export,import,dsl}.py` 共 80 passed。

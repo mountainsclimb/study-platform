@@ -161,6 +161,10 @@ def _validate_scene_content(scene_type: str, content: dict, title: str) -> tuple
         except schema.ClassroomSchemaError:
             normalized, notes = schema.normalize_pbl_content(content)
             warnings.append("PBL 项目按兼容模式导入（旧版结构，可能缺少目标/检查点）")
+    elif scene_type == "demo":
+        # M4：课堂演示场景是自包含固定版本快照（附件 data/preview 已内嵌），导入时重新校验即可。
+        normalized, notes = schema.normalize_demo_content(content)
+        warnings.append("演示场景按固定版本快照导入；源附件更新不会改变已导入的课堂场景")
     else:  # pragma: no cover - 调用方已校验 scene_type
         raise HTTPException(422, "不支持的场景类型：%s" % scene_type)
     warnings.extend(notes)
@@ -170,7 +174,7 @@ def _validate_scene_content(scene_type: str, content: dict, title: str) -> tuple
 def _prepare_scene(entry: dict, raw: dict, index: int) -> dict:
     scene_type = schema.normalize_scene_type(
         raw.get("scene_type") or raw.get("type") or entry.get("type"), default="")
-    if scene_type not in schema.SCENE_TYPES:
+    if scene_type not in schema.ALL_SCENE_TYPES:
         raise HTTPException(422, "第 %d 个场景类型不支持：%s" % (index, raw.get("scene_type") or raw.get("type")))
     title = _text(raw.get("title") or entry.get("title"), 120) or ("导入场景 %d" % index)
     content = raw.get("content")

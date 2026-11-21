@@ -674,3 +674,264 @@ html[data-theme="dark"] .pd-dialog::backdrop {
     animation: none;
   }
 }
+
+/* ==========================================================================
+ * M4 追加：SeeCode 风格手绘 / 循环 / 时间轴 / 状态机，等距形状与标注增强，
+ *          以及「查看原理」弹层的演示切换下拉。
+ * 说明：本节只追加新类名（.is-sketch / .pd-flow-* / .pd-iso-* / .pd-preset-*），
+ * 不改动上方既有规则；配色仍复用设计令牌，深色主题与移动端在末段统一覆盖。
+ * ========================================================================== */
+
+/* ------------------------------------------------------------------ 手绘风格（sketch） */
+
+.pd-flow-svg.is-sketch .pd-flow-node .pd-flow-shape,
+.pd-flow-svg.is-sketch .pd-flow-node .pd-flow-shape-echo {
+  stroke-linecap: round;
+  stroke-linejoin: round;
+}
+.pd-flow-svg.is-sketch .pd-flow-node .pd-flow-shape {
+  stroke-width: 1.7;
+}
+/* 双描边回声：只描边不填充；后置规则同时压过 active 状态的填充色。 */
+.pd-flow-svg .pd-flow-shape-echo,
+.pd-flow-node.is-active .pd-flow-shape-echo {
+  fill: none;
+  stroke-width: 0.9;
+  opacity: 0.55;
+}
+.pd-flow-svg.is-sketch .pd-flow-edge-line {
+  stroke-linecap: round;
+}
+/* 手绘模式的笔画宽度规则晚于既有 active 规则出现：这里补回激活态描边宽度，
+ * 保证手绘节点/边在步骤高亮时仍然明显加粗。 */
+.pd-flow-svg.is-sketch .pd-flow-node.is-active .pd-flow-shape {
+  stroke-width: 2.4;
+}
+.pd-flow-svg.is-sketch .pd-flow-edge.is-active .pd-flow-edge-line {
+  stroke-width: 2.4;
+}
+.pd-flow-svg.is-sketch .pd-flow-edge-echo {
+  stroke-width: 0.9;
+  opacity: 0.5;
+}
+.pd-flow-svg.is-sketch .pd-flow-arrowhead-echo {
+  opacity: 0.5;
+}
+
+/* 边类型：虚线 / 回边；激活态在末尾再覆盖一次，保证高亮不被覆盖。 */
+.pd-flow-edge.is-dashed .pd-flow-edge-line {
+  stroke-dasharray: 8 6;
+}
+.pd-flow-edge.is-feedback .pd-flow-edge-line {
+  stroke: var(--soft);
+}
+.pd-flow-edge.is-feedback .pd-flow-arrowhead {
+  fill: var(--soft);
+}
+.pd-flow-edge.is-dashed.is-active .pd-flow-edge-line,
+.pd-flow-edge.is-feedback.is-active .pd-flow-edge-line {
+  stroke: var(--accent);
+}
+.pd-flow-edge.is-feedback.is-active .pd-flow-arrowhead {
+  fill: var(--accent);
+}
+
+/* ------------------------------------------------------------------ 新节点类型：状态 / 事件 */
+
+.pd-flow-state .pd-flow-shape {
+  fill: var(--surface);
+  stroke: var(--line);
+}
+.pd-flow-event .pd-flow-shape {
+  fill: var(--paper);
+  stroke: var(--soft);
+}
+.pd-flow-node.pd-flow-state.is-active .pd-flow-shape,
+.pd-flow-node.pd-flow-event.is-active .pd-flow-shape {
+  fill: var(--tint);
+  stroke: var(--focus);
+}
+
+/* ------------------------------------------------------------------ 时间轴（timeline） */
+
+.pd-flow-timeline-axis {
+  stroke: var(--line);
+  stroke-width: 2;
+  stroke-linecap: round;
+}
+.pd-flow-timeline-arrow {
+  fill: var(--soft);
+}
+.pd-flow-axis-label {
+  fill: var(--muted);
+  font-size: 12px;
+  letter-spacing: 0.01em;
+}
+.pd-flow-timeline-stem {
+  stroke: var(--line);
+  stroke-width: 1.4;
+  stroke-dasharray: 3 4;
+}
+.pd-flow-tick {
+  fill: var(--surface);
+  stroke: var(--soft);
+  stroke-width: 1.6;
+  transition: fill 0.15s, stroke 0.15s;
+}
+.pd-flow-timeline-item.is-active .pd-flow-tick {
+  fill: var(--accent);
+  stroke: var(--accent);
+}
+.pd-flow-timeline-item.is-active .pd-flow-timeline-stem {
+  stroke: var(--accent);
+  stroke-width: 2;
+  stroke-dasharray: none;
+}
+.pd-flow-timeline-card .pd-flow-shape {
+  transition: fill 0.15s, stroke 0.15s, stroke-width 0.15s;
+}
+.pd-flow-timeline-item.is-active .pd-flow-timeline-card .pd-flow-shape {
+  fill: var(--tint);
+  stroke: var(--focus);
+  stroke-width: 2.4;
+  filter: drop-shadow(0 2px 6px #102b3522);
+}
+
+/* ------------------------------------------------------------------ 等距：手绘 / 形状 / 标注 */
+
+.pd-iso-svg.is-sketch .pd-iso-face {
+  stroke-linecap: round;
+  stroke-linejoin: round;
+}
+.pd-iso-svg.is-sketch .pd-iso-face-echo {
+  opacity: 0.45;
+}
+/* 部件悬停：轻微投影提示「可悬停查看部件说明（title tooltip）」。 */
+.pd-iso-part {
+  cursor: help;
+}
+.pd-iso-part:hover .pd-iso-face {
+  filter: drop-shadow(0 2px 6px #102b3526);
+}
+.pd-iso-part.is-active:hover .pd-iso-face,
+.pd-iso-part.is-active .pd-iso-face {
+  cursor: help;
+}
+/* 多行引线标注保持左/右对齐；自由标注不参与步骤高亮，始终完整显示。 */
+.pd-iso-label tspan {
+  font-size: 12px;
+}
+.pd-iso.has-active .pd-iso-label-item.is-free,
+.pd-iso-label-item.is-free {
+  opacity: 1;
+}
+.pd-iso-label-item.is-free .pd-iso-leader {
+  stroke-dasharray: 3 3;
+}
+
+/* ------------------------------------------------------------------ 演示切换下拉（题目「查看原理」弹层） */
+
+.pd-preset-switch {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  flex-wrap: wrap;
+}
+.pd-preset-switch[hidden] {
+  display: none;
+}
+.pd-preset-label {
+  flex: none;
+  color: var(--soft);
+  font-size: 13px;
+  line-height: 1.6;
+}
+.pd-preset-select {
+  flex: 0 1 460px;
+  min-height: 40px;
+  min-width: min(340px, 72vw);
+  max-width: 100%;
+  padding: 6px 10px;
+  border: 1px solid var(--line);
+  border-radius: 9px;
+  background: var(--surface);
+  color: var(--ink);
+  font-size: 13px;
+  line-height: 1.5;
+}
+.pd-preset-select:focus-visible {
+  outline: 2px solid var(--focus);
+  outline-offset: 1px;
+}
+.pd-preset-select optgroup {
+  color: var(--muted);
+  font-weight: 600;
+}
+.pd-preset-hint {
+  flex-basis: 100%;
+  margin: 0;
+  color: var(--muted);
+  font-size: 12px;
+  line-height: 1.7;
+}
+.pd-preset-hint[hidden] {
+  display: none;
+}
+
+/* ------------------------------------------------------------------ 深色主题（M4 追加） */
+
+html[data-theme="dark"] .pd-flow-svg .pd-flow-shape-echo {
+  opacity: 0.4;
+}
+html[data-theme="dark"] .pd-flow-edge.is-dashed .pd-flow-edge-line {
+  stroke: var(--muted);
+}
+html[data-theme="dark"] .pd-flow-timeline-axis {
+  stroke: var(--line);
+}
+html[data-theme="dark"] .pd-flow-tick {
+  fill: var(--paper);
+  stroke: var(--soft);
+}
+html[data-theme="dark"] .pd-flow-state .pd-flow-shape {
+  fill: var(--surface);
+}
+html[data-theme="dark"] .pd-preset-select {
+  background: var(--surface);
+  color: var(--ink);
+  border-color: var(--line);
+}
+html[data-theme="dark"] .pd-iso-part:hover .pd-iso-face {
+  filter: drop-shadow(0 2px 8px #00000066);
+}
+
+/* ------------------------------------------------------------------ 移动端（M4 追加） */
+
+@media (max-width: 760px) {
+  .pd-preset-switch {
+    width: 100%;
+    align-items: stretch;
+    gap: 6px;
+  }
+  .pd-preset-select {
+    flex: 1 1 100%;
+    width: 100%;
+    min-width: 0;
+  }
+  .pd-preset-hint {
+    font-size: 12px;
+  }
+  .pd-flow-svg.is-sketch .pd-flow-node .pd-flow-shape {
+    stroke-width: 1.5;
+  }
+  .pd-iso-label tspan {
+    font-size: 12px;
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .pd-flow-tick,
+  .pd-flow-timeline-card .pd-flow-shape {
+    transition: none;
+  }
+}

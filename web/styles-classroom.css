@@ -3573,3 +3573,558 @@
   .cls-canvas-dialog-title .help { display: none; }
   .cls-canvas-dialog-head { padding: 8px 12px; }
 }
+
+/* ------------------------------------------------------------------------- */
+/* M4 课堂版本化演示场景（cls-demo-*）：固定版本学习附件舞台 + 插入/删除工具区    */
+/* 命名统一用 `.cls-demo-` 前缀，避免与既有课堂样式冲突；配色复用 styles.css 的   */
+/* 设计令牌（--surface / --ink / --line / --accent / --tint ...），暗色只补差量。 */
+/* ------------------------------------------------------------------------- */
+
+/* ---------------------------- 演示舞台（播放器内） ---------------------------- */
+
+.cls-demo-stage {
+  display: grid;
+  gap: 10px;
+  min-width: 0;
+  padding: 14px;
+  border: 1px solid var(--line);
+  border-radius: 14px;
+  background: var(--surface);
+}
+
+.cls-demo-head {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 12px;
+  flex-wrap: wrap;
+}
+
+.cls-demo-head-main {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  min-width: 0;
+}
+
+.cls-demo-title {
+  margin: 0;
+  font-size: 1rem;
+  line-height: 1.5;
+  color: var(--ink);
+  overflow-wrap: anywhere;
+}
+
+.cls-demo-badges {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  flex-wrap: wrap;
+}
+
+.cls-demo-kind,
+.cls-demo-fixed,
+.cls-demo-steps {
+  flex: none;
+  padding: 2px 9px;
+  border-radius: 999px;
+  font-size: 12px;
+  line-height: 1.6;
+}
+
+.cls-demo-kind {
+  background: var(--tint);
+  color: var(--accent-deep);
+}
+
+.cls-demo-fixed {
+  background: var(--rail);
+  color: var(--accent-deep);
+  border: 1px solid var(--line);
+}
+
+.cls-demo-steps {
+  background: transparent;
+  color: var(--muted);
+  border: 1px solid var(--line);
+}
+
+.cls-demo-hint {
+  margin: 0;
+  max-width: 46ch;
+}
+
+.cls-demo-body {
+  min-width: 0;
+}
+
+.cls-demo-body .pd-demo {
+  min-width: 0;
+}
+
+.cls-demo-loading {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 8px;
+  margin: 0;
+  padding: 20px 0;
+  color: var(--muted);
+  font-size: 13px;
+}
+
+.cls-demo-fallback {
+  display: grid;
+  gap: 6px;
+  padding: 14px;
+  border: 1px dashed var(--line);
+  border-radius: 10px;
+  background: var(--paper);
+  color: var(--ink);
+}
+
+.cls-demo-fallback strong {
+  font-size: 0.9375rem;
+  line-height: 1.6;
+}
+
+.cls-demo-fallback .help {
+  margin: 0;
+  color: var(--muted);
+  overflow-wrap: anywhere;
+}
+
+.cls-demo-poster {
+  margin: 0;
+  padding: 8px;
+  border: 1px solid var(--line);
+  border-radius: 12px;
+  background: var(--paper);
+}
+
+.cls-demo-poster[hidden] {
+  display: none;
+}
+
+.cls-demo-poster img {
+  display: block;
+  width: 100%;
+  max-height: 420px;
+  object-fit: contain;
+  border-radius: 8px;
+  background: #fff;
+}
+
+.cls-demo-poster figcaption {
+  margin-top: 6px;
+}
+
+.cls-demo-actions {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  flex-wrap: wrap;
+}
+
+.cls-demo-notes {
+  display: grid;
+  gap: 8px;
+}
+
+.cls-demo-note {
+  display: grid;
+  gap: 4px;
+}
+
+.cls-demo-note-label {
+  font-size: 12px;
+  color: var(--muted);
+}
+
+.cls-demo-note-input {
+  width: 100%;
+  min-height: 44px;
+  padding: 8px 10px;
+  border: 1px solid var(--line);
+  border-radius: 9px;
+  background: var(--paper);
+  color: var(--ink);
+  font-size: 12.5px;
+  line-height: 1.7;
+  resize: vertical;
+}
+
+.cls-demo-note-input:focus-visible {
+  outline: 2px solid var(--focus);
+  outline-offset: 1px;
+}
+
+/* ------------------------- 插入演示 / 演示场景管理 ------------------------- */
+
+.cls-demo-manage {
+  display: grid;
+  gap: 10px;
+  padding: 12px 14px;
+  border: 1px solid var(--line);
+  border-radius: 12px;
+  background: var(--surface);
+}
+
+.cls-demo-manage-head {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 12px;
+  flex-wrap: wrap;
+}
+
+.cls-demo-manage-text {
+  display: grid;
+  gap: 2px;
+  min-width: 0;
+}
+
+.cls-demo-manage-text .help {
+  margin: 0;
+}
+
+.cls-demo-manage-actions {
+  align-items: center;
+}
+
+.cls-demo-manage-list {
+  display: grid;
+  gap: 6px;
+}
+
+.cls-demo-manage-empty {
+  margin: 0;
+}
+
+.cls-demo-manage-item {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 10px;
+  padding: 8px 10px;
+  border: 1px solid var(--line);
+  border-radius: 9px;
+  background: var(--paper);
+}
+
+.cls-demo-manage-main {
+  display: grid;
+  gap: 2px;
+  min-width: 0;
+}
+
+.cls-demo-manage-main strong {
+  overflow-wrap: anywhere;
+}
+
+.cls-demo-manage-main .help {
+  margin: 0;
+}
+
+/* ------------------------------ 插入演示弹层 ------------------------------ */
+
+.cls-demo-insert-dialog {
+  width: min(760px, calc(100vw - 32px));
+}
+
+.cls-demo-insert-head {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 12px;
+  margin-bottom: 10px;
+}
+
+.cls-demo-insert-head-text {
+  display: grid;
+  gap: 4px;
+  min-width: 0;
+}
+
+.cls-demo-insert-head h3 {
+  margin: 0;
+}
+
+.cls-demo-insert-head .help {
+  margin: 0;
+}
+
+.cls-demo-insert-list {
+  display: grid;
+  gap: 8px;
+  max-height: min(48vh, 420px);
+  overflow: auto;
+  padding-right: 2px;
+}
+
+.cls-demo-insert-select-hint {
+  margin: 0;
+}
+
+.cls-demo-insert-items {
+  display: grid;
+  gap: 8px;
+}
+
+.cls-demo-insert-item {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  width: 100%;
+  padding: 10px 12px;
+  border: 1px solid var(--line);
+  border-radius: 10px;
+  background: var(--surface);
+  color: var(--ink);
+  text-align: left;
+}
+
+.cls-demo-insert-item:hover {
+  border-color: var(--accent);
+}
+
+.cls-demo-insert-item.is-selected {
+  border-color: var(--accent);
+  background: var(--tint);
+}
+
+.cls-demo-insert-item-main {
+  display: grid;
+  gap: 2px;
+  min-width: 0;
+}
+
+.cls-demo-insert-item-title {
+  overflow-wrap: anywhere;
+  font-size: 0.9375rem;
+  line-height: 1.5;
+}
+
+.cls-demo-insert-item-meta {
+  margin: 0;
+}
+
+.cls-demo-insert-check {
+  flex: none;
+  width: 18px;
+  height: 18px;
+  border: 2px solid var(--line);
+  border-radius: 50%;
+}
+
+.cls-demo-insert-item.is-selected .cls-demo-insert-check {
+  border-color: var(--accent);
+  background: var(--accent);
+  box-shadow: inset 0 0 0 3px var(--surface);
+}
+
+.cls-demo-insert-empty {
+  margin: 0;
+  padding: 18px 14px;
+  border: 1px dashed var(--line);
+  border-radius: 10px;
+  color: var(--ink);
+  text-align: center;
+}
+
+.cls-demo-insert-form {
+  display: grid;
+  gap: 10px;
+  margin-top: 12px;
+}
+
+.cls-demo-insert-note {
+  width: 100%;
+  min-height: 60px;
+  padding: 8px 10px;
+  border: 1px solid var(--line);
+  border-radius: 9px;
+  background: var(--surface);
+  color: var(--ink);
+  resize: vertical;
+}
+
+.cls-demo-insert-status {
+  min-height: 18px;
+  margin: 10px 0 0;
+}
+
+.cls-demo-insert-status.is-error {
+  color: var(--danger);
+}
+
+.cls-demo-insert-actions {
+  gap: 10px;
+  margin-top: 10px;
+}
+
+/* ------------------------- 笔记详情「学习附件」面板 ------------------------- */
+
+.cls-note-artifacts {
+  margin-top: 18px;
+  padding-top: 14px;
+  border-top: 1px solid var(--line);
+}
+
+.cls-note-artifacts.hide {
+  display: none;
+}
+
+.cls-note-artifacts-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 10px;
+  margin-bottom: 10px;
+}
+
+.cls-note-artifacts-head h3 {
+  margin: 0;
+}
+
+.cls-note-artifacts .notice {
+  margin-bottom: 10px;
+}
+
+.cls-note-artifact-list {
+  display: grid;
+  gap: 10px;
+  grid-template-columns: repeat(auto-fill, minmax(260px, 1fr));
+}
+
+.cls-note-artifact-card {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  min-width: 0;
+  padding: 10px;
+  border: 1px solid var(--line);
+  border-radius: 12px;
+  background: var(--surface);
+}
+
+.cls-note-artifact-thumb {
+  width: 100%;
+  max-height: 120px;
+  object-fit: cover;
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  background: #fff;
+}
+
+.cls-note-artifact-main {
+  display: grid;
+  gap: 3px;
+  min-width: 0;
+}
+
+.cls-note-artifact-title {
+  overflow-wrap: anywhere;
+  font-size: 0.9375rem;
+  line-height: 1.5;
+}
+
+.cls-note-artifact-meta {
+  margin: 0;
+}
+
+.cls-note-artifact-actions {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  flex-wrap: wrap;
+}
+
+/* 只读查看弹层：复用 principleDemo / functionGraph / sketchBoard 既有样式。 */
+.cls-note-artifact-dialog {
+  width: min(860px, calc(100vw - 32px));
+}
+
+.cls-note-artifact-dialog-head {
+  align-items: flex-start;
+}
+
+.cls-note-artifact-dialog-title {
+  display: grid;
+  gap: 3px;
+  min-width: 0;
+}
+
+.cls-note-artifact-dialog-title h3 {
+  margin: 0;
+  overflow-wrap: anywhere;
+}
+
+.cls-note-artifact-dialog-body {
+  min-height: 120px;
+  margin-top: 12px;
+}
+
+.cls-note-artifact-dialog-body .pd-stage {
+  height: clamp(280px, 52vh, 520px);
+}
+
+.cls-note-artifact-dialog-status {
+  margin: 8px 0 0;
+}
+
+/* -------------------------------- 暗色主题 -------------------------------- */
+
+html[data-theme="dark"] .cls-demo-poster img,
+html[data-theme="dark"] .cls-note-artifact-thumb {
+  background: #0e1513;
+}
+
+html[data-theme="dark"] .cls-demo-fixed,
+html[data-theme="dark"] .cls-demo-steps {
+  border-color: #33463f;
+}
+
+html[data-theme="dark"] .cls-demo-insert-item.is-selected {
+  background: #1b352e;
+}
+
+html[data-theme="dark"] .cls-demo-insert-check {
+  border-color: #3a4d47;
+}
+
+html[data-theme="dark"] .cls-demo-insert-item.is-selected .cls-demo-insert-check {
+  border-color: var(--accent);
+}
+
+html[data-theme="dark"] .cls-demo-fallback {
+  background: var(--rail);
+}
+
+/* --------------------------------- 移动端 --------------------------------- */
+
+@media (max-width: 760px) {
+  .cls-demo-stage,
+  .cls-demo-manage {
+    padding: 10px;
+  }
+
+  .cls-demo-poster img {
+    max-height: 260px;
+  }
+
+  .cls-demo-insert-dialog,
+  .cls-note-artifact-dialog {
+    width: calc(100vw - 16px);
+    padding: 16px;
+  }
+
+  .cls-demo-insert-list {
+    max-height: 44vh;
+  }
+
+  .cls-note-artifact-list {
+    grid-template-columns: minmax(0, 1fr);
+  }
+}

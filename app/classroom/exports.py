@@ -17,6 +17,11 @@
   ``ets.json``（同一课程结构）+ 中文 ``README.txt``；单 ZIP 下载，适合课堂分发/离线归档。
 - **TTS（可选）**：``include_tts=true`` 时调用既有 ``tts.synthesize``（未配置连接自然回退浏览器语音，
   内容寻址去重），音频作为素材写入 ZIP / 以 data URI 内联进离线 HTML。
+- **固定版本原理演示（M4）**：``scene_type='demo'`` 场景按插入时冻结的学习附件快照导出——
+  PPTX 一页「标题 + 原理演示 · <kind 中文> · 固定版本 vN + 说明/假设 + 可选 PNG 海报」；
+  离线 HTML / 打印讲义输出 ``section.cls-demo-scene[data-artifact-id][data-fixed-revision]``
+  并内嵌 ``application/json`` 快照；ZIP 额外写 ``demos/scene-<NN>-<artifact_id>.json``。
+  源附件后续升版不会改变已导出的固定版本内容。
 """
 from __future__ import annotations
 
@@ -97,6 +102,160 @@ def _scene_actions(scene: dict) -> list[dict]:
 
 def _scene_speech(scene: dict) -> str:
     return schema.speech_text_of(_scene_actions(scene))
+
+
+# ---------------------------------------------------------------------------
+# 手工「原理演示」场景（M4）：固定版本学习附件快照
+#
+# 演示场景 content 由 ``api.add_demo_scene`` 冻结：``{type:"demo", fixed:true,
+# fixed_revision:N, artifact:{artifact_id,revision,kind,title,data,preview}, source_note,
+# assumptions, step_count}``。PPTX / 离线 HTML / 打印讲义 / ZIP 都只读该快照，渲染
+# 「海报 + 说明 + 数据 JSON」；不执行附件里的任何内容，也不引入外链。
+# ---------------------------------------------------------------------------
+
+def _demo_artifact_of(content) -> dict:
+    """取原理演示 content 里的附件快照；不是演示内容时返回空 dict。"""
+    if not isinstance(content, dict) or str(content.get("type") or "") != "demo":
+        return {}
+    artifact = content.get("artifact")
+    return artifact if isinstance(artifact, dict) else {}
+
+
+def _demo_fixed_revision(content) -> int:
+    """固定版本号（优先 ``fixed_revision``，回退附件快照的 ``revision``）；非法时按 0。"""
+    value = None
+    if isinstance(content, dict):
+        value = content.get("fixed_revision")
+        if value is None:
+            value = _demo_artifact_of(content).get("revision")
+    try:
+        return max(0, int(value))
+    except (TypeError, ValueError):
+        return 0
+
+
+def _demo_kind_label(kind) -> str:
+    """演示附件类型中文名（未知类型回退原值 / 「演示」）。"""
+    text = str(kind or "").strip()
+    return schema.DEMO_ARTIFACT_KIND_LABELS.get(text, text or "演示")
+
+
+def _demo_png_bytes(content) -> bytes | None:
+    """解出演示海报 PNG 字节；无预览、非 PNG data URI 或解码失败返回 None（导出降级为文字说明）。"""
+    artifact = _demo_artifact_of(content)
+    preview = artifact.get("preview") if isinstance(artifact.get("preview"), dict) else {}
+    data_uri = str(preview.get("png") or "")
+    prefix = schema.DEMO_PNG_DATA_PREFIX
+    if not data_uri.startswith(prefix):
+        return None
+    try:
+        payload = base64.b64decode(data_uri[len(prefix):], validate=True)
+    except (TypeError, ValueError):
+        return None
+    if not payload or not payload.startswith(b"\x89PNG\r\n\x1a\n"):
+        return None
+    return payload
+
+
+def _demo_json_script(payload) -> str:
+    """把演示快照嵌进 ``<script type="application/json">``（只作数据，不执行；转义 ``</``）。"""
+    try:
+        text = json.dumps(payload, ensure_ascii=False, separators=(",", ":"))
+    except (TypeError, ValueError):
+        text = "{}"
+    text = text.replace("</", "<\\/")
+    return '<script type="application/json" class="cls-demo-data">%s</script>' % text
+
+
+def _demo_content_lists(content) -> tuple[list[str], int]:
+    """演示内容里的假设列表与步骤数（兼容手工内容缺字段的旧数据）。"""
+    assumptions_raw = content.get("assumptions") if isinstance(content, dict) else None
+    assumptions = [
+        str(item) for item in assumptions_raw
+    ] if isinstance(assumptions_raw, list) else []
+    try:
+        step_count = max(0, int((content or {}).get("step_count") or 0))
+    except (TypeError, ValueError):
+        step_count = 0
+    return assumptions, step_count
+
+
+def _demo_section_html(title, content, *, heading_tag: str = "h2") -> str:
+    """单个原理演示场景 → 静态 HTML 片段（离线 HTML 附录 / 打印讲义共用）。
+
+    输出 ``<section class="cls-demo-scene" data-scene-type="demo" data-artifact-id data-fixed-revision>``：
+    固定版本徽标、标题、可选 PNG 海报（data URI）、说明、假设列表、步骤数，以及内嵌
+    ``application/json`` 附件快照（快照里的 ``</script>`` 已转义，脚本不会被执行）。
+    """
+    artifact = _demo_artifact_of(content)
+    artifact_id = html_lib.escape(str(artifact.get("artifact_id") or ""), quote=True)
+    revision = _demo_fixed_revision(content)
+    kind_label = html_lib.escape(_demo_kind_label(artifact.get("kind")))
+    scene_title = str(title or artifact.get("title") or "原理演示")
+    heading_tag = heading_tag if heading_tag in ("h2", "h3") else "h2"
+    parts: list[str] = [
+        '<section class="cls-demo-scene" data-scene-type="demo" '
+        'data-artifact-id="%s" data-fixed-revision="%d">' % (artifact_id, revision),
+        '<div class="cls-demo-head"><span class="cls-demo-badge">原理演示 · 固定版本 v%d</span>'
+        '<span class="cls-demo-kind">%s</span></div>' % (revision, kind_label),
+        "<%s>%s</%s>" % (heading_tag, html_lib.escape(scene_title), heading_tag),
+    ]
+    png = _demo_png_bytes(content)
+    if png:
+        data_uri = schema.DEMO_PNG_DATA_PREFIX + base64.b64encode(png).decode("ascii")
+        parts.append(
+            '<img class="cls-demo-image" src="%s" alt="%s">'
+            % (html_lib.escape(data_uri, quote=True),
+               html_lib.escape(str(artifact.get("title") or "演示海报")))
+        )
+    else:
+        parts.append('<p class="cls-demo-missing">未附加海报图像，请在知序课堂中播放该演示。</p>')
+    source_note = str((content or {}).get("source_note") or "").strip()
+    if source_note:
+        parts.append('<p class="cls-demo-note">说明：%s</p>' % html_lib.escape(source_note))
+    assumptions, step_count = _demo_content_lists(content)
+    if assumptions:
+        parts.append("<h3>前提假设</h3>")
+        parts.append(
+            '<ul class="cls-demo-assumptions">%s</ul>'
+            % "".join("<li>%s</li>" % html_lib.escape(item) for item in assumptions)
+        )
+    if step_count > 0:
+        parts.append('<p class="cls-demo-note">演示步骤数：%d</p>' % step_count)
+    parts.append(_demo_json_script({
+        "format": "zhixu-classroom-demo-snapshot",
+        "formatVersion": 1,
+        "fixed": True,
+        "fixedRevision": revision,
+        "artifact": artifact,
+        "sourceNote": source_note,
+        "assumptions": assumptions,
+        "stepCount": step_count,
+        "fixedNote": "固定版本 v%d：课堂与导出使用该版本，源附件更新不会自动改变" % revision,
+    }))
+    parts.append("</section>")
+    return "".join(parts)
+
+
+def _demo_sections_html(snapshot: dict) -> str:
+    """离线 HTML 末尾的「演示附件静态备份」：不执行 JS 也能看到固定版本内容。"""
+    scenes = snapshot.get("scenes") if isinstance(snapshot, dict) else None
+    blocks: list[str] = []
+    for scene in scenes or []:
+        if not isinstance(scene, dict) or str(scene.get("type") or "") != "demo":
+            continue
+        content = scene.get("content") if isinstance(scene.get("content"), dict) else {}
+        blocks.append(_demo_section_html(scene.get("title") or "", content))
+    if not blocks:
+        return ""
+    return (
+        '<section class="cls-demo-appendix">'
+        "<h2>演示附件（固定版本）</h2>"
+        '<p class="cls-demo-appendix-hint">以下为课件中手工插入的原理演示附件静态备份：'
+        "播放器内可逐页查看，导出文件只保留插入时的固定版本快照，源附件后续更新不会改变课件。</p>"
+        + "".join(blocks)
+        + "</section>"
+    )
 
 
 def _export_basename(course: dict, fallback: str = "AI课堂") -> str:
@@ -729,6 +888,96 @@ def _pptx_placeholder_slide(prs, scene: dict, content: dict, speech: str, page_n
     return page_no + 1
 
 
+def _pptx_demo_slide(prs, scene: dict, content: dict, speech: str, page_no: int) -> int:
+    """原理演示场景 → 一页 PPTX：标题 + 固定版本说明 + 可选 PNG 海报；备注记录版本与附件 ID。
+
+    绝不走 ``_pptx_placeholder_slide``：演示页必须包含「原理演示 · <kind 中文> · 固定版本 vN」、
+    ``source_note`` 与 ``assumptions``；有可解码 PNG 时按比例放入右侧安全区，无图时给中文说明。
+    """
+    from pptx.enum.text import PP_ALIGN
+    from pptx.util import Inches, Pt
+
+    artifact = _demo_artifact_of(content)
+    revision = _demo_fixed_revision(content)
+    kind = str(artifact.get("kind") or "")
+    kind_label = _demo_kind_label(kind)
+    slide = prs.slides.add_slide(prs.slide_layouts[6])
+    _pptx_background(slide)
+    title = str(scene.get("title") or artifact.get("title") or "原理演示")
+    _pptx_add_slide_title(slide, title, "原理演示 · 固定版本 v%d" % revision)
+    notes: list[str] = [
+        "固定版本 v%d（附件 %s，类型 %s）：课堂与导出使用该版本，源附件更新不会自动改变。"
+        % (revision, artifact.get("artifact_id") or "未知", kind_label)
+    ]
+    png = _demo_png_bytes(content)
+    image_width = 0.0
+    if png:
+        max_width = 5.1
+        max_height = _SLIDE_H_INCH - _HEADER_H_INCH - 0.75
+        image_left = _SLIDE_W_INCH - max_width - 0.45
+        image_top = _HEADER_H_INCH + 0.2
+        try:
+            picture = slide.shapes.add_picture(
+                io.BytesIO(png), Inches(image_left), Inches(image_top), width=Inches(max_width),
+            )
+            max_height_emu = int(Inches(max_height))
+            if picture.height > max_height_emu:
+                # 先按高度回缩，再按原比例反推宽度（保持比例，不拉伸）。
+                ratio = float(picture.width) / float(picture.height or 1)
+                picture.height = max_height_emu
+                picture.width = int(max_height_emu * ratio)
+            width_in = picture.width / 914400.0
+            height_in = picture.height / 914400.0
+            picture.left = Inches(image_left + max(0.0, (max_width - width_in) / 2))
+            picture.top = Inches(image_top + max(0.0, (max_height - height_in) / 2))
+            image_width = width_in
+            notes.append("演示海报已按 PNG 内联插入（%d 字节，保持原始比例）。" % len(png))
+        except Exception:  # 损坏图片不应让整份导出失败
+            png = None
+            notes.append("演示海报无法写入 PPTX，已改用文字说明。")
+    body_left = 0.45
+    body_width = _SLIDE_W_INCH - 0.9
+    if png and image_width > 0:
+        body_width = max(4.2, _SLIDE_W_INCH - image_width - 1.0)
+    lines: list[str] = ["原理演示 · %s · 固定版本 v%d" % (kind_label, revision)]
+    artifact_title = str(artifact.get("title") or "").strip()
+    if artifact_title:
+        lines.append("附件：%s（artifact_id：%s）" % (
+            artifact_title, artifact.get("artifact_id") or ""))
+    source_note = str(content.get("source_note") or "").strip()
+    if source_note:
+        lines.append("")
+        lines.append("说明：%s" % source_note)
+    assumptions, step_count = _demo_content_lists(content)
+    if assumptions:
+        lines.append("")
+        lines.append("前提假设：")
+        lines.extend("· %s" % item for item in assumptions)
+    if step_count > 0:
+        lines.append("")
+        lines.append("演示步骤数：%d" % step_count)
+    if not png:
+        lines.append("")
+        lines.append("未附加海报图像，请在知序课堂中播放该演示。")
+    box = slide.shapes.add_textbox(
+        Inches(body_left), Inches(_HEADER_H_INCH + 0.18),
+        Inches(body_width), Inches(_SLIDE_H_INCH - _HEADER_H_INCH - 0.55),
+    )
+    frame = box.text_frame
+    frame.word_wrap = True
+    frame.text = "\n".join(lines)[:4000]
+    for paragraph in frame.paragraphs:
+        paragraph.alignment = PP_ALIGN.LEFT
+        paragraph.line_spacing = 1.2
+        for run in paragraph.runs:
+            run.font.size = Pt(13)
+            run.font.name = PPTX_FONT
+            run.font.color.rgb = _hex_rgb("#374151")
+    _pptx_add_footer(slide, page_no)
+    _pptx_set_notes(slide, notes, speech)
+    return page_no + 1
+
+
 def build_pptx(course: dict, scenes: list[dict]) -> bytes:
     """把课程渲染成 ``.pptx`` 字节串（可用 ``python-pptx`` 直接打开）。"""
     from pptx import Presentation
@@ -745,6 +994,9 @@ def build_pptx(course: dict, scenes: list[dict]) -> bytes:
         scene_type = str(scene.get("scene_type") or "")
         if scene_type == "slide":
             page_no = _pptx_slide_content_slides(prs, scene, content, speech, page_no)
+        elif scene_type == "demo":
+            # M4：版本化演示场景导出为「标题 + 固定版本说明 + 海报」页（非占位页）。
+            page_no = _pptx_demo_slide(prs, scene, content, speech, page_no)
         else:
             page_no = _pptx_placeholder_slide(prs, scene, content, speech, page_no)
     # P3：末尾附「参考来源」页（标题 + 链接纯文本；无来源时不加页，保持既有页数）。
@@ -776,6 +1028,11 @@ def _course_snapshot(course: dict) -> dict:
 
 
 def _scene_snapshot(scene: dict, *, for_html: bool = False) -> dict:
+    """场景快照（离线 HTML / ZIP / 资源包共用）。
+
+    M4：``demo`` 场景同样带上完整 ``content``（含固定版本学习附件快照），既有字段保持不变；
+    播放器与第三方读取方据此按插入时的版本渲染，不再回查源附件。
+    """
     content = _scene_content(scene)
     meta = _scene_meta(scene)
     payload = {
@@ -1047,6 +1304,26 @@ footer { padding: 8px 16px; background: #111827; border-top: 1px solid #1f2937; 
 .sources .source-site { margin-left: 8px; color: #6b7280; font-size: 12px; }
 .sources .source-url { color: #2563eb; font-size: 12px; word-break: break-all; }
 .sources .source-summary { color: #4b5563; font-size: 12px; margin-top: 2px; }
+/* 手工「原理演示」场景（固定版本学习附件快照）：播放器内页与离线静态备份共用。 */
+.cls-demo-scene { background: #fff; color: #111827; border-radius: 10px; padding: 18px 20px; max-width: 1000px;
+  width: 100%; margin: 0 auto; }
+.cls-demo-head { display: flex; flex-wrap: wrap; align-items: center; gap: 8px; margin-bottom: 8px; }
+.cls-demo-badge { display: inline-block; padding: 2px 10px; border-radius: 999px; background: #1d4ed8;
+  color: #eff6ff; font-size: 12px; }
+.cls-demo-kind { color: #4b5563; font-size: 12px; }
+.cls-demo-scene h2 { margin: 4px 0 10px; font-size: 20px; }
+.cls-demo-scene h3 { margin: 12px 0 4px; font-size: 15px; color: #1f6feb; }
+.cls-demo-image { display: block; max-width: 100%; height: auto; margin: 10px auto;
+  border: 1px solid #e5e7eb; border-radius: 8px; background: #fff; }
+.cls-demo-note { margin: 8px 0; font-size: 14px; line-height: 1.7; color: #334155; }
+.cls-demo-assumptions { margin: 6px 0 0 18px; padding: 0; font-size: 13px; line-height: 1.7;
+  color: #475569; }
+.cls-demo-missing { margin: 10px 0; padding: 10px 12px; background: #f8fafc; border: 1px dashed #cbd5e1;
+  border-radius: 8px; color: #64748b; font-size: 13px; }
+.cls-demo-appendix { max-width: 1000px; width: 100%; margin: 0 auto; display: flex; flex-direction: column;
+  gap: 10px; }
+.cls-demo-appendix h2 { margin: 0; font-size: 16px; color: #1f6feb; }
+.cls-demo-appendix-hint { margin: 0; font-size: 12px; color: #9ca3af; line-height: 1.6; }
 /* 视频导出捕获模式（window.__zhixuCapture.gotoScene 触发）：隐藏播放控件，画布固定 1280×720。
    只在截图脚本调用时生效，正常播放完全不受影响。 */
 body.capture { overflow: hidden; background: #000; }
@@ -1465,7 +1742,8 @@ _HTML_JS = r"""
     return node;
   }
   function sceneTypeLabel(t) {
-    return { slide: '幻灯片', quiz: '课堂测验', interactive: '交互场景', pbl: '项目式学习' }[t] || t;
+    return { slide: '幻灯片', quiz: '课堂测验', interactive: '交互场景', pbl: '项目式学习',
+      demo: '原理演示' }[t] || t;
   }
   function find(id) { return document.getElementById(id); }
 
@@ -1747,6 +2025,57 @@ _HTML_JS = r"""
     return card;
   }
 
+  function demoKindLabel(kind) {
+    return { function_graph: '函数图', whiteboard: '解题白板', flow_animation: '流程动画',
+      isometric: '等距结构', science_demo: '科学演示', demo_3d: '3D 演示' }[kind] || (kind || '演示');
+  }
+
+  // M4 手工「原理演示」场景：只按插入时冻结的固定版本快照渲染（海报 + 说明 + 数据 JSON），
+  // 不执行附件里的任何内容；data-fixed-revision 供前端/第三方解析固定版本。
+  function renderDemo(scene) {
+    var content = scene.content || {};
+    var artifact = content.artifact || {};
+    var revision = Number(content.fixed_revision || artifact.revision || 0);
+    var section = el('section', 'cls-demo-scene');
+    section.setAttribute('data-scene-type', 'demo');
+    section.setAttribute('data-artifact-id', String(artifact.artifact_id || ''));
+    section.setAttribute('data-fixed-revision', String(revision));
+    var head = el('div', 'cls-demo-head');
+    head.appendChild(el('span', 'cls-demo-badge', '原理演示 · 固定版本 v' + revision));
+    head.appendChild(el('span', 'cls-demo-kind', demoKindLabel(artifact.kind)));
+    section.appendChild(head);
+    section.appendChild(el('h2', '', scene.title || artifact.title || '原理演示'));
+    var preview = artifact.preview && typeof artifact.preview === 'object' ? artifact.preview : {};
+    var png = typeof preview.png === 'string' ? preview.png : '';
+    if (png.indexOf('data:image/png;base64,') === 0) {
+      var image = document.createElement('img');
+      image.className = 'cls-demo-image';
+      image.src = png;
+      image.alt = artifact.title || '演示海报';
+      section.appendChild(image);
+    } else {
+      section.appendChild(el('p', 'cls-demo-missing', '未附加海报图像，请在知序课堂中播放该演示。'));
+    }
+    if (content.source_note) section.appendChild(el('p', 'cls-demo-note', '说明：' + content.source_note));
+    var assumptions = Array.isArray(content.assumptions) ? content.assumptions : [];
+    if (assumptions.length) {
+      section.appendChild(el('h3', '', '前提假设'));
+      var list = el('ul', 'cls-demo-assumptions');
+      assumptions.forEach(function (item) { list.appendChild(el('li', '', item)); });
+      section.appendChild(list);
+    }
+    var stepCount = Number(content.step_count || 0);
+    if (isFinite(stepCount) && stepCount > 0) {
+      section.appendChild(el('p', 'cls-demo-note', '演示步骤数：' + stepCount));
+    }
+    var dataScript = document.createElement('script');
+    dataScript.type = 'application/json';
+    dataScript.className = 'cls-demo-data';
+    dataScript.textContent = JSON.stringify(artifact);
+    section.appendChild(dataScript);
+    return section;
+  }
+
   function speechOf(scene) {
     var parts = [];
     (scene.actions || []).forEach(function (action) {
@@ -1825,6 +2154,7 @@ _HTML_JS = r"""
     else if (type === 'quiz') node = renderQuiz(scene);
     else if (type === 'interactive') node = renderInteractive(scene);
     else if (type === 'pbl') node = renderPbl(scene);
+    else if (type === 'demo') node = renderDemo(scene);
     else node = el('div', 'scene-card', '未知场景类型。');
     stage.appendChild(node);
     if (type === 'slide') window.setTimeout(scaleSlide, 0);
@@ -1901,6 +2231,7 @@ _HTML_TEMPLATE = """<!DOCTYPE html>
     <div id="scene-stage"></div>
     <div id="subtitle" class="subtitle"></div>
     __SOURCES__
+    __DEMOS__
     <div class="nav">
       <button id="speak" type="button">朗读旁白</button>
       <span id="speech-hint" class="meta"></span>
@@ -1919,7 +2250,12 @@ _HTML_TEMPLATE = """<!DOCTYPE html>
 
 
 def build_offline_html(snapshot: dict, tts_assets: dict[int, dict] | None = None) -> str:
-    """生成离线单文件 HTML 播放器（JSON/CSS/JS 全部内联，无 http(s) 外链）。"""
+    """生成离线单文件 HTML 播放器（JSON/CSS/JS 全部内联，无 http(s) 外链）。
+
+    M4：原理演示场景除在播放器内按固定版本快照渲染外，还在正文末尾附加一份**静态 HTML 备份**
+    （``section.cls-demo-scene[data-fixed-revision]`` + 内嵌 ``application/json`` 快照），
+    保证不执行脚本的阅读器 / 打印 / 第三方解析也能读到固定版本内容。
+    """
     data = json.loads(json.dumps(snapshot, ensure_ascii=False))
     audio_map = tts_assets or {}
     for scene in data.get("scenes") or []:
@@ -1935,11 +2271,14 @@ def build_offline_html(snapshot: dict, tts_assets: dict[int, dict] | None = None
     data_json = json.dumps(data, ensure_ascii=False, separators=(",", ":")).replace("</", "<\\/")
     # P3：文末「参考来源」列表（静态 HTML，纯文本链接；无来源时为空，不引入任何外链资源）。
     sources_html = _sources_html(data.get("sources") if isinstance(data.get("sources"), list) else [])
+    # M4：文末「演示附件（固定版本）」静态备份（无演示场景时为空，既有导出结构不变）。
+    demos_html = _demo_sections_html(data)
     return (
         _HTML_TEMPLATE
         .replace("__JS__", _HTML_JS)
         .replace("__CSS__", _HTML_CSS)
         .replace("__SOURCES__", sources_html)
+        .replace("__DEMOS__", demos_html)
         .replace("__TITLE__", title)
         .replace("__DATA__", data_json)
     )
@@ -1994,6 +2333,19 @@ h2 { margin: 0 0 2mm; font-size: 22px; line-height: 1.35; color: #111827; }
 .sources-list { margin: 0; padding: 0; list-style: none; }
 .sources-list li { border-top: 1px solid #e5e7eb; padding: 2mm 0; font-size: 12px; line-height: 1.65; }
 .sources-list li:first-child { border-top: none; }
+/* M4 原理演示讲义页：固定版本徽标 + 可选海报 + 说明/假设（无脚本、无外链）。 */
+.cls-demo-scene { border: 1px solid #e5e7eb; border-radius: 2mm; padding: 3mm 4mm; }
+.cls-demo-head { margin-bottom: 2mm; }
+.cls-demo-badge { display: inline-block; padding: 0.5mm 2.5mm; border-radius: 999px;
+  background: #1d4ed8; color: #eff6ff; font-size: 11px; }
+.cls-demo-kind { margin-left: 2mm; color: #4b5563; font-size: 11px; }
+.cls-demo-scene h3 { margin: 1mm 0 2mm; font-size: 16px; color: #111827; }
+.cls-demo-image { display: block; max-width: 100%; max-height: 120mm; margin: 2mm auto;
+  border: 1px solid #e5e7eb; background: #fff; }
+.cls-demo-note { margin: 1.5mm 0; font-size: 13px; line-height: 1.7; color: #334155; }
+.cls-demo-assumptions { margin: 1mm 0 0 5mm; font-size: 12px; line-height: 1.7; color: #475569; }
+.cls-demo-missing { margin: 2mm 0; padding: 2mm 3mm; background: #f8fafc; border: 1px dashed #cbd5e1;
+  border-radius: 2mm; font-size: 12px; color: #64748b; }
 .footer-note { margin-top: 5mm; font-size: 11px; color: #9ca3af; line-height: 1.6; }
 """
 
@@ -2180,6 +2532,15 @@ def _print_interactive_body(content: dict) -> str:
     return note + (('<p class="desc">%s</p>' % _esc(summary)) if summary else "")
 
 
+def _print_demo_body(content: dict, title: str = "") -> str:
+    """原理演示场景 → 打印讲义正文（固定版本徽标 + 可选海报 + 说明 + 假设 + 内嵌快照 JSON）。
+
+    与离线 HTML 附录共用 :func:`_demo_section_html`，保证 ``data-artifact-id`` /
+    ``data-fixed-revision`` 等固定版本标识在 PDF（打印 HTML 渲染）中同样存在。
+    """
+    return _demo_section_html(title, content, heading_tag="h3")
+
+
 def _rubric_text(item) -> str:
     levels = item.get("levels") if isinstance(item, dict) else None
     if isinstance(levels, str):
@@ -2263,6 +2624,9 @@ def _print_scene_body(scene: dict) -> str:
         return _print_interactive_body(content)
     if scene_type == "pbl":
         return _print_pbl_body(content)
+    if scene_type == "demo":
+        # M4：固定版本原理演示（海报 + 说明 + 内嵌快照 JSON；无 PNG 时显示中文说明）。
+        return _print_demo_body(content, str(scene.get("title") or ""))
     return '<p class="meta">未知场景类型。</p>'
 
 
@@ -2371,7 +2735,12 @@ async def render_course_pdf(course: dict, scenes: list[dict]) -> tuple[bytes, in
 
 def build_course_zip(course: dict, scenes: list[dict], *, tts_assets: dict[int, dict] | None = None,
                      resources: list[dict] | None = None, note: str = "") -> bytes:
-    """课程 ZIP：manifest.json + course.json + scenes/*.json + assets/**，可被导入接口还原。"""
+    """课程 ZIP：manifest.json + course.json + scenes/*.json + assets/**，可被导入接口还原。
+
+    M4：额外的固定版本原理演示场景会写 ``demos/scene-<NN>-<artifact_id>.json``（附件快照 +
+    固定版本说明），并在 manifest 里追加 ``demoScenes`` 与 ``capabilities`` 的 ``demo-scenes``；
+    没有演示场景时 ZIP 结构与既有导出完全一致。
+    """
     course_public = _course_snapshot(course)
     tts_map = tts_assets or {}
     scene_entries: list[dict] = []
@@ -2392,6 +2761,53 @@ def build_course_zip(course: dict, scenes: list[dict], *, tts_assets: dict[int, 
         })
     resource_entries: list[dict] = []
     files_seen: set[str] = set()
+    # M4：固定版本原理演示场景额外写 demos/scene-<NN>-<artifact_id>.json（快照 + 固定版本说明）。
+    demo_files: dict[str, bytes] = {}
+    demo_entries: list[dict] = []
+    for scene in scenes:
+        if str(scene.get("scene_type") or "") != "demo":
+            continue
+        content = _scene_content(scene)
+        artifact = _demo_artifact_of(content)
+        if not artifact:
+            continue
+        try:
+            order = int(scene.get("order_index") or 0)
+        except (TypeError, ValueError):
+            order = 0
+        order = order if order > 0 else len(demo_entries) + 1
+        artifact_id = re.sub(
+            r"[^A-Za-z0-9_-]+", "", str(artifact.get("artifact_id") or "")
+        )[:64] or "demo"
+        path = "demos/scene-%02d-%s.json" % (order, artifact_id)
+        revision = _demo_fixed_revision(content)
+        assumptions, step_count = _demo_content_lists(content)
+        payload = {
+            "format": "zhixu-classroom-demo-snapshot",
+            "formatVersion": 1,
+            "exportedAt": _db().utcnow(),
+            "sceneId": int(scene["id"]),
+            "order": order,
+            "type": "demo",
+            "title": str(scene.get("title") or artifact.get("title") or "原理演示"),
+            "fixed": True,
+            "fixedRevision": revision,
+            "fixedNote": "固定版本 v%d：课堂与导出使用该版本，源附件更新不会自动改变" % revision,
+            "sourceNote": str(content.get("source_note") or ""),
+            "assumptions": assumptions,
+            "stepCount": step_count,
+            "artifact": artifact,
+        }
+        demo_files[path] = json.dumps(payload, ensure_ascii=False, indent=2).encode("utf-8")
+        demo_entries.append({
+            "order": order,
+            "sceneId": int(scene["id"]),
+            "title": str(scene.get("title") or ""),
+            "artifact_id": str(artifact.get("artifact_id") or ""),
+            "kind": str(artifact.get("kind") or ""),
+            "fixedRevision": revision,
+            "path": path,
+        })
     for resource in (resources or []):
         path = str(resource.get("path") or "")
         data = resource.get("bytes")
@@ -2430,6 +2846,8 @@ def build_course_zip(course: dict, scenes: list[dict], *, tts_assets: dict[int, 
         capabilities.append("images")
     if sources:
         capabilities.append("web-search")
+    if demo_entries:
+        capabilities.append("demo-scenes")
     manifest = {
         "format": ZIP_FORMAT,
         "formatVersion": ZIP_FORMAT_VERSION,
@@ -2456,11 +2874,16 @@ def build_course_zip(course: dict, scenes: list[dict], *, tts_assets: dict[int, 
         manifest["agentsPromptVersion"] = str(
             (course_config.get(multiagent.CONFIG_META_KEY) or {}).get("prompt_version") or ""
         )
+    if demo_entries:
+        # M4：手工插入的固定版本演示场景清单（无演示场景时不写字段，既有 ZIP 结构不变）。
+        manifest["demoScenes"] = demo_entries
     buffer = io.BytesIO()
     with zipfile.ZipFile(buffer, "w", zipfile.ZIP_DEFLATED) as archive:
         archive.writestr("manifest.json", json.dumps(manifest, ensure_ascii=False, indent=2).encode("utf-8"))
         archive.writestr("course.json", json.dumps(course_public, ensure_ascii=False, indent=2).encode("utf-8"))
         for path, data in files.items():
+            archive.writestr(path, data)
+        for path, data in demo_files.items():
             archive.writestr(path, data)
         if sources:
             # P3：来源清单（标题/链接/站点/日期/摘要），与导出快照里的 sources 一致。
@@ -2645,6 +3068,12 @@ def _package_readme(course: dict, scenes: list[dict], interactive_files: list[di
         scene_type = str(scene.get("scene_type") or "slide")
         type_label = schema.SCENE_TYPE_LABELS.get(scene_type, scene_type)
         lines.append("  %d. [%s] %s" % (order, type_label, scene.get("title") or "未命名场景"))
+    if any(str(scene.get("scene_type") or "") == "demo" for scene in scenes):
+        # M4：仅在存在原理演示场景时补充说明，既有课程的 README 输出保持不变。
+        lines.append(
+            "  （原理演示场景为固定版本学习附件快照：「标题 + 说明 + 海报」，"
+            "源附件后续更新不会改变课件内容。）"
+        )
     if source_list:
         lines.extend([
             "",

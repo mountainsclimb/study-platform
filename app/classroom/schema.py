@@ -11,6 +11,7 @@
 """
 from __future__ import annotations
 
+import base64
 import html as html_lib
 import json
 import re
@@ -20,11 +21,16 @@ import re
 # ---------------------------------------------------------------------------
 
 SCENE_TYPES = ("slide", "quiz", "interactive", "pbl")
+#: 手工插入的课堂场景类型（不由 AI 生成流程分配；``SCENE_TYPES`` 保持既有 4 类不变）。
+MANUAL_SCENE_TYPES = ("demo",)
+#: 全部课堂场景类型 = AI 生成类型 + 手工类型（播放器 / 导出 / 导入可按此白名单分派）。
+ALL_SCENE_TYPES = SCENE_TYPES + MANUAL_SCENE_TYPES
 SCENE_TYPE_LABELS = {
     "slide": "幻灯片",
     "quiz": "课堂测验",
     "interactive": "交互场景",
     "pbl": "项目式学习",
+    "demo": "原理演示",
 }
 WIDGET_TYPES = ("simulation", "mindmap", "game", "code", "visualization3d")
 WIDGET_LABELS = {
@@ -38,6 +44,39 @@ MODES = ("standard", "interactive")
 DEPTHS = ("brief", "standard", "deep")
 COURSE_STATUSES = ("draft", "outline_ready", "generating", "ready", "failed")
 SCENE_STATUSES = ("pending", "generating", "ready", "failed")
+
+#: 可插入为「原理演示」场景的学习附件类型（与 ``study_artifact.ARTIFACT_KINDS`` 的演示交集）。
+DEMO_ARTIFACT_KINDS = (
+    "function_graph",
+    "whiteboard",
+    "flow_animation",
+    "isometric",
+    "science_demo",
+    "demo_3d",
+)
+#: 演示附件类型的中文名（PPTX / 离线 HTML / 打印讲义共用）。
+DEMO_ARTIFACT_KIND_LABELS = {
+    "function_graph": "函数图",
+    "whiteboard": "解题白板",
+    "flow_animation": "流程动画",
+    "isometric": "等距结构",
+    "science_demo": "科学演示",
+    "demo_3d": "3D 演示",
+}
+#: 演示附件快照限额（与 ``study_artifact`` 的 256KB / 64KB 存储上限兼容，课堂侧再收窄）。
+MAX_DEMO_DATA_BYTES = 200 * 1024
+MAX_DEMO_PNG_BYTES = 200 * 1024
+MAX_DEMO_SVG_CHARS = 60 * 1024
+MAX_DEMO_CONTENT_BYTES = 260 * 1024
+MAX_DEMO_SOURCE_NOTE_CHARS = 300
+MAX_DEMO_ASSUMPTIONS = 6
+MAX_DEMO_ASSUMPTION_CHARS = 200
+MAX_DEMO_STEP_COUNT = 50
+MAX_DEMO_REVISION = 100_000
+#: 课堂演示海报只接受 PNG data URI（SVG 不用于渲染，仅作为附件预览数据随快照保存）。
+DEMO_PNG_DATA_PREFIX = "data:image/png;base64,"
+#: 演示快照里的公开附件 ID（比 ``study_artifact`` 的既有 ID 规则更宽，兼容导入的第三方 ID）。
+DEMO_ARTIFACT_ID_RE = re.compile(r"^[a-zA-Z0-9_-]{6,64}$")
 
 MIN_SCENE_COUNT = 3
 MAX_SCENE_COUNT = 12
@@ -126,6 +165,8 @@ _SCENE_TYPE_ALIASES = {
     "interactive": "interactive", "interaction": "interactive", "互动": "interactive",
     "交互": "interactive", "交互场景": "interactive",
     "pbl": "pbl", "project": "pbl", "项目": "pbl", "项目式学习": "pbl",
+    # 手工「原理演示」场景（学习附件固定版本）：只由插入接口创建，不参与 AI 生成分配。
+    "demo": "demo", "principle": "demo", "演示": "demo", "原理演示": "demo",
 }
 
 _QUIZ_TYPE_ALIASES = {
@@ -971,6 +1012,182 @@ def placeholder_pbl_content(title: str, notice: str) -> dict:
 
 
 # ---------------------------------------------------------------------------
+# 手工「原理演示」场景：固定版本学习附件快照
+# ---------------------------------------------------------------------------
+#
+# 输入由课堂插入接口组装（附件读取已完成归属与版本校验）：
+#   {"artifact": {"artifact_id", "revision", "kind", "title", "data", "preview"},
+#    "source_note": str, "assumptions": [str], "step_count": int, "fixed": true}
+# 输出把附件内容**冻结**成 content 快照：课堂播放与 PPTX / 离线 HTML / 打印讲义 / ZIP 导出
+# 都只读该快照，源附件后续升版不会自动改变已插入的演示场景。
+
+
+def _demo_dump_json(value) -> str:
+    """演示内容的稳定 JSON 序列化；NaN / Infinity / 自定义对象按非法处理（中文提示）。"""
+    try:
+        return json.dumps(value, ensure_ascii=False, separators=(",", ":"), allow_nan=False)
+    except (TypeError, ValueError):
+        raise ClassroomSchemaError("演示内容包含无法序列化的数据") from None
+
+
+def _demo_json_bytes(value) -> int:
+    return len(_demo_dump_json(value).encode("utf-8"))
+
+
+def _demo_text(value, field: str, limit: int, *, required: bool = False) -> str:
+    """演示快照文本字段校验：必须是文本、去空白后不超限；``required`` 时空值报错。"""
+    if value is None:
+        value = ""
+    if not isinstance(value, str):
+        raise ClassroomSchemaError("%s必须是文本" % field)
+    text = value.strip()
+    if len(text) > limit:
+        raise ClassroomSchemaError("%s最多 %d 个字符（当前 %d 个）" % (field, limit, len(text)))
+    if required and not text:
+        raise ClassroomSchemaError("%s不能为空" % field)
+    return text
+
+
+def _demo_int(value, field: str, low: int, high: int, *, default: int | None = None) -> int:
+    """演示快照整数字段校验（拒绝布尔 / 小数 / 非数字），越界抛中文 schema 错误。"""
+    if value is None and default is not None:
+        return int(default)
+    if isinstance(value, bool) or value is None:
+        raise ClassroomSchemaError("%s必须是整数" % field)
+    if isinstance(value, float) and not value.is_integer():
+        raise ClassroomSchemaError("%s必须是整数" % field)
+    try:
+        number = int(value)
+    except (TypeError, ValueError):
+        raise ClassroomSchemaError("%s必须是整数" % field) from None
+    if number < low or number > high:
+        raise ClassroomSchemaError("%s需在 %d–%d 之间（当前 %d）" % (field, low, high, number))
+    return number
+
+
+def _normalize_demo_preview(raw) -> dict | None:
+    """校验附件 preview 快照：``png`` 必须是可解码且 ≤200KB 的 PNG data URI，``svg`` ≤60KB。
+
+    其他预览键（如 ``kind`` / ``preset_id``）原样保留，保证快照与源附件一致；未知键也必须
+    JSON 可序列化。``svg`` 只随 JSON 快照保存，绝不内联进 HTML / PPTX 渲染（避免主动内容）。
+    """
+    if raw is None:
+        return None
+    if not isinstance(raw, dict):
+        raise ClassroomSchemaError("演示附件 preview 必须是 JSON 对象")
+    preview: dict = {}
+    png = raw.get("png")
+    if png is not None:
+        if not isinstance(png, str):
+            raise ClassroomSchemaError("演示海报 png 必须是 PNG data URI 文本")
+        text = png.strip()
+        if not text.startswith(DEMO_PNG_DATA_PREFIX):
+            raise ClassroomSchemaError("演示海报 png 必须以 data:image/png;base64, 开头")
+        try:
+            payload = base64.b64decode(text[len(DEMO_PNG_DATA_PREFIX):], validate=True)
+        except (TypeError, ValueError):
+            raise ClassroomSchemaError("演示海报 png 不是合法的 base64 数据") from None
+        if len(payload) > MAX_DEMO_PNG_BYTES:
+            raise ClassroomSchemaError("演示海报 png 超过 200KB 上限，请压缩后再插入")
+        preview["png"] = text
+    svg = raw.get("svg")
+    if svg is not None:
+        if not isinstance(svg, str):
+            raise ClassroomSchemaError("演示海报 svg 必须是文本")
+        if len(svg) > MAX_DEMO_SVG_CHARS:
+            raise ClassroomSchemaError("演示海报 svg 超过 60KB 上限，请精简后再插入")
+        preview["svg"] = svg
+    for key, value in raw.items():
+        if key not in ("png", "svg"):
+            preview[str(key)] = value
+    if not preview:
+        return None
+    _demo_dump_json(preview)  # 其他预览字段同样必须可 JSON 序列化
+    return preview
+
+
+def normalize_demo_content(raw) -> tuple[dict, list[str]]:
+    """归一化「原理演示」场景内容（固定版本学习附件快照），返回 ``(content, warnings)``。
+
+    说明：
+
+    - 输出固定 ``type="demo"``、``fixed=True`` 与 ``fixed_revision``；``artifact`` 为附件快照
+      （``artifact_id`` / ``revision`` / ``kind`` / ``title`` / ``data`` / ``preview``）；
+    - 限额：data ≤200KB、png ≤200KB、svg ≤60KB、整个 content ≤260KB、source_note ≤300 字、
+      assumptions ≤6 条且每条 ≤200 字、step_count 0–50、revision 1–100000；
+    - 结构或限额非法抛 :class:`ClassroomSchemaError`（中文，可直接作为 422 detail 展示）；
+    - warnings 固定提示「演示为固定版本 vN：课堂与导出使用该版本，源附件更新不会自动改变」。
+    """
+    warnings: list[str] = []
+    payload = parse_json_payload(raw)
+    if not isinstance(payload, dict):
+        raise ClassroomSchemaError("演示内容必须是 JSON 对象")
+    artifact_raw = payload.get("artifact")
+    if not isinstance(artifact_raw, dict):
+        raise ClassroomSchemaError("演示内容缺少 artifact 附件快照对象")
+    artifact_id = _demo_text(artifact_raw.get("artifact_id"), "附件 ID", 64, required=True)
+    if not DEMO_ARTIFACT_ID_RE.match(artifact_id):
+        raise ClassroomSchemaError("附件 ID 格式不正确：需为 6–64 位字母、数字、下划线或短横线")
+    revision = _demo_int(artifact_raw.get("revision"), "附件版本号", 1, MAX_DEMO_REVISION)
+    kind = _demo_text(artifact_raw.get("kind"), "附件类型", 40, required=True)
+    if kind not in DEMO_ARTIFACT_KINDS:
+        raise ClassroomSchemaError(
+            "演示附件类型仅支持：%s" % "、".join(DEMO_ARTIFACT_KINDS)
+        )
+    title = _demo_text(artifact_raw.get("title"), "附件标题", 120, required=True)
+    data_raw = artifact_raw.get("data")
+    if not isinstance(data_raw, dict):
+        raise ClassroomSchemaError("演示附件 data 必须是 JSON 对象")
+    data_payload = _demo_dump_json(data_raw)
+    if len(data_payload.encode("utf-8")) > MAX_DEMO_DATA_BYTES:
+        raise ClassroomSchemaError("演示附件 data 超过 200KB 上限，请精简后再插入")
+    preview = _normalize_demo_preview(artifact_raw.get("preview"))
+    source_note = _demo_text(
+        payload.get("source_note"), "演示说明", MAX_DEMO_SOURCE_NOTE_CHARS,
+    )
+    assumptions_raw = payload.get("assumptions")
+    if assumptions_raw is None:
+        assumptions_raw = []
+    if not isinstance(assumptions_raw, (list, tuple)):
+        raise ClassroomSchemaError("演示假设 assumptions 必须是数组")
+    if len(assumptions_raw) > MAX_DEMO_ASSUMPTIONS:
+        raise ClassroomSchemaError("演示假设最多 %d 条" % MAX_DEMO_ASSUMPTIONS)
+    assumptions: list[str] = []
+    for item in assumptions_raw:
+        text = _demo_text(item, "演示假设", MAX_DEMO_ASSUMPTION_CHARS)
+        if text:
+            assumptions.append(text)
+    step_count = _demo_int(
+        payload.get("step_count"), "演示步骤数", 0, MAX_DEMO_STEP_COUNT, default=0,
+    )
+    content = {
+        "type": "demo",
+        "schemaVersion": 1,
+        "artifact": {
+            "artifact_id": artifact_id,
+            "revision": revision,
+            "kind": kind,
+            "title": title,
+            "data": json.loads(data_payload),
+            "preview": preview,
+        },
+        "source_note": source_note,
+        "assumptions": assumptions,
+        "step_count": step_count,
+        "fixed": True,
+        "fixed_revision": revision,
+    }
+    if _demo_json_bytes(content) > MAX_DEMO_CONTENT_BYTES:
+        raise ClassroomSchemaError(
+            "演示场景内容超过 260KB 上限，请精简附件预览或说明后再插入"
+        )
+    warnings.append(
+        "演示为固定版本 v%d：课堂与导出使用该版本，源附件更新不会自动改变" % revision
+    )
+    return content, warnings
+
+
+# ---------------------------------------------------------------------------
 # 场景动作（播放器白名单）
 # ---------------------------------------------------------------------------
 
@@ -1138,6 +1355,8 @@ _CONTENT_NORMALIZERS = {
     "quiz": normalize_quiz_content,
     "interactive": normalize_interactive_content,
     "pbl": normalize_pbl_content,
+    # 手工「原理演示」场景：固定版本学习附件快照（仅由插入接口调用，不参与 AI 生成）。
+    "demo": normalize_demo_content,
 }
 
 
@@ -1155,12 +1374,17 @@ def normalize_scene_type(value, default: str = "slide") -> str:
 
 
 def normalize_scene_types(values, default: tuple[str, ...] = SCENE_TYPES) -> list[str]:
+    """归一化“AI 生成”场景类型白名单：只保留 ``SCENE_TYPES``，手工演示类型不参与批量生成。
+
+    别名表虽然识别 ``demo`` / ``原理演示``（供导入、播放器与前端分派使用），但 AI 生成流程
+    仍以 :data:`SCENE_TYPES` 为白名单，不会把手工插入的演示场景分配给模型生成。
+    """
     if not isinstance(values, (list, tuple)):
         return list(default)
     result: list[str] = []
     for item in values:
         scene_type = _SCENE_TYPE_ALIASES.get(_as_text(item, 24).lower())
-        if scene_type and scene_type not in result:
+        if scene_type and scene_type in SCENE_TYPES and scene_type not in result:
             result.append(scene_type)
     return result or list(default)
 
@@ -1296,14 +1520,18 @@ def normalize_tutor_reply(raw, *, element_ids: list[str] | set[str] | None = Non
 
 
 __all__ = [
-    "ACTION_TYPES", "CANVAS_HEIGHT", "CANVAS_WIDTH", "ClassroomSchemaError",
-    "COURSE_STATUSES", "DEFAULT_QUIZ_POINTS", "DEFAULT_SCENE_COUNT", "DEPTHS",
-    "ELEMENT_TYPES", "MAX_ACTIONS", "MAX_ELEMENTS", "MAX_HTML_BYTES",
+    "ACTION_TYPES", "ALL_SCENE_TYPES", "CANVAS_HEIGHT", "CANVAS_WIDTH", "ClassroomSchemaError",
+    "COURSE_STATUSES", "DEFAULT_QUIZ_POINTS", "DEFAULT_SCENE_COUNT", "DEMO_ARTIFACT_ID_RE",
+    "DEMO_ARTIFACT_KINDS", "DEMO_ARTIFACT_KIND_LABELS", "DEMO_PNG_DATA_PREFIX", "DEPTHS",
+    "ELEMENT_TYPES", "MANUAL_SCENE_TYPES", "MAX_ACTIONS", "MAX_DEMO_ASSUMPTIONS",
+    "MAX_DEMO_ASSUMPTION_CHARS", "MAX_DEMO_CONTENT_BYTES", "MAX_DEMO_DATA_BYTES",
+    "MAX_DEMO_PNG_BYTES", "MAX_DEMO_REVISION", "MAX_DEMO_SOURCE_NOTE_CHARS",
+    "MAX_DEMO_STEP_COUNT", "MAX_DEMO_SVG_CHARS", "MAX_ELEMENTS", "MAX_HTML_BYTES",
     "MAX_INTERACTIVE3D_HTML_BYTES", "MAX_INTERACTIVE_HTML_BYTES", "MAX_QUESTIONS",
     "MAX_SCENE_COUNT", "MIN_SCENE_COUNT", "MODES", "SCENE_STATUSES", "SCENE_TYPES",
     "SCENE_TYPE_LABELS", "TEXT_HEIGHT_TABLE", "WIDGET_LABELS", "WIDGET_TYPES",
     "clamp_scene_count", "html_to_plain", "interactive_html_limit",
-    "normalize_actions", "normalize_depth",
+    "normalize_actions", "normalize_demo_content", "normalize_depth",
     "normalize_interactive_content", "normalize_interactive_html", "normalize_outline",
     "normalize_pbl_content", "normalize_quiz_content", "normalize_scene_content",
     "normalize_scene_type", "normalize_scene_types", "normalize_slide_content",

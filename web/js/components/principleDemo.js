@@ -23,10 +23,12 @@ import { t } from '../core/i18n.js';
 import { createFlowView, renderFlowPoster } from '../../vendor/principles/flow.js';
 import { createIsoView, renderIsoPoster } from '../../vendor/principles/iso.js';
 import { createThreeView, isWebGLAvailable } from '../../vendor/principles/threeLite.js';
-import { PRESET_DEMOS } from '../../vendor/principles/presets.js';
+import { PRESET_DEMOS, PRESET_LIST } from '../../vendor/principles/presets.js';
 
-// 三个离线示例的预设数据（与 question.js 共用；只读对象）。
-export { PRESET_DEMOS };
+// 离线示例预设（与 question.js 共用；只读对象）。
+// M4：PRESET_DEMOS 新增 loop/timeline/state 流程与 anatomy/anima 等距示例，
+// PRESET_LIST 提供稳定展示顺序，「查看原理」弹层的切换下拉按 kind 分组使用。
+export { PRESET_DEMOS, PRESET_LIST };
 
 const DEFAULT_STEP_MS = 1200;
 const MIN_STEP_MS = 200;
@@ -376,6 +378,9 @@ export function renderPrincipleDemo(container, artifact, options = {}) {
   function mountSvg(mode) {
     try {
       const ariaLabel = diagramAriaLabel(titleText);
+      // M4：数据里的 layout(flow/loop/timeline/state)、style(clean/sketch)、
+      // nodes[].kind、edges[].kind、parts[].shape、labels[] 等字段整体透传给渲染器，
+      // 播放器不再逐字段挑选，新增布局/形状无需改动本文件。
       const view = mode === 'flow'
         ? createFlowView(stage, art.data, { ariaLabel })
         : createIsoView(stage, art.data, { ariaLabel });

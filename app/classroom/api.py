@@ -14,7 +14,7 @@ from fastapi.responses import HTMLResponse, Response
 from pydantic import BaseModel, Field
 
 from ..auth import current_user
-from .. import question_ref, storage, study_evidence
+from .. import question_ref, storage, study_artifact, study_evidence
 from . import db as cdb
 from . import generate, grading, prompts, schema, tts
 from . import interactive
@@ -222,6 +222,9 @@ def classroom_meta(user=Depends(current_user)):
         "enabled": True,
         "scene_types": list(schema.SCENE_TYPES),
         "scene_type_labels": dict(schema.SCENE_TYPE_LABELS),
+        # M4 手工「原理演示」场景：AI 生成类型保持不变，演示按固定版本学习附件插入。
+        "manual_scene_types": list(schema.MANUAL_SCENE_TYPES),
+        "demo_artifact_kinds": {"demo": list(schema.DEMO_ARTIFACT_KINDS)},
         "modes": list(schema.MODES),
         "mode_labels": {"standard": "标准课堂", "interactive": "深度交互"},
         "depths": list(schema.DEPTHS),
@@ -269,6 +272,8 @@ def classroom_meta(user=Depends(current_user)):
             "whiteboard_kinds": list(multiagent.WHITEBOARD_KINDS),
             "interactive_scenes_max": generate.MAX_INTERACTIVE_SCENES,
             "images_per_scene_max": image_slots.MAX_IMAGES_PER_SCENE,
+            # M4：原理演示场景内嵌附件快照的整段 content 上限（260KB）。
+            "demo_content_bytes": schema.MAX_DEMO_CONTENT_BYTES,
         },
         "prompt_version": prompts.PROMPT_VERSION,
         "multiagent_prompt_version": multiagent.PROMPT_VERSION,
@@ -423,6 +428,197 @@ def delete_course(course_id: int, user=Depends(current_user)):
 
 
 # ---------------------------------------------------------------------------
+# 手工「原理演示」场景（M4）：把学习附件按固定版本插入课程
+#
+# 语义（方案 §4 学习附件 / §5.4 导出 / M4）：
+# - 插入时读取附件「当前（或调用方指定的）revision」，把 data/preview/title 冻结成场景 content
+#   快照，并记录 ``fixed_revision``；课堂播放、PPTX / 离线 HTML / 打印讲义 / ZIP 导出都只读该
+#   快照，源附件后续升版（study_artifact.add_revision）不会自动改变已插入的演示场景；
+# - 演示场景不由 AI 生成流程分配（``SCENE_TYPES`` 仍只有既有 4 类），只能走本组接口手工插入；
+# - 错误口径：他人课程 / 他人附件 / 不存在的附件与场景 → 404（不泄露存在性）；生成任务运行中 /
+#   场景数已满 / 删除非演示场景 → 409；附件类型不支持、内容超限、参数非法 → 422。
+# ---------------------------------------------------------------------------
+
+class DemoSceneCreate(BaseModel):
+    """插入演示场景请求体：``revision`` 省略时读取附件当前版本并立即固定。"""
+
+    artifact_id: str = Field(min_length=1, max_length=64)
+    revision: int | None = Field(default=None, ge=1, le=schema.MAX_DEMO_REVISION)
+    title: str | None = Field(default=None, max_length=120)
+    source_note: str | None = Field(default=None, max_length=schema.MAX_DEMO_SOURCE_NOTE_CHARS)
+
+
+def _demo_snapshot_hints(data: dict) -> tuple[list[str], int]:
+    """从附件 data 提取可展示的假设与步骤数（只读取既有字段，不编造内容）。"""
+    assumptions: list[str] = []
+    raw_assumptions = data.get("assumptions")
+    if isinstance(raw_assumptions, (list, tuple)):
+        for item in raw_assumptions[: schema.MAX_DEMO_ASSUMPTIONS]:
+            if isinstance(item, bool) or not isinstance(item, (str, int, float)):
+                continue
+            text = str(item).strip()
+            if text:
+                assumptions.append(text[: schema.MAX_DEMO_ASSUMPTION_CHARS])
+    step_count = 0
+    raw_steps = data.get("steps")
+    if isinstance(raw_steps, (list, tuple)):
+        step_count = min(len(raw_steps), schema.MAX_DEMO_STEP_COUNT)
+    else:
+        raw_count = data.get("step_count")
+        if isinstance(raw_count, int) and not isinstance(raw_count, bool):
+            step_count = max(0, min(raw_count, schema.MAX_DEMO_STEP_COUNT))
+    return assumptions, step_count
+
+
+def _demo_scene_meta(artifact: dict, content: dict, warnings: list[str]) -> dict:
+    """演示场景 meta：写入固定版本摘要（tutor 摘要复用）与快照溯源信息，不暴露附件私有内容。"""
+    snapshot = content.get("artifact") if isinstance(content.get("artifact"), dict) else {}
+    kind = str(snapshot.get("kind") or "")
+    kind_label = schema.DEMO_ARTIFACT_KIND_LABELS.get(kind, kind or "演示")
+    revision = int(content.get("fixed_revision") or 0)
+    lines = [
+        "固定版本原理演示《%s》（%s，v%d）"
+        % (snapshot.get("title") or "", kind_label, revision)
+    ]
+    note = str(content.get("source_note") or "").strip()
+    if note:
+        lines.append("说明：" + note)
+    assumptions = content.get("assumptions")
+    if isinstance(assumptions, list) and assumptions:
+        lines.append("前提假设：" + "；".join(str(item) for item in assumptions))
+    source_ref = str((artifact or {}).get("source_ref") or "").strip()
+    if source_ref:
+        lines.append("来源：" + source_ref[:200])
+    return {
+        "digest": "\n".join(lines),
+        "warnings": list(warnings),
+        "source": "study_artifact",
+        "artifact_id": str(snapshot.get("artifact_id") or ""),
+        "fixed_revision": revision,
+        "kind": kind,
+    }
+
+
+@router.post("/courses/{course_id}/scenes/demo", status_code=201)
+def add_demo_scene(course_id: int, data: DemoSceneCreate, user=Depends(current_user)):
+    """把学习附件按固定版本插入课程末尾，返回 ``{scene, course:{id, scene_count}}``。
+
+    - 课程归属先校验（他人课程 404）；生成任务运行中 409；场景数达上限 409；
+    - 附件读取走 ``study_artifact.get_artifact``（他人/已删除/不存在版本统一 404）；
+    - 附件类型必须是演示可用的 6 类之一（否则 422）；读取当前或指定 ``revision`` 的
+      data/preview/title 组装快照并由 :func:`schema.normalize_demo_content` 校验；
+    - 场景标题默认取附件标题，插入 ``scene_type='demo'``、``status='ready'``，
+      ``order_index`` 追加到课程末尾，并刷新课程 ``scene_count`` / ``updated_at``。
+    """
+    _owned_course_or_404(course_id, user["id"])
+    if cdb.count_running_course_jobs(course_id, user["id"]) > 0:
+        raise HTTPException(409, "该课程有生成任务正在运行，请先等待完成或取消")
+    scenes = cdb.course_scenes(course_id, user["id"])
+    if len(scenes) >= schema.MAX_SCENE_COUNT:
+        raise HTTPException(
+            409, "场景数量已达上限（%d 个），请先删除不必要的场景" % schema.MAX_SCENE_COUNT,
+        )
+    bundle = study_artifact.get_artifact(user["id"], data.artifact_id, revision=data.revision)
+    artifact = bundle.get("artifact") or {}
+    revision_payload = bundle.get("revision") or {}
+    kind = str(artifact.get("kind") or "")
+    if kind not in schema.DEMO_ARTIFACT_KINDS:
+        raise HTTPException(
+            422,
+            "该附件类型不支持课堂演示：仅支持 %s"
+            % "、".join(schema.DEMO_ARTIFACT_KIND_LABELS.values()),
+        )
+    artifact_data = revision_payload.get("data")
+    if not isinstance(artifact_data, dict):
+        raise HTTPException(422, "附件内容不是可用的 JSON 对象，无法插入课堂演示")
+    assumptions, step_count = _demo_snapshot_hints(artifact_data)
+    raw_content = {
+        "artifact": {
+            "artifact_id": str(artifact.get("artifact_id") or ""),
+            "revision": int(revision_payload.get("revision") or 0),
+            "kind": kind,
+            "title": str(artifact.get("title") or ""),
+            "data": artifact_data,
+            "preview": revision_payload.get("preview"),
+        },
+        "source_note": data.source_note or "",
+        "assumptions": assumptions,
+        "step_count": step_count,
+        "fixed": True,
+    }
+    try:
+        content, warnings = schema.normalize_demo_content(raw_content)
+    except schema.ClassroomSchemaError as exc:
+        raise HTTPException(422, str(exc)) from None
+    scene_title = (data.title or "").strip() or str(artifact.get("title") or "").strip() or "原理演示"
+    meta = _demo_scene_meta(artifact, content, warnings)
+    now = _db().utcnow()
+    with _db().connection() as con:
+        cdb.write_lock(con, "classroom-demo-scene")
+        row = con.execute(
+            "SELECT COALESCE(MAX(order_index), 0) FROM cls_scenes WHERE course_id=?",
+            (course_id,),
+        ).fetchone()
+        next_order = int(row[0] or 0) + 1
+        scene_id = con.execute(
+            "INSERT INTO cls_scenes(course_id,user_id,scene_type,order_index,title,content_json,"
+            "meta_json,status,created_at,updated_at) VALUES (?,?,?,?,?,?,?,'ready',?,?)",
+            (
+                course_id, user["id"], "demo", next_order, scene_title,
+                cdb.json_dump(content), cdb.json_dump(meta), now, now,
+            ),
+        ).lastrowid
+        scene_count = int(
+            con.execute(
+                "SELECT COUNT(*) FROM cls_scenes WHERE course_id=?", (course_id,)
+            ).fetchone()[0]
+        )
+        cdb.touch_course(con, course_id, user["id"], scene_count=scene_count)
+        scene_row = con.execute("SELECT * FROM cls_scenes WHERE id=?", (scene_id,)).fetchone()
+    return {
+        "scene": cdb.public_scene(scene_row),
+        "course": {"id": int(course_id), "scene_count": scene_count},
+    }
+
+
+@router.delete("/courses/{course_id}/scenes/{scene_id}")
+def delete_demo_scene(course_id: int, scene_id: int, user=Depends(current_user)):
+    """删除手工演示场景，并把剩余场景 ``order_index`` 重排为连续 ``0..n-1``。
+
+    仅 ``scene_type=='demo'`` 可删除（其他类型 409「仅演示场景支持删除」，避免误删 AI 生成的
+    课程内容）；他人课程 / 不存在场景 404；返回 ``{deleted:true, scene_id, course}``。
+    """
+    _owned_course_or_404(course_id, user["id"])
+    scene = _scene_of_course(scene_id, course_id, user["id"])
+    if str(scene.get("scene_type") or "") != "demo":
+        raise HTTPException(409, "仅演示场景支持删除")
+    now = _db().utcnow()
+    with _db().connection() as con:
+        cdb.write_lock(con, "classroom-demo-scene")
+        con.execute(
+            "DELETE FROM cls_scenes WHERE id=? AND course_id=? AND user_id=?",
+            (scene_id, course_id, user["id"]),
+        )
+        rows = con.execute(
+            "SELECT id FROM cls_scenes WHERE course_id=? AND user_id=? ORDER BY order_index, id",
+            (course_id, user["id"]),
+        ).fetchall()
+        # 逐行按下标重排：目标下标只会被已处理行释放，不会与未处理行冲突（唯一索引安全）。
+        for index, item in enumerate(rows):
+            con.execute(
+                "UPDATE cls_scenes SET order_index=?, updated_at=? WHERE id=?",
+                (index, now, int(item["id"])),
+            )
+        scene_count = len(rows)
+        cdb.touch_course(con, course_id, user["id"], scene_count=scene_count)
+    return {
+        "deleted": True,
+        "scene_id": int(scene_id),
+        "course": {"id": int(course_id), "scene_count": scene_count},
+    }
+
+
+# ---------------------------------------------------------------------------
 # 生成任务
 # ---------------------------------------------------------------------------
 
@@ -473,7 +669,8 @@ def _normalize_scene_types_param(values: list[str] | None, course: dict) -> list
     normalized = []
     for item in values:
         scene_type = schema.normalize_scene_type(item, default="")
-        if not scene_type:
+        # AI 生成白名单只含既有 4 类：手工演示（demo）即使别名可识别也不能被分配生成。
+        if not scene_type or scene_type not in schema.SCENE_TYPES:
             raise HTTPException(422, "存在不支持的场景类型：%s" % item)
         if scene_type not in normalized:
             normalized.append(scene_type)
@@ -547,6 +744,11 @@ async def regenerate_scene(course_id: int, scene_id: int, data: RegenerateInput,
                            user=Depends(current_user)):
     course = _owned_course_or_404(course_id, user["id"])
     scene = _scene_of_course(scene_id, course_id, user["id"])
+    if str(scene.get("scene_type") or "") == "demo":
+        # 演示场景是固定版本附件快照，不参与 AI 重新生成；需要换版本请重新插入。
+        raise HTTPException(
+            409, "演示场景使用固定版本附件，不支持重新生成；如需更换请重新插入演示场景",
+        )
     if not _has_any_provider(user["id"]):
         raise HTTPException(422, "请先在「模型设置」中配置并启用一个 AI 连接，再重新生成")
     _require_provider(user["id"], data.provider_id, data.model)
@@ -1619,6 +1821,9 @@ def _etag_matches(header: str | None, quoted: str) -> bool:
 @router.get("/scenes/{scene_id}/html")
 def scene_html(scene_id: int, user=Depends(current_user)):
     scene = cdb.owned_scene(scene_id, user["id"])
+    if scene["scene_type"] == "demo":
+        # 演示场景是固定版本附件快照：只经播放器渲染，不直出 HTML（不执行任何内联脚本）。
+        raise HTTPException(404, "该场景为原理演示，不提供 HTML 直出，请在课堂播放器中播放")
     if scene["scene_type"] != "interactive":
         raise HTTPException(404, "该场景不是交互场景")
     content = _scene_content(scene)

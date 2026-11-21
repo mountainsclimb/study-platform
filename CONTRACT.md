@@ -474,3 +474,34 @@ for every public read path, and distribution changes must keep the fingerprint/.
       (`study.tools.*` 118 + `study.m3.*` 100) keep zh/en aligned (5,010 keys each). `scripts/accept_runner.py`
       gains an `m3` stage running `scripts/integration/m3_accept.py`, and `ui_static_accept.py` asserts the M3
       component/page wiring and namespace minimums.
+
+15. **M4 versioned classroom demos and fixed-version export (2026-11-21).** `demo` is a **manual scene type**, not an
+    AI-generated one: `SCENE_TYPES` stays `("slide","quiz","interactive","pbl")`, `MANUAL_SCENE_TYPES=("demo",)` and
+    `ALL_SCENE_TYPES` are added, `/meta.scene_types` is unchanged while `manual_scene_types`,
+    `demo_artifact_kinds:{demo:[function_graph|whiteboard|flow_animation|isometric|science_demo|demo_3d]}` and
+    `limits.demo_content_bytes` are appended. `POST /api/classroom/courses/{id}/scenes/demo` takes
+    `{artifact_id,revision?,title?,source_note?}`, resolves the attachment through `study_artifact.get_artifact`
+    (foreign/missing 404, non-demo kinds 422, running course job/scene limit 409) and freezes the attachment snapshot
+    (`data/preview/title` + `fixed=true` + `fixed_revision`) into `cls_scenes.content_json` via
+    `schema.normalize_demo_content` (artifact_id pattern, revision 1..100000, data ≤200KB, PNG dataURI ≤200KB or SVG
+    ≤60KB, content ≤260KB, source_note ≤300, assumptions ≤6×200, steps 0..50 — all Chinese errors). Updating the source
+    artifact later never changes the classroom scene. `DELETE /api/classroom/courses/{id}/scenes/{scene_id}` only
+    accepts demo scenes (409 otherwise) and renumbers the remaining `order_index` contiguously. `/scenes/{id}/html`
+    returns 404 for demo scenes. Exports read the frozen snapshot only: PPTX gets a demo slide (title,
+    "固定版本 vN", attachment id, source note, assumptions, step count, optional PNG), offline/print HTML gets
+    `section.cls-demo-scene[data-fixed-revision]` with the snapshot in an escaped `application/json` script (no
+    attachment execution and no external links), ZIP adds `demos/scene-<NN>-<artifact_id>.json` plus manifest
+    `demoScenes`, and the importer now accepts `ALL_SCENE_TYPES` and re-validates demo content so exported ZIPs round-trip
+    with the same fixed revision. Frontend: `classroomPlayer.js` renders a demo stage (lazy-loads principleDemo /
+    functionGraph / sketchBoard read-only by kind, shows fixed-revision badge/source/assumptions/poster, sets
+    `data-demo-ready="1"` and dispatches `zhixu:demo-ready`, falls back to a Chinese message + poster, destroys
+    components on scene change); `classroom.js` adds the "insert demo" dialog and per-scene demo management; `notes.js`
+    shows a note's artifacts via `/api/artifacts/by-target?target_kind=note` with read-only open and poster download.
+    `flow.js` supports `layout: flow|loop|timeline|state` and `style: clean|sketch` (deterministic hand-drawn jitter
+    seeded by id, never `Math.random`), `iso.js` supports `shape: box|cylinder|gear|plate|rod` plus multi-line labels
+    and sketch style; five new local presets (`flow-review-loop`, `flow-function-timeline`,
+    `flow-photosynthesis-states`, `iso-anatomy-gearbox`, `iso-biology-stomata`) are added and the question page maps
+    subject → recommended preset with a full switch list that saves `source_ref=<preset id>`. 68 new locale keys
+    (`study.m4.*`) keep zh/en aligned (5,078 keys each); `accept_runner.py` gains an `m4` stage running
+    `scripts/integration/m4_accept.py`, and `ui_static_accept.py` asserts the M4 player/classroom/notes wiring,
+    the five preset ids and the `study.m4.` namespace minimum.

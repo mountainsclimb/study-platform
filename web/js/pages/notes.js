@@ -1480,6 +1480,258 @@ function renderNoteSources(note, onExcerptSaved) {
   return details;
 }
 
+/* ---------------------------------------------------------------------------
+ * M4 学习附件面板（笔记详情按 by-target 读取学习附件；只读打开 / 下载海报）
+ * ---------------------------------------------------------------------------
+ * - GET /api/artifacts/by-target?target_kind=note&target_key=<note id>
+ *   → {items:[{artifact,revision,data,preview,link}],total,skipped}；
+ * - 有附件才显示「学习附件」区；无数据隐藏；接口不可用中文降级，不伪造附件；
+ * - 打开走本地受控组件的只读模式（principleDemo / functionGraph / sketchBoard），
+ *   海报用 <a download> 下载 data URL，标题/版本/时间一律 textContent 写入。
+ */
+
+/** kind → 文案键 + 中文兜底（kind 是后端枚举，不直接拼进界面文案）。 */
+const NOTE_ARTIFACT_KIND_META = Object.freeze({
+  function_graph: { key: 'study.m4.kind.functionGraph', fallback: '函数图' },
+  whiteboard: { key: 'study.m4.kind.whiteboard', fallback: '解题白板' },
+  flow_animation: { key: 'study.m4.kind.flowAnimation', fallback: '流程动画' },
+  isometric: { key: 'study.m4.kind.isometric', fallback: '等距结构' },
+  science_demo: { key: 'study.m4.kind.scienceDemo', fallback: '科学演示' },
+  demo_3d: { key: 'study.m4.kind.demo3d', fallback: '3D 演示' },
+  reading_excerpt: { key: 'study.m4.kind.readingExcerpt', fallback: '阅读摘录' },
+});
+
+const NOTE_ARTIFACT_DEMO_KINDS = new Set(['flow_animation', 'isometric', 'demo_3d', 'science_demo']);
+
+/** 取 `study.m4.*` 文案：locale 缺键时回退中文常量并做 `{name}` 插值。 */
+function m4t(key, fallback, vars) {
+  const value = t(key, vars);
+  if (value !== key) return value;
+  return String(fallback).replace(/\{(\w+)\}/g, (match, name) => (
+    vars && vars[name] !== undefined && vars[name] !== null ? String(vars[name]) : match
+  ));
+}
+
+function noteArtifactKindLabel(kind) {
+  const meta = NOTE_ARTIFACT_KIND_META[String(kind || '')];
+  return meta ? m4t(meta.key, meta.fallback) : m4t('study.m4.kind.other', '学习附件');
+}
+
+/** science_demo 等前端没有独立渲染器的 kind：按数据结构选择本地只读视图。 */
+function noteArtifactDemoKind(kind, data) {
+  if (kind === 'flow_animation' || kind === 'isometric' || kind === 'demo_3d') return kind;
+  if (data && typeof data === 'object') {
+    if (Array.isArray(data.parts)) return 'isometric';
+    if (Array.isArray(data.nodes)) return 'flow_animation';
+  }
+  return kind;
+}
+
+/** 只接受内联图片 data URL（附件 preview.png 约定），拒绝外链/脚本伪协议。 */
+function noteArtifactPosterDataUrl(preview) {
+  const raw = String(preview && typeof preview === 'object' ? preview.png || '' : '').trim();
+  if (!raw || raw.length > 200000) return '';
+  return /^data:image\/(?:png|jpe?g|webp);base64,/i.test(raw) ? raw : '';
+}
+
+function noteArtifactPosterName(title, revision) {
+  const base = String(title || '').replace(/[\\/:*?"<>|\s]+/g, '_').replace(/^_+|_+$/g, '').slice(0, 60);
+  return `${base || 'learning-artifact'}-v${Number(revision) || 1}.png`;
+}
+
+/** 在弹层里挂载只读组件；返回 controller（destroy 由调用方负责）。 */
+async function mountNoteArtifactView(mount, { kind, title, data }) {
+  const artTitle = String(title || '').trim() || m4t('study.m4.kind.other', '学习附件');
+  if (kind === 'function_graph') {
+    const module = await import('../components/functionGraph.js');
+    if (typeof module.normalizeFunctionGraphDefinition === 'function'
+      && !module.normalizeFunctionGraphDefinition(data)) {
+      throw new Error(m4t('study.m4.notes.invalidData', '附件数据不合法'));
+    }
+    const graph = module.createFunctionGraph({ definition: data, readOnly: true, ariaLabel: artTitle });
+    mount.replaceChildren(graph.element);
+    return graph;
+  }
+  if (kind === 'whiteboard') {
+    const module = await import('../components/sketchBoard.js');
+    if (typeof module.normalizeSketchScene === 'function' && !module.normalizeSketchScene(data)) {
+      throw new Error(m4t('study.m4.notes.invalidData', '附件数据不合法'));
+    }
+    const board = module.createSketchBoard({ scene: data, readOnly: true, ariaLabel: artTitle });
+    mount.replaceChildren(board.element);
+    return board;
+  }
+  if (NOTE_ARTIFACT_DEMO_KINDS.has(kind)) {
+    const module = await import('../components/principleDemo.js');
+    const host = el('div', { class: 'cls-note-artifact-view' });
+    const controller = module.renderPrincipleDemo(host, {
+      kind: noteArtifactDemoKind(kind, data),
+      title: artTitle,
+      data: data === undefined || data === null ? {} : data,
+    }, { keyboard: true });
+    mount.replaceChildren(host);
+    try { await controller.ready; } catch { /* ready 不应 reject；兼容异常实现 */ }
+    if (typeof controller.getMode === 'function' && controller.getMode() === 'poster') {
+      try { controller.destroy(); } catch { /* 忽略 */ }
+      throw new Error(m4t('study.m4.notes.renderFailed', '演示渲染失败'));
+    }
+    return controller;
+  }
+  throw new Error(m4t('study.m4.notes.unsupported', '该类型附件暂不支持在页面内打开'));
+}
+
+/** 只读查看单个学习附件：按 kind 动态 import 本地组件，关闭时销毁。 */
+function openNoteArtifactDialog(item) {
+  const artifact = item?.artifact || {};
+  const kind = String(artifact.kind || '');
+  const title = String(artifact.title || '').trim() || m4t('study.m4.kind.other', '学习附件');
+  const revision = Number(item?.revision) || Number(artifact.current_revision) || 1;
+  const dialog = el('dialog', { class: 'modal-dialog cls-note-artifact-dialog', 'aria-label': title });
+  const mount = el('div', { class: 'cls-note-artifact-dialog-body' },
+    loading(m4t('study.m4.notes.loading', '正在加载学习附件…')));
+  const status = el('p', { class: 'help cls-note-artifact-dialog-status', role: 'status', 'aria-live': 'polite' });
+  let controller = null;
+  let closed = false;
+  const close = () => { try { dialog.close(); } catch { /* 已关闭时忽略 */ } };
+  dialog.append(
+    el('div', { class: 'card-header cls-note-artifact-dialog-head' },
+      el('div', { class: 'cls-note-artifact-dialog-title' },
+        el('h3', {}, title),
+        el('span', { class: 'help' }, [
+          noteArtifactKindLabel(kind),
+          m4t('study.m4.common.version', '版本 v{version}', { version: revision }),
+        ].filter(Boolean).join(' · '))),
+      button(t('common.close'), close, 'ghost small', 'close', { 'aria-label': t('common.close') })),
+    mount,
+    status);
+  document.body.append(dialog);
+  dialog.addEventListener('close', () => {
+    closed = true;
+    if (controller && typeof controller.destroy === 'function') {
+      try { controller.destroy(); } catch { /* 释放失败不影响页面 */ }
+    }
+    controller = null;
+    dialog.remove();
+  });
+  dialog.addEventListener('click', event => { if (event.target === dialog) close(); });
+  dialog.showModal();
+  mountNoteArtifactView(mount, { kind, title, data: item?.data })
+    .then((next) => {
+      if (closed) {
+        try { next?.destroy?.(); } catch { /* 关闭后才挂载成功：立即释放 */ }
+        return;
+      }
+      controller = next;
+      status.textContent = '';
+    })
+    .catch((error) => {
+      if (closed) return;
+      mount.replaceChildren(notice(m4t('study.m4.notes.openFailed', '附件打开失败：{reason}', {
+        reason: error?.message || '未知原因',
+      }), 'warning'));
+    });
+}
+
+/**
+ * 笔记详情「学习附件」面板：GET /api/artifacts/by-target 读取挂到该笔记的附件。
+ * 无数据整块隐藏；接口不可用时显示中文降级（不伪造附件数据）。
+ */
+function createNoteAttachmentPanel(note) {
+  const noteId = Number(note?.id) || 0;
+  const host = el('section', {
+    class: 'cls-note-artifacts hide',
+    'data-note-attachments': noteId ? String(noteId) : '',
+  });
+  let seq = 0;
+  if (!noteId) return { node: host, load: () => {} };
+
+  function headNode() {
+    return el('div', { class: 'cls-note-artifacts-head' },
+      el('h3', {}, m4t('study.m4.notes.title', '学习附件')),
+      button(t('common.reload'), () => load(), 'ghost small', 'rotate'));
+  }
+
+  function cardNode(item) {
+    const artifact = item.artifact || {};
+    const kind = String(artifact.kind || '');
+    const title = String(artifact.title || '').trim() || m4t('study.m4.kind.other', '学习附件');
+    const revision = Number(item.revision) || Number(artifact.current_revision) || 1;
+    const poster = noteArtifactPosterDataUrl(item.preview);
+    const metaParts = [
+      noteArtifactKindLabel(kind),
+      m4t('study.m4.common.version', '版本 v{version}', { version: revision }),
+      artifact.updated_at
+        ? m4t('study.m4.common.updatedAt', '更新于 {time}', { time: dateText(artifact.updated_at) })
+        : null,
+    ].filter(Boolean);
+    const actions = el('div', { class: 'cls-note-artifact-actions' },
+      button(m4t('study.m4.notes.open', '打开'), () => openNoteArtifactDialog(item), 'secondary small', 'eye'));
+    if (poster) {
+      actions.append(el('a', {
+        class: 'button ghost small',
+        href: poster,
+        download: noteArtifactPosterName(title, revision),
+        title: m4t('study.m4.notes.downloadPoster', '下载海报'),
+        'data-download-poster': '1',
+      }, icon('download'), m4t('study.m4.notes.downloadPoster', '下载海报')));
+    }
+    return el('article', {
+      class: 'cls-note-artifact-card',
+      'data-artifact-id': String(artifact.artifact_id || ''),
+    },
+    poster
+      ? el('img', {
+        class: 'cls-note-artifact-thumb',
+        src: poster,
+        alt: m4t('study.m4.notes.posterAlt', '附件海报：{title}', { title }),
+        loading: 'lazy',
+      })
+      : null,
+    el('div', { class: 'cls-note-artifact-main' },
+      el('strong', { class: 'cls-note-artifact-title', 'data-no-i18n': 'true' }, title),
+      el('span', { class: 'help cls-note-artifact-meta' }, metaParts.join(' · '))),
+    actions);
+  }
+
+  async function load() {
+    const mine = ++seq;
+    try {
+      const result = await api(`/artifacts/by-target?${query({
+        target_kind: 'note',
+        target_key: String(noteId),
+      })}`);
+      if (mine !== seq) return;
+      const items = (Array.isArray(result?.items) ? result.items : [])
+        .filter(item => item && typeof item === 'object' && item.artifact);
+      if (!items.length) {
+        host.classList.add('hide');
+        host.replaceChildren();
+        return;
+      }
+      const skipped = Number(result?.skipped) || 0;
+      host.classList.remove('hide');
+      const children = [headNode()];
+      if (skipped > 0) {
+        children.push(notice(m4t('study.m4.notes.skipped', '{count} 个附件已失效（可能已被删除）', {
+          count: skipped,
+        }), 'warning'));
+      }
+      children.push(el('div', { class: 'cls-note-artifact-list' }, ...items.map(cardNode)));
+      host.replaceChildren(...children);
+    } catch (error) {
+      if (mine !== seq) return;
+      const raw = String(error?.message || '').trim();
+      host.classList.remove('hide');
+      host.replaceChildren(
+        el('div', { class: 'cls-note-artifacts-head' },
+          el('h3', {}, m4t('study.m4.notes.title', '学习附件'))),
+        notice(m4t('study.m4.notes.unavailable', '学习附件暂不可用') + (raw ? `（${raw}）` : ''), 'warning'));
+    }
+  }
+
+  return { node: host, load };
+}
+
 function renderNoteDetail(note, container, reload, onPatched = null) {
   const own = note.origin !== 'official' || state.user.role === 'admin';
   const versionsMount = el('div');
@@ -1558,6 +1810,9 @@ function renderNoteDetail(note, container, reload, onPatched = null) {
     title: tm('study.m3.myExcerpts'),
   });
 
+  // M4 学习附件面板：无附件时隐藏；接口不可用时中文降级（与「我的摘录」并列）。
+  const attachmentPanel = createNoteAttachmentPanel(note);
+
   fill(container,
     el('div', { class: 'row between', style: 'margin-bottom:12px' },
       el('div', { class: 'row' },
@@ -1575,8 +1830,10 @@ function renderNoteDetail(note, container, reload, onPatched = null) {
     noteSourceVersionsNode(note),
     markdown(note.content || ''),
     renderNoteSources(note, () => excerptPanel.load()),
+    attachmentPanel.node,
     excerptPanel.node
   );
+  attachmentPanel.load();
   excerptPanel.load();
 }
 

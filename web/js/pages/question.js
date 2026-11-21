@@ -27,6 +27,19 @@ function toolText(key, fallback, vars) {
   ));
 }
 
+/**
+ * M4 原理演示文案：新 key 统一 `study.m4.*`，语言包由 Lead 合并；
+ * 缺键时回退中文常量。用变量 key 调用 t()，避免语言包尚未合并时
+ * 静态 locale 扫描（只抓字面量 key）报缺键，也不影响中英文切换。
+ */
+function m4Text(key, fallback, vars) {
+  const value = t(key, vars);
+  if (value !== key) return value;
+  return String(fallback).replace(/\{(\w+)\}/g, (match, name) => (
+    vars && vars[name] !== undefined && vars[name] !== null ? String(vars[name]) : match
+  ));
+}
+
 // 掌握度是后端下发的中文枚举值：提交保持原值，界面展示按当前语言映射。
 const MASTERY_LEVEL_KEYS = {
   '未掌握': 'practice.masteryNotMastered',
@@ -544,32 +557,43 @@ function openOfficialIssueDialog(q, publicId) {
 }
 
 /* ---------------------------------------------------------------------------
- * 原理演示入口（方案 §3「科学与机械主流程」界面落点 / §8 工单 D）
+ * 原理演示入口（方案 §3「科学与机械主流程」界面落点 / §5.4 / §7 M4）
  * ---------------------------------------------------------------------------
  * 只对 物理/数学/科学/化学/生物/机械 六科显示「查看原理」，未知学科不显示。
- * 视图按主题映射：
- * - 物理、机械 → 流程视图（flow）：先看「动力输入 → 降速增矩 → 输出」的传动原理；
- * - 数学、科学、化学、生物 → 等距结构（iso）：用拆解/装配结构演示空间关系；
- * - 3D（最小 Three.js 视图）只作为可选第三视图；无 WebGL / three 加载失败时
- *   统一播放器自动回退等距示意图，本页不额外处理。
+ * M4 起改为「按学科推荐 + 可切换」：
+ * - 按学科选默认预设（SUBJECT_PRESET_HINTS，第一项为默认，其余为同学科备选）；
+ * - 弹层内「切换演示」下拉按 kind 分组列出 PRESET_DEMOS 全部预设，切换时销毁
+ *   旧播放器再渲染新预设；
+ * - 「保存为学习附件」保存当前选中预设的数据（kind/title/data/source_ref），
+ *   沿用既有 /artifacts + /links 保存逻辑，失败时中文提示、不伪造成功；
+ * - 3D（最小 Three.js 视图）仍作为可选视图；无 WebGL / three 加载失败时统一
+ *   播放器自动回退等距示意图，本页不额外处理。
  * 演示数据为本地离线预设（presets.js），播放接口见 components/principleDemo.js。
  * ------------------------------------------------------------------------- */
 
 const PRINCIPLE_SUBJECTS = new Set(['物理', '数学', '科学', '化学', '生物', '机械']);
 
-const PRINCIPLE_VIEWS = Object.freeze([
-  { id: 'flow', presetId: 'flow-gear-transmission', labelKey: 'study.demo.modeFlow' },
-  { id: 'iso', presetId: 'iso-gearbox', labelKey: 'study.demo.modeIso' },
-  { id: 'three', presetId: 'three-gearbox', labelKey: 'study.demo.modeThree' },
+// 学科 → 推荐预设（第一项为默认；其余为同学科备选，下拉始终可切到全部预设）。
+const SUBJECT_PRESET_HINTS = Object.freeze({
+  '物理': ['flow-gear-transmission', 'flow-review-loop'],
+  '机械': ['flow-gear-transmission', 'iso-anatomy-gearbox', 'flow-review-loop'],
+  '数学': ['flow-function-timeline', 'iso-gearbox'],
+  '生物': ['iso-biology-stomata', 'flow-photosynthesis-states'],
+  '化学': ['flow-photosynthesis-states', 'iso-biology-stomata'],
+  '科学': ['flow-review-loop', 'flow-function-timeline', 'iso-biology-stomata'],
+});
+
+// 演示切换下拉的分组顺序：流程 → 等距 → 3D（与 PRESET_LIST 的固定顺序一致）。
+const PRINCIPLE_GROUP_ORDER = Object.freeze([
+  { kind: 'flow_animation', labelKey: 'study.demo.modeFlow' },
+  { kind: 'isometric', labelKey: 'study.demo.modeIso' },
+  { kind: 'demo_3d', labelKey: 'study.demo.modeThree' },
 ]);
 
-const PRINCIPLE_VIEW_BY_ID = new Map(PRINCIPLE_VIEWS.map((view) => [view.id, view]));
-
-function defaultPrincipleView(subject) {
-  const normalized = String(subject || '').trim();
-  if (normalized === '物理' || normalized === '机械') return 'flow';
-  if (['数学', '科学', '化学', '生物'].includes(normalized)) return 'iso';
-  return '';
+/** 按学科取默认预设 ID；预设表里不存在时由调用方回退到第一个可用预设。 */
+function defaultPrinciplePresetId(subject) {
+  const hints = SUBJECT_PRESET_HINTS[String(subject || '').trim()] || [];
+  return hints.length ? hints[0] : '';
 }
 
 // 统一题目引用：bank:<qid> / app:<id> / official:<public_id>；裸 qid 按题库题补 bank:。
@@ -637,7 +661,8 @@ function savedArtifactFrom(item, preset) {
     assumptions: Array.isArray(artifact.assumptions) && artifact.assumptions.length
       ? artifact.assumptions
       : (preset?.assumptions || []),
-    sourceRef: String(artifact.source_ref || preset?.id || ''),
+    // source_ref 原样保留：M4 用预设 ID 区分同 kind 的多个预设，空值表示旧附件。
+    sourceRef: String(artifact.source_ref || ''),
     revision: Number.isFinite(Number(revision)) ? Number(revision) : null,
     saved: true,
   };
@@ -661,12 +686,11 @@ function principleEntryButton(q) {
 }
 
 /**
- * 打开「查看原理」弹层：视图切换 + 已保存附件优先 + 保存为学习附件。
- * 不改变题目作答/揭晓/图片/公式等既有行为，入口挂载失败只 toast。
+ * 打开「查看原理」弹层：按学科推荐默认预设 + 「切换演示」下拉 + 已保存附件优先 +
+ * 保存为学习附件。不改变题目作答/揭晓/图片/公式等既有行为，入口失败只 toast。
  */
 async function openPrincipleDialog(q, trigger) {
-  const initialView = defaultPrincipleView(q?.subject);
-  if (!initialView) return;
+  const subject = String(q?.subject || '').trim();
   const ref = questionRefOf(q);
   // 先动态 import：原理播放器与预设不在题目首屏加载链路上，减少详情页初始体积。
   let principleModule;
@@ -676,14 +700,35 @@ async function openPrincipleDialog(q, trigger) {
     toast(t('study.demo.renderFailed', { v1: error?.message || '' }), true);
     return;
   }
-  const { renderPrincipleDemo, PRESET_DEMOS } = principleModule;
+  const {
+    renderPrincipleDemo,
+    PRESET_DEMOS: presetsById,
+    PRESET_LIST: presetOrder,
+  } = principleModule;
+  const presetMap = presetsById && typeof presetsById === 'object' ? presetsById : {};
+  const orderedPresets = (Array.isArray(presetOrder) ? presetOrder : Object.values(presetMap))
+    .filter((preset) => preset && preset.id && presetMap[preset.id]);
+
+  const presetOf = (id) => presetMap[String(id || '')] || null;
+  // 按 artifact.kind 找本地预设（旧附件没有 source_ref 时兜底出处/假设/已保存状态）。
+  const presetForKind = (kind) => orderedPresets.find((preset) => preset.kind === String(kind || '')) || null;
+
+  // 按学科推荐：第一项为默认；推荐 ID 在预设表中缺失时回退到第一个可用预设。
+  const recommendedPresetIds = SUBJECT_PRESET_HINTS[subject] || [];
+  let initialPresetId = defaultPrinciplePresetId(subject);
+  if (!presetOf(initialPresetId)) initialPresetId = '';
+  if (!initialPresetId && orderedPresets.length) initialPresetId = orderedPresets[0].id;
+  if (!initialPresetId) {
+    toast(t('study.demo.renderFailed', { v1: t('study.demo.modeUnknown') }), true);
+    return;
+  }
 
   let controller = null;
   const viewState = {
-    currentView: initialView,
+    currentPresetId: initialPresetId,
     artifact: null,
-    savedByKind: new Map(), // kind -> artifact_id（用于「已保存」状态）
-    savedArtifactsByKind: new Map(), // kind -> 已保存 artifact（用于优先渲染）
+    savedArtifactsByPreset: new Map(), // 预设 ID -> 已保存 artifact（用于优先渲染）
+    savedArtifactsByKind: new Map(), // 旧附件（无 source_ref）按 kind 兜底
     interacted: false,
     upgraded: false,
   };
@@ -691,35 +736,75 @@ async function openPrincipleDialog(q, trigger) {
   const titleNode = el('h3', { class: 'pd-dialog-title', 'data-no-i18n': 'true' }, t('study.demo.dialogTitle'));
   const statusNode = el('p', { class: 'pd-dialog-status' }, el('span', { class: 'spinner' }), t('study.demo.loading'));
   const savedNotice = el('p', { class: 'pd-saved-notice', hidden: true }, t('study.demo.loadedSaved'));
-  const switchBar = el('div', {
-    class: 'pd-view-switch', role: 'group', 'aria-label': t('study.demo.switchView'),
-  });
-  const viewButtons = new Map();
-  for (const view of PRINCIPLE_VIEWS) {
-    const viewButton = el('button', {
-      type: 'button', class: 'pd-view-btn', 'aria-pressed': 'false', 'data-principle-view': view.id,
-      onClick: () => switchPrincipleView(view.id),
-    }, t(view.labelKey));
-    viewButtons.set(view.id, viewButton);
-    switchBar.append(viewButton);
+
+  // 「切换演示」下拉：按 kind 分组列出 PRESET_DEMOS 全部预设；推荐预设带「推荐」后缀。
+  const recommendedIds = new Set(recommendedPresetIds);
+  const recommendedLabelTemplate = m4Text('study.m4.recommendedLabel', '{name}（推荐）');
+  function presetOptionLabel(preset) {
+    const recommended = recommendedIds.has(preset.id)
+      || (Array.isArray(preset.subjectHints) && preset.subjectHints.includes(subject));
+    return recommended
+      ? recommendedLabelTemplate.replace('{name}', String(preset.title || ''))
+      : String(preset.title || '');
   }
+  function presetGroups() {
+    const groups = [];
+    const knownKinds = new Set();
+    for (const group of PRINCIPLE_GROUP_ORDER) {
+      knownKinds.add(group.kind);
+      const items = orderedPresets.filter((preset) => preset.kind === group.kind);
+      if (!items.length) continue;
+      groups.push({
+        optgroup: t(group.labelKey),
+        options: items.map((preset) => ({ value: preset.id, label: presetOptionLabel(preset) })),
+      });
+    }
+    // 防御：未知 kind 的预设归入「其它演示」，避免下拉漏项。
+    const others = orderedPresets.filter((preset) => !knownKinds.has(preset.kind));
+    if (others.length) {
+      groups.push({
+        optgroup: m4Text('study.m4.groupOther', '其它演示'),
+        options: others.map((preset) => ({ value: preset.id, label: presetOptionLabel(preset) })),
+      });
+    }
+    return groups;
+  }
+  const presetSelect = select(presetGroups(), initialPresetId, {
+    id: 'pd-principle-preset',
+    class: 'pd-preset-select',
+    'aria-label': m4Text('study.m4.switchDemoAria', '选择要演示的原理预设'),
+  });
+  const presetHint = el('p', { class: 'pd-preset-hint' });
+  const switchBar = el('div', { class: 'pd-preset-switch' },
+    el('label', { class: 'pd-preset-label', for: 'pd-principle-preset' },
+      m4Text('study.m4.switchDemo', '切换演示')),
+    presetSelect,
+    presetHint);
+  presetSelect.addEventListener('change', () => switchPrinciplePreset(presetSelect.value));
   const demoHost = el('div', { class: 'pd-dialog-demo' });
   const metaHost = el('div', { class: 'pd-dialog-meta' });
   const saveButton = button(t('study.demo.saveArtifact'), event => {
     const triggerButton = event.currentTarget;
     busy(triggerButton, async () => {
       try {
-        const saved = await savePrincipleArtifact();
-        viewState.savedByKind.set(viewState.artifact.kind, saved.artifactId);
+        const currentPreset = presetOf(viewState.currentPresetId);
+        const saved = await savePrincipleArtifact(currentPreset);
         const savedArtifact = {
-          ...viewState.artifact, id: saved.artifactId, revision: saved.revision, saved: true,
+          ...viewState.artifact,
+          id: saved.artifactId,
+          revision: saved.revision,
+          // 记录来源预设 ID：M4 同一 kind 可能有多个预设，保存状态按预设区分。
+          sourceRef: currentPreset?.id || viewState.artifact?.sourceRef || '',
+          saved: true,
         };
-        viewState.savedArtifactsByKind.set(viewState.artifact.kind, savedArtifact);
+        if (currentPreset) viewState.savedArtifactsByPreset.set(currentPreset.id, savedArtifact);
         // 同步本次保存到按题缓存：关闭再打开弹层时也能优先展示刚保存的版本。
         const cacheEntry = principleArtifactCache.get(ref);
         if (cacheEntry?.items) {
-          cacheEntry.items = cacheEntry.items
-            .filter((item) => item?.artifact?.kind !== savedArtifact.kind);
+          cacheEntry.items = cacheEntry.items.filter((item) => {
+            if (currentPreset) return String(item?.artifact?.source_ref || '') !== currentPreset.id;
+            return item?.artifact?.kind !== savedArtifact.kind;
+          });
           cacheEntry.items.push({
             artifact: {
               artifact_id: saved.artifactId,
@@ -779,41 +864,40 @@ async function openPrincipleDialog(q, trigger) {
   document.body.append(dialog);
   dialog.showModal();
 
-  function presetOfView(viewId) {
-    const config = PRINCIPLE_VIEW_BY_ID.get(viewId) || PRINCIPLE_VIEWS[0];
-    return PRESET_DEMOS[config.presetId] || null;
+  // 已保存附件按来源预设区分：优先 source_ref 精确匹配；旧附件（无 source_ref）回退到 kind。
+  function savedEntryForPreset(preset) {
+    if (!preset) return { artifact: null };
+    const byPreset = viewState.savedArtifactsByPreset.get(preset.id);
+    if (byPreset) return { artifact: byPreset };
+    return { artifact: viewState.savedArtifactsByKind.get(preset.kind) || null };
   }
 
-  // 按 artifact.kind 找同一主题的本地预设（用于已保存附件的出处/假设兜底）。
-  function presetForKind(kind) {
-    const key = String(kind || '');
-    for (const view of PRINCIPLE_VIEWS) {
-      const preset = PRESET_DEMOS[view.presetId];
-      if (preset && preset.kind === key) return preset;
-    }
-    return null;
-  }
-
-  function artifactForView(viewId) {
-    const preset = presetOfView(viewId);
-    const saved = preset ? viewState.savedArtifactsByKind.get(preset.kind) : null;
+  function artifactForPreset(preset) {
+    const saved = savedEntryForPreset(preset).artifact;
     return { artifact: saved || preset, preset, saved: Boolean(saved) };
   }
 
   function updateSaveButton() {
-    const kind = viewState.artifact?.kind;
-    const saved = Boolean(kind && viewState.savedByKind.has(kind));
-    saveButton.disabled = saved || !ref;
+    const preset = presetOf(viewState.currentPresetId);
+    const saved = Boolean(preset && savedEntryForPreset(preset).artifact);
+    saveButton.disabled = saved || !ref || !preset;
     saveButton.textContent = saved ? t('study.demo.saved') : t('study.demo.saveArtifact');
     saveButton.classList.toggle('is-saved', saved);
   }
 
-  function updateSwitchButtons() {
-    for (const [id, node] of viewButtons) {
-      const active = id === viewState.currentView;
-      node.classList.toggle('is-active', active);
-      node.setAttribute('aria-pressed', String(active));
-    }
+  function updatePresetUi(preset, saved) {
+    if (preset) presetSelect.value = preset.id;
+    savedNotice.hidden = !saved;
+    // 推荐提示始终展示「当前学科的默认推荐」，用户切到其它预设后也不会误导。
+    const recommendedPreset = presetOf(recommendedPresetIds[0]) || null;
+    const hint = subject && recommendedPreset
+      ? m4Text('study.m4.presetHint', '按学科（{v1}）推荐：{v2}；也可以切换到其它演示。', {
+        v1: subject,
+        v2: recommendedPreset.title || '',
+      })
+      : '';
+    presetHint.textContent = hint;
+    presetHint.hidden = !hint;
   }
 
   function renderMeta(artifact, preset, saved) {
@@ -838,19 +922,21 @@ async function openPrincipleDialog(q, trigger) {
   }
 
   function renderCurrentView() {
-    const { artifact, preset, saved } = artifactForView(viewState.currentView);
-    if (!artifact) {
+    const preset = presetOf(viewState.currentPresetId);
+    if (!preset) {
       statusNode.hidden = false;
       statusNode.textContent = t('study.demo.renderFailed', { v1: t('study.demo.modeUnknown') });
       return;
     }
+    const { artifact, saved } = artifactForPreset(preset);
     viewState.artifact = artifact;
     titleNode.textContent = artifact.title || t('study.demo.dialogTitle');
-    updateSwitchButtons();
+    updatePresetUi(preset, saved);
     renderMeta(artifact, preset, saved);
     updateSaveButton();
     statusNode.hidden = true;
     if (controller) {
+      // 切换预设时先销毁旧播放器（定时器/补间/事件）再挂载新预设，避免叠加。
       try { controller.destroy(); } catch { /* 旧播放器可能已随弹层移除 */ }
       controller = null;
     }
@@ -860,21 +946,25 @@ async function openPrincipleDialog(q, trigger) {
     });
   }
 
-  function switchPrincipleView(viewId) {
-    if (!PRINCIPLE_VIEW_BY_ID.has(viewId) || viewId === viewState.currentView) return;
-    viewState.currentView = viewId;
+  function switchPrinciplePreset(presetId) {
+    const preset = presetOf(presetId);
+    if (!preset || preset.id === viewState.currentPresetId) return;
+    viewState.currentPresetId = preset.id;
+    viewState.interacted = true;
     renderCurrentView();
   }
 
-  async function savePrincipleArtifact() {
+  async function savePrincipleArtifact(currentPreset) {
     const artifact = viewState.artifact;
     if (!artifact) throw new Error(t('study.demo.missingArtifact'));
     if (!ref) throw new Error(t('study.demo.missingQuestionRef'));
+    const preset = currentPreset || presetOf(viewState.currentPresetId);
     const payload = {
       kind: artifact.kind,
       title: artifact.title,
       data: artifact.data,
-      source_ref: artifact.sourceRef || PRESET_DEMOS[PRINCIPLE_VIEW_BY_ID.get(viewState.currentView)?.presetId]?.id || '',
+      // 保存当前选中预设的数据与来源：M4 同名 kind 有多个预设，用预设 ID 区分。
+      source_ref: artifact.sourceRef || preset?.id || '',
       source_kind: 'principle_preset',
     };
     const created = await api('/artifacts', { method: 'POST', data: payload });
@@ -894,11 +984,14 @@ async function openPrincipleDialog(q, trigger) {
   // 未命中时先渲染本地预设，等接口返回且用户尚未操作时再自动升级，失败静默。
   const cachedArtifacts = principleArtifactCache.get(ref);
   function applySavedItems(items) {
-    for (const item of items || []) {
-      const saved = savedArtifactFrom(item, presetForKind(item?.artifact?.kind));
+    for (const item of Array.isArray(items) ? items : []) {
+      const rawRef = String(item?.artifact?.source_ref || '');
+      const matchedById = rawRef ? presetOf(rawRef) : null;
+      const matchedPreset = matchedById || presetForKind(item?.artifact?.kind);
+      const saved = savedArtifactFrom(item, matchedPreset);
       if (!saved) continue;
-      viewState.savedByKind.set(saved.kind, saved.id);
-      viewState.savedArtifactsByKind.set(saved.kind, saved);
+      if (matchedById) viewState.savedArtifactsByPreset.set(matchedById.id, saved);
+      else if (saved.kind) viewState.savedArtifactsByKind.set(saved.kind, saved);
     }
   }
   if (cachedArtifacts?.items) applySavedItems(cachedArtifacts.items);
@@ -908,14 +1001,14 @@ async function openPrincipleDialog(q, trigger) {
     pending.then((items) => {
       if (!dialog.open) return;
       applySavedItems(items);
-      const { saved } = artifactForView(viewState.currentView);
-      if (!saved) {
+      const preset = presetOf(viewState.currentPresetId);
+      if (!preset || !savedEntryForPreset(preset).artifact) {
         updateSaveButton();
         return;
       }
       if (viewState.upgraded) return;
-      // 已交互或已切换视图时不打断当前播放，只更新「已保存」状态。
-      if (viewState.interacted || viewState.currentView !== initialView) {
+      // 已交互或已切换预设时不打断当前播放，只更新「已保存」状态。
+      if (viewState.interacted || viewState.currentPresetId !== initialPresetId) {
         updateSaveButton();
         return;
       }

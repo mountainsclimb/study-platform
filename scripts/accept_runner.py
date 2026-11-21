@@ -81,6 +81,7 @@ STAGE_LABELS = {
     "ui-static": "前端静态契约与 ESM 解析",
     "round5": "第五轮共用学习数据层端到端（临时数据目录）",
     "m3": "M3 逐步提示/资料定位/掌握路径端到端（临时数据目录）",
+    "m4": "M4 课堂版本化演示与固定版本导出端到端（临时数据目录）",
     "pytest": "pytest（全量）",
     "ui-server": "UI 服务器可达性",
     "ui-plaza": "广场端到端（投稿→评审→发布→撤回）",
@@ -433,6 +434,14 @@ def build_stages(
         command=[python, "scripts/integration/m3_accept.py"],
         cwd=root,
         description="M3 端到端：逐步提示/资料定位/掌握路径/图形附件（隔离数据目录，TestClient）",
+    )
+    candidates["m4"] = Stage(
+        key="m4", name=STAGE_LABELS["m4"],
+        # M4（方案 §4/§5.4）：临时数据目录内跑通「学习附件 → 课堂固定版本演示场景 → PPTX/HTML/ZIP/PDF
+        # 固定版本导出 → 笔记 by-target 跨页读取」；不读写题库与生产数据，无需浏览器。
+        command=[python, "scripts/integration/m4_accept.py"],
+        cwd=root,
+        description="M4 端到端：课堂演示场景/固定版本导出/跨页附件（隔离数据目录，TestClient）",
     )
     candidates["pytest"] = Stage(
         key="pytest", name=STAGE_LABELS["pytest"],

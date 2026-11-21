@@ -72,6 +72,17 @@ ROUND5_STYLES = ("styles-formula.css", "styles-review.css", "styles-principles.c
 # M3（§5.2/§5.3/§5.4）：函数图 / 白板工具、资料定位与掌握路径页面。
 M3_COMPONENTS = (JS / "components" / "functionGraph.js", JS / "components" / "sketchBoard.js")
 M3_STYLES = ("styles-study-tools.css", "styles-m3-pages.css")
+# M4（§4/§5.4）：课堂版本化演示场景、播放器渲染、模板与预设扩展。
+CLASSROOM_PLAYER_JS = JS / "components" / "classroomPlayer.js"
+CLASSROOM_PAGE_JS = JS / "pages" / "classroom.js"
+PRESETS_JS = WEB / "vendor" / "principles" / "presets.js"
+FLOW_JSON_JS = WEB / "vendor" / "principles" / "flow.js"
+ISO_JS = WEB / "vendor" / "principles" / "iso.js"
+CLASSROOM_CSS = WEB / "styles-classroom.css"
+M4_PRESET_IDS = (
+    "flow-review-loop", "flow-function-timeline", "flow-photosynthesis-states",
+    "iso-anatomy-gearbox", "iso-biology-stomata",
+)
 INDEX_HTML = WEB / "index.html"
 ANKI_PY = ROOT / "app" / "anki_export.py"
 APP_PRACTICE_PY = ROOT / "app" / "practice.py"
@@ -98,6 +109,8 @@ LOCALE_NAMESPACES = (
     # M3 命名空间：题目/错题学习工具与资料定位/掌握路径（键量下限按本轮交付）。
     ("study.tools.", 100),
     ("study.m3.", 90),
+    # M4 命名空间：课堂版本化演示与学习附件（键量下限按本轮交付）。
+    ("study.m4.", 60),
 )
 
 #: 直接 t('literal') 键扫描的前端文件（WS30 相关页面/组件；其余页面键由既有 pytest 覆盖）。
@@ -615,6 +628,38 @@ class UiStaticAccept:
                            ("/api/mastery-paths", "restate", "refresh")),
                        "insight.js 需接入掌握路径列表/详情/节点操作"))
 
+        # M4：课堂版本化演示场景、播放器渲染、模板扩展与预设。
+        player_source = self._read(CLASSROOM_PLAYER_JS)
+        checks.append(("课堂播放器渲染固定版本演示场景",
+                       all(token in player_source for token in
+                           ("renderDemoStage", "cls-demo-stage", "zhixu:demo-ready", "function_graph")),
+                       "classroomPlayer.js 需渲染 demo 场景并广播就绪事件"))
+        classroom_page = self._read(CLASSROOM_PAGE_JS)
+        checks.append(("课堂页支持插入/删除演示场景",
+                       "scenes/demo" in classroom_page and "data-demo-insert" in classroom_page,
+                       "classroom.js 需调用 scenes/demo 并保留演示管理入口"))
+        checks.append(("笔记页展示学习附件并可只读打开",
+                       "/artifacts/by-target" in notes and "study.m4.notes" in notes,
+                       "notes.js 需按 by-target 读取学习附件"))
+        presets_source = self._read(PRESETS_JS)
+        missing_presets = [preset for preset in M4_PRESET_IDS if preset not in presets_source]
+        checks.append((f"M4 新增 {len(M4_PRESET_IDS)} 个学科演示预设", not missing_presets,
+                       f"缺少: {missing_presets}"))
+        checks.append(("流程渲染器支持循环/时间轴/状态与手绘风格",
+                       all(token in self._read(FLOW_JSON_JS) for token in
+                           ("timeline", "state", "loop", "sketch")),
+                       "flow.js 需支持 layout/style 扩展"))
+        checks.append(("等距渲染器支持圆柱/齿轮/杆形状与手绘风格",
+                       all(token in self._read(ISO_JS) for token in
+                           ("cylinder", "gear", "rod", "sketch")),
+                       "iso.js 需支持 shape/style 扩展"))
+        checks.append(("题目页支持按学科推荐并切换演示预设",
+                       "SUBJECT_PRESET_HINTS" in question_source
+                       and "study.m4.switchDemo" in question_source,
+                       "question.js 需实现学科推荐 + 切换演示"))
+        checks.append(("课堂演示场景样式已加载", "cls-demo-" in self._read(CLASSROOM_CSS),
+                       "styles-classroom.css 需包含 cls-demo-* 样式"))
+
         question = self._read(QUESTION_JS)
         checks.append(("题目详情接入「查看原理」并懒加载播放器",
                        "renderPrincipleDemo" in question and "study.demo.open" in question
@@ -655,6 +700,9 @@ class UiStaticAccept:
             "study.tools.open.graph", "study.tools.open.board", "study.tools.open.hints",
             "study.tools.hints.lockedHint", "study.m3.locateOriginal", "study.m3.saveExcerpt",
             "study.m3.masteryPath", "study.m3.submitRestate", "study.m3.pathCompleted",
+            # M4：课堂版本化演示与学习附件关键文案。
+            "study.m4.classroom.insert", "study.m4.demoStage.fixedVersion",
+            "study.m4.notes.title", "study.m4.switchDemo", "study.m4.scene.demo",
         )
         missing_keys = [key for key in required if key not in zh or key not in en]
         checks.append(("第五轮关键 locale 键存在（公式/四档/原理）", not missing_keys,

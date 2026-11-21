@@ -6,9 +6,10 @@
  */
 import { api } from '../core/api.js';
 import { readLocal, saveLocal } from '../core/state.js';
-import { el, button, badge, notice, loading, toast, busy } from '../core/dom.js';
+import { el, button, badge, notice, loading, toast, busy, icon } from '../core/dom.js';
 import { go } from '../core/router.js';
 import { mountJob } from '../core/jobs.js';
+import { t } from '../core/i18n.js';
 import {
   SCENE_STATUS, SLIDE_HEIGHT, SLIDE_WIDTH, contentDigest, latexNode, markdownNode,
   openExportDialog, sleep, slideTextNode, speechDuration, statusBadgeParts, typeLabel,
@@ -20,6 +21,66 @@ const MUTE_KEY = 'zhixu.classroom.muted';
 const SESSION_KEY_PREFIX = 'zhixu.classroom.session.';
 const SAVE_THROTTLE_MS = 5000;
 const UNKNOWN_ACTION_LIMIT = 3;
+
+/* ---------------------------------------------------------------------------
+ * M4 版本化演示场景（学习附件 → 课堂固定版本）
+ * ---------------------------------------------------------------------------
+ * 场景形状：`{id,scene_type:'demo',title,content:{type:'demo',artifact:{artifact_id,
+ * revision,kind,title,data,preview},source_note,assumptions,step_count,fixed}}`。
+ * 演示 data 只交给受控组件渲染（principleDemo / functionGraph / sketchBoard），
+ * 标题、说明与假设一律 textContent / textarea.value 写入，不拼 innerHTML。
+ * 界面文案 key 统一为 `study.m4.*`（locale JSON 由 Lead 合并，缺键回退中文兜底）。
+ */
+
+/** kind → 文案键 + 中文兜底（kind 是后端枚举，不允许拼进 DOM 文案）。 */
+const DEMO_KIND_META = Object.freeze({
+  function_graph: { key: 'study.m4.kind.functionGraph', fallback: '函数图' },
+  whiteboard: { key: 'study.m4.kind.whiteboard', fallback: '解题白板' },
+  flow_animation: { key: 'study.m4.kind.flowAnimation', fallback: '流程动画' },
+  isometric: { key: 'study.m4.kind.isometric', fallback: '等距结构' },
+  science_demo: { key: 'study.m4.kind.scienceDemo', fallback: '科学演示' },
+  demo_3d: { key: 'study.m4.kind.demo3d', fallback: '3D 演示' },
+});
+
+/** 交给 principleDemo 渲染的 kind（其余读取本地 functionGraph / sketchBoard）。 */
+const PRINCIPLE_DEMO_KINDS = new Set(['flow_animation', 'isometric', 'demo_3d', 'science_demo']);
+
+/** 取 `study.m4.*` 文案：locale 缺键时回退中文常量并做 `{name}` 插值。 */
+function m4Text(key, fallback, vars) {
+  const value = t(key, vars);
+  if (value !== key) return value;
+  return String(fallback).replace(/\{(\w+)\}/g, (match, name) => (
+    vars && vars[name] !== undefined && vars[name] !== null ? String(vars[name]) : match
+  ));
+}
+
+function demoKindLabel(kind) {
+  const meta = DEMO_KIND_META[String(kind || '')];
+  return meta ? m4Text(meta.key, meta.fallback) : m4Text('study.m4.kind.other', '学习附件');
+}
+
+/**
+ * 海报只接受内联 data URL（后端 preview.png 约定），拒绝外链与脚本伪协议；
+ * 长度与后端 preview ≤64KiB 的限额对齐，避免把异常大字符串塞进 img src。
+ */
+function demoPosterDataUrl(preview) {
+  const raw = String(preview && typeof preview === 'object' ? preview.png || '' : '').trim();
+  if (!raw || raw.length > 200000) return '';
+  return /^data:image\/(?:png|jpe?g|webp);base64,/i.test(raw) ? raw : '';
+}
+
+/**
+ * science_demo 等后端新增 kind 没有独立渲染器：按数据结构选择本地视图
+ * （parts → 等距/3D，nodes → 流程），避免把可渲染数据误报成加载失败。
+ */
+function demoPrincipleKind(kind, data) {
+  if (kind === 'flow_animation' || kind === 'isometric' || kind === 'demo_3d') return kind;
+  if (data && typeof data === 'object') {
+    if (Array.isArray(data.parts)) return 'isometric';
+    if (Array.isArray(data.nodes)) return 'flow_animation';
+  }
+  return kind;
+}
 
 function clamp(value, min, max) {
   return Math.max(min, Math.min(max, Number.isFinite(Number(value)) ? Number(value) : min));
@@ -186,6 +247,9 @@ export function createPlayerView({ container, version, courseId }) {
   let voiceCatalog = null;
   let imageCapabilities = null;
   let mediaDialogs = new Set();
+  // M4：当前演示场景的动态组件控制器（切场/离开必须 destroy，避免计时器/画布泄漏）。
+  let demoController = null;
+  let demoToken = 0;
 
   // ---------------------------------------------------------------------------
   // 语音（浏览器 speechSynthesis，可静音）
@@ -894,8 +958,278 @@ export function createPlayerView({ container, version, courseId }) {
     return wrap;
   }
 
-  function buildSceneStage(scene) {
-    const type = String(scene.type || 'slide');
+  // ---------------------------------------------------------------------------
+  // M4 演示舞台：固定版本学习附件（动态 import 受控组件，切场销毁）
+  // ---------------------------------------------------------------------------
+
+  /** 统一场景类型：后端同时给 `type` 与 `scene_type` 别名，旧课程只有 `type`。 */
+  function sceneTypeOf(scene) {
+    return String(scene?.scene_type || scene?.type || 'slide');
+  }
+
+  function sceneTypeLabel(scene) {
+    const type = sceneTypeOf(scene);
+    if (type === 'demo') return m4Text('study.m4.scene.demo', '原理演示');
+    return typeLabel(type);
+  }
+
+  /** 从 demo 场景内容里取出展示与渲染所需的只读字段（全部做容错，不抛错）。 */
+  function demoStageInfo(scene) {
+    const content = scene && typeof scene.content === 'object' ? scene.content : {};
+    const artifact = content.artifact && typeof content.artifact === 'object' ? content.artifact : {};
+    const revisionRaw = Number(artifact.revision ?? content.fixed_revision);
+    const revision = Number.isFinite(revisionRaw) && revisionRaw > 0 ? Math.round(revisionRaw) : 0;
+    const kind = String(artifact.kind || content.kind || '');
+    const assumptionsRaw = content.assumptions ?? artifact.assumptions;
+    let assumptions = [];
+    if (Array.isArray(assumptionsRaw)) {
+      assumptions = assumptionsRaw.map(item => String(item ?? '').trim()).filter(Boolean);
+    } else if (typeof assumptionsRaw === 'string' && assumptionsRaw.trim()) {
+      assumptions = [assumptionsRaw.trim()];
+    }
+    const stepCountRaw = Number(content.step_count ?? artifact.step_count);
+    return {
+      kind,
+      revision,
+      title: String(artifact.title || scene?.title || ''),
+      data: artifact.data,
+      poster: demoPosterDataUrl(artifact.preview) || demoPosterDataUrl(content.preview),
+      sourceNote: String(content.source_note || '').trim(),
+      assumptions,
+      stepCount: Number.isFinite(stepCountRaw) && stepCountRaw > 0 ? Math.round(stepCountRaw) : 0,
+    };
+  }
+
+  /** 销毁当前演示组件（幂等；同时让在途的动态 import 回调失效）。 */
+  function destroyDemoStage() {
+    demoToken += 1;
+    const controller = demoController;
+    demoController = null;
+    if (controller && typeof controller.destroy === 'function') {
+      try { controller.destroy(); } catch { /* 组件释放失败不影响切场 */ }
+    }
+  }
+
+  /** 渲染完成：打 dataset 标记并广播 zhixu:demo-ready（供视频/导出等待）。 */
+  function markDemoReady(stage, info, scene) {
+    if (!stage || !stage.isConnected || stage.dataset.demoReady === '1') return;
+    stage.dataset.demoReady = '1';
+    stage.dataset.demoKind = info.kind || '';
+    if (info.revision > 0) stage.dataset.demoRevision = String(info.revision);
+    try {
+      stage.dispatchEvent(new CustomEvent('zhixu:demo-ready', {
+        bubbles: true,
+        composed: true,
+        detail: { sceneId: scene?.id ?? null, kind: info.kind || '', revision: info.revision || 0 },
+      }));
+    } catch { /* 极老浏览器不支持 CustomEvent 选项时忽略（不影响渲染） */ }
+  }
+
+  /** 演示加载/数据非法时的中文降级：保留海报入口，不伪造任何演示内容。 */
+  function renderDemoFailure(stage, info, reason) {
+    if (!stage) return;
+    const body = stage.querySelector('.cls-demo-body');
+    const poster = stage.querySelector('.cls-demo-poster');
+    const detail = String(reason || '').trim();
+    if (body) {
+      body.replaceChildren(el('div', { class: 'cls-demo-fallback', role: 'status' },
+        el('strong', {}, m4Text('study.m4.demoStage.failed', '演示加载失败，可查看海报')),
+        detail
+          ? el('p', { class: 'help' }, m4Text('study.m4.demoStage.failedReason', '原因：{reason}', { reason: detail }))
+          : null));
+    }
+    if (poster) poster.hidden = !info.poster;
+    try { delete stage.dataset.demoReady; } catch { /* 忽略 */ }
+    stage.dataset.demoFailed = '1';
+  }
+
+  /** 按 kind 动态 import 受控组件并在 body 内挂载；任何失败都落入中文降级。 */
+  async function mountDemoComponent(stage, info, scene) {
+    const body = stage.querySelector('.cls-demo-body');
+    if (!body) return;
+    const token = ++demoToken;
+    const stale = () => destroyed || token !== demoToken || !stage.isConnected;
+    const host = el('div', { class: 'cls-demo-component' });
+    const loadingNode = el('p', { class: 'cls-demo-loading' },
+      el('span', { class: 'spinner' }), m4Text('study.m4.demoStage.loading', '正在加载演示…'));
+    body.replaceChildren(host, loadingNode);
+    try {
+      const kind = info.kind;
+      if (kind === 'function_graph' || kind === 'whiteboard') {
+        const module = await import(kind === 'function_graph' ? './functionGraph.js' : './sketchBoard.js');
+        if (stale()) return;
+        let controller;
+        if (kind === 'function_graph') {
+          if (typeof module.normalizeFunctionGraphDefinition === 'function'
+            && !module.normalizeFunctionGraphDefinition(info.data)) {
+            throw new Error(m4Text('study.m4.demoStage.invalidData', '演示数据不合法'));
+          }
+          controller = module.createFunctionGraph({
+            definition: info.data,
+            readOnly: true,
+            ariaLabel: info.title || demoKindLabel(kind),
+          });
+        } else {
+          if (typeof module.normalizeSketchScene === 'function' && !module.normalizeSketchScene(info.data)) {
+            throw new Error(m4Text('study.m4.demoStage.invalidData', '演示数据不合法'));
+          }
+          controller = module.createSketchBoard({
+            scene: info.data,
+            readOnly: true,
+            ariaLabel: info.title || demoKindLabel(kind),
+          });
+        }
+        if (!controller || !controller.element) {
+          throw new Error(m4Text('study.m4.demoStage.invalidData', '演示数据不合法'));
+        }
+        if (stale()) {
+          try { controller.destroy(); } catch { /* 忽略 */ }
+          return;
+        }
+        demoController = controller;
+        loadingNode.remove();
+        host.replaceChildren(controller.element);
+        markDemoReady(stage, info, scene);
+        return;
+      }
+      if (!PRINCIPLE_DEMO_KINDS.has(kind)) {
+        throw new Error(m4Text('study.m4.demoStage.unknownKind', '未知演示类型') + (kind ? `：${kind}` : ''));
+      }
+      const module = await import('./principleDemo.js');
+      if (stale()) return;
+      // confirmed 在确认渲染器没有降级为静态海报后才置真：principleDemo 的失败分支会先
+      // 同步发一次 onFrameReady，因此不能直接用它判定 ready。
+      let confirmed = false;
+      const controller = module.renderPrincipleDemo(host, {
+        kind: demoPrincipleKind(kind, info.data),
+        title: info.title || demoKindLabel(kind),
+        data: info.data === undefined || info.data === null ? {} : info.data,
+      }, {
+        keyboard: true,
+        onFrameReady: () => { if (confirmed) markDemoReady(stage, info, scene); },
+      });
+      if (stale()) {
+        try { controller.destroy(); } catch { /* 忽略 */ }
+        return;
+      }
+      demoController = controller;
+      loadingNode.remove();
+      try { await controller.ready; } catch { /* ready 不应 reject；兼容异常实现 */ }
+      if (stale()) return;
+      if (typeof controller.getMode === 'function' && controller.getMode() === 'poster') {
+        try { controller.destroy(); } catch { /* 忽略 */ }
+        if (demoController === controller) demoController = null;
+        renderDemoFailure(stage, info, m4Text('study.m4.demoStage.renderFailed', '演示渲染失败'));
+        return;
+      }
+      confirmed = true;
+      markDemoReady(stage, info, scene);
+    } catch (error) {
+      if (stale()) return;
+      if (demoController && typeof demoController.destroy === 'function') {
+        try { demoController.destroy(); } catch { /* 忽略 */ }
+      }
+      demoController = null;
+      renderDemoFailure(stage, info, error?.message || error);
+    }
+  }
+
+  function renderDemoStage(scene) {
+    const info = demoStageInfo(scene);
+    const stage = el('div', {
+      class: 'cls-demo-stage cls-demo-scene',
+      'data-demo-kind': info.kind || 'unknown',
+      'data-scene-id': String(scene?.id ?? ''),
+      role: 'group',
+      'aria-label': m4Text('study.m4.demoStage.aria', '课堂演示：{title}', {
+        title: info.title || demoKindLabel(info.kind),
+      }),
+    });
+    const badges = el('div', { class: 'cls-demo-badges' },
+      el('span', { class: 'cls-demo-kind' }, demoKindLabel(info.kind)));
+    if (info.revision > 0) {
+      badges.append(el('span', { class: 'cls-demo-fixed' },
+        m4Text('study.m4.demoStage.fixedVersion', '固定版本 v{version}', { version: info.revision })));
+    }
+    if (info.stepCount > 0) {
+      badges.append(el('span', { class: 'cls-demo-steps' },
+        m4Text('study.m4.demoStage.stepCount', '共 {count} 步', { count: info.stepCount })));
+    }
+    const head = el('div', { class: 'cls-demo-head' },
+      el('div', { class: 'cls-demo-head-main' },
+        el('h3', { class: 'cls-demo-title', 'data-no-i18n': 'true' },
+          info.title || m4Text('study.m4.demoStage.untitled', '未命名演示')),
+        badges),
+      el('p', { class: 'help cls-demo-hint' },
+        m4Text('study.m4.demoStage.hint', '按插入课堂时固定的附件版本渲染；附件后续升版不会改变这一页。')));
+    const body = el('div', { class: 'cls-demo-body' });
+    const poster = info.poster
+      ? el('figure', { class: 'cls-demo-poster', hidden: true },
+        el('img', {
+          src: info.poster,
+          alt: m4Text('study.m4.demoStage.posterAlt', '演示海报：{title}', { title: info.title || '' }),
+          loading: 'lazy',
+        }),
+        el('figcaption', { class: 'help' },
+          m4Text('study.m4.demoStage.posterCaption', '附件生成的海报预览（固定版本）')))
+      : null;
+    const actions = el('div', { class: 'cls-demo-actions' });
+    if (poster) {
+      const labelNode = el('span', {}, m4Text('study.m4.demoStage.viewPoster', '查看海报'));
+      const toggle = el('button', {
+        type: 'button',
+        class: 'button secondary small',
+        'aria-expanded': 'false',
+        onClick: () => {
+          poster.hidden = !poster.hidden;
+          const shown = !poster.hidden;
+          labelNode.textContent = shown
+            ? m4Text('study.m4.demoStage.hidePoster', '收起海报')
+            : m4Text('study.m4.demoStage.viewPoster', '查看海报');
+          toggle.setAttribute('aria-expanded', shown ? 'true' : 'false');
+        },
+      }, icon('eye'), labelNode);
+      actions.append(toggle);
+    }
+    const notes = el('div', { class: 'cls-demo-notes' });
+    if (info.sourceNote) {
+      const sourceNote = el('textarea', {
+        class: 'cls-demo-note-input',
+        rows: 2,
+        readonly: true,
+        value: info.sourceNote,
+        'aria-label': m4Text('study.m4.demoStage.sourceNote', '出处与说明'),
+      });
+      notes.append(el('label', { class: 'cls-demo-note' },
+        el('span', { class: 'cls-demo-note-label' },
+          m4Text('study.m4.demoStage.sourceNote', '出处与说明')),
+        sourceNote));
+    }
+    if (info.assumptions.length) {
+      const assumptions = el('textarea', {
+        class: 'cls-demo-note-input',
+        rows: Math.min(6, Math.max(2, info.assumptions.length + 1)),
+        readonly: true,
+        value: info.assumptions.join('\n'),
+        'aria-label': m4Text('study.m4.demoStage.assumptions', '假设与限制'),
+      });
+      notes.append(el('label', { class: 'cls-demo-note' },
+        el('span', { class: 'cls-demo-note-label' },
+          m4Text('study.m4.demoStage.assumptions', '假设与限制')),
+        assumptions));
+    }
+    stage.append(head, body);
+    if (poster) stage.append(poster);
+    if (actions.childNodes.length) stage.append(actions);
+    if (notes.childNodes.length) stage.append(notes);
+    // 等场景真正挂到舞台后再 import 组件：markDemoReady 依赖 stage.isConnected。
+    Promise.resolve().then(() => mountDemoComponent(stage, info, scene)).catch(() => { /* 已由降级 UI 覆盖 */ });
+    return stage;
+  }
+
+  function renderSceneStage(scene) {
+    const type = sceneTypeOf(scene);
+    if (type === 'demo') return renderDemoStage(scene);
     if (type === 'slide') return renderSlideStage(scene);
     if (type === 'quiz') return renderQuizStage(scene);
     if (type === 'interactive') return renderInteractiveStage(scene);
@@ -1286,6 +1620,7 @@ export function createPlayerView({ container, version, courseId }) {
   function renderScene(index, { resumeAction = 0 } = {}) {
     if (destroyed || !scenes.length) return;
     stopPlayback();
+    destroyDemoStage();
     narrationUsedScene = null;
     endCardShown = false;
     sceneIndex = clamp(index, 0, scenes.length - 1);
@@ -1296,7 +1631,7 @@ export function createPlayerView({ container, version, courseId }) {
     const scene = currentScene();
     let stage;
     try {
-      stage = buildSceneStage(scene);
+      stage = renderSceneStage(scene);
     } catch (error) {
       stage = notice(`场景渲染失败：${error.message || error}`, 'error');
     }
@@ -1325,7 +1660,7 @@ export function createPlayerView({ container, version, courseId }) {
       el('span', { class: 'cls-dot' }, '·'),
       el('span', {}, scene.title || '未命名场景'),
       el('span', { class: 'cls-dot' }, '·'),
-      el('span', {}, typeLabel(scene.type)),
+      el('span', {}, sceneTypeLabel(scene)),
       scene.status && scene.status !== 'ready' ? badge(status.label, status.variant) : null,
       scene.meta?.placeholder ? badge('内容待生成', 'amber') : null,
     ].filter(Boolean));
@@ -1825,12 +2160,12 @@ export function createPlayerView({ container, version, courseId }) {
         type: 'button',
         class: 'cls-scene-chip',
         role: 'tab',
-        title: `${typeLabel(scene.type)} · ${scene.title || ''}`,
+        title: `${sceneTypeLabel(scene)} · ${scene.title || ''}`,
         onClick: () => { switchToScene(index, { keepPlaying: playing }); },
       },
       el('span', { class: 'cls-scene-chip-index' }, String(index + 1)),
       el('span', { class: 'cls-scene-chip-title' }, scene.title || contentDigest(scene) || `场景 ${index + 1}`),
-      el('span', { class: 'cls-scene-chip-type' }, typeLabel(scene.type))));
+      el('span', { class: 'cls-scene-chip-type' }, sceneTypeLabel(scene))));
     });
 
     const playBtn = el('button', { type: 'button', class: 'cls-control-play', onClick: togglePlay }, el('span', {}, '▶'), el('span', {}, '播放'));
@@ -2272,6 +2607,9 @@ export function createPlayerView({ container, version, courseId }) {
   function bindKeys() {
     const handler = event => {
       if (destroyed || !root.isConnected) return;
+      // 演示组件（principleDemo）自己处理 ←/→/空格 并 preventDefault：已消费的按键
+      // 不再触发播放器级场景导航，避免一次按键同时步进演示和切场（不新增按键绑定）。
+      if (event.defaultPrevented) return;
       const target = event.target;
       if (target && typeof target.closest === 'function'
         && target.closest('input,textarea,select,[contenteditable="true"]')) return;
@@ -2341,7 +2679,9 @@ export function createPlayerView({ container, version, courseId }) {
     }
     if (destroyed) return;
     course = detail.course || {};
-    scenes = Array.isArray(detail.scenes) ? detail.scenes.filter(scene => scene && scene.type) : [];
+    scenes = Array.isArray(detail.scenes)
+      ? detail.scenes.filter(scene => scene && (scene.type || scene.scene_type))
+      : [];
     if (!scenes.length) {
       root.replaceChildren(
         notice('这门课程还没有生成任何场景：请先完成大纲确认与场景生成。', 'warning'),
@@ -2384,6 +2724,7 @@ export function createPlayerView({ container, version, courseId }) {
     playing = false;
     runToken += 1;
     cancelSpeech();
+    destroyDemoStage();
     if (saveTimer) { clearTimeout(saveTimer); saveTimer = null; }
     saveNow({ beacon: true });
     if (keyCleanup) { try { keyCleanup(); } catch { /* 忽略 */ } keyCleanup = null; }
