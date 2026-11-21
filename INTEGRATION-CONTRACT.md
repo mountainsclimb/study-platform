@@ -169,11 +169,17 @@ cross_verify/requirements/document_ids 等）可直接复用。**不要修改 `a
 - `PATCH /courses/{id}` `{title?, description?, subject?, grade?}` → `{course}`
 - `DELETE /courses/{id}`（级联场景/会话/素材；有运行中任务时 409）
 - `POST /courses/{id}/generate` `{stage:'outline'|'scenes'|'all', provider_id, model, scene_types?, scene_count?, depth?,
-  web_search?:bool, web_search_limit?:1-8}` → `{job}`。`web_search=true` 时大纲前用 DeepSeek 官方
+  web_search?:bool, web_search_limit?:1-8, source_ref?:string}` → `{job}`。`web_search=true` 时大纲前用 DeepSeek 官方
   `/v1/tools/search` 检索并把带 `[n]` 链接的来源注入 prompt，来源落 `course.outline.sources`/
   `course.config.web_search`（无搜索连接时降级不报错，标注未使用联网资料；不得伪造来源）。
   （task=`course`，params={course_id, stage, ...}；`stage=outline|all` 先产大纲，进入 `awaiting_outline`；
   用户在 UI 编辑大纲后调用既有 `POST /api/ai/jobs/{job_id}/confirm-outline` 继续）
+- **P4 平台精选题作为课程素材（2026-11-21 第四轮）**：`source_ref=official:<公开编号>`（目前只支持 official）——
+  格式非法/来源不支持 **422**，未发布/撤回/争议 **404**（仅在新建大纲时校验，已有课程续跑/单场景重生成不重新引用）；
+  `outline.sources` 追加 `{kind:'official', public_id, published_version, review_status(_label), summary,
+  source_declaration, question_ref}` 条目，`course.config.seed_source` 记录建课来源，任务结果下发
+  `official_source_count/official_sources[]`；prompt 只注入公开题面/答案要点（答案仅供备课）与公开来源声明，
+  不得编造公开编号或输出内部 ID/投稿人/审核员；撤回后不可新建课程，已生成课程与导出保留当时的来源标记。
 - `POST /courses/{id}/scenes/{scene_id}/regenerate` `{provider_id, model, instruction?}` → `{job}`
 - **P1/P2 增量（已实现）**：`GET|PATCH /courses/{id}/agents`、`POST /courses/{id}/agents/generate`（角色名册）；
   `POST /sessions/{id}/discussion`（`{scene_id?,mode:'qa'|'discussion'|'lecture',topic?,rounds?,user_message?}`
@@ -338,10 +344,14 @@ cross_verify/requirements/document_ids 等）可直接复用。**不要修改 `a
 - `GET /knowledge?subject=` → `{items:[{kp_id,title,path,attempts,accuracy,mastery_level,weak:bool}]}`
 - `GET /mistakes?subject=` → `{by_reason:[{reason,count}], by_type:[...], by_kp:[...], recent:[...]}`
 - `GET /report?subject=&days=` → 完整报告数据（学生个人报告；不含班级/学校维度）
-- `GET /home?days=`（Phase 1 剩余，2026-11-21）→ 首页统计快照 `{generated_at, range, bank, personal, caliber}`：
-  题库全局「可练/可自动判分/待核验/门禁排除」+ 个人「待复习/今日练习/首次正确率/重复练习/待判分/薄弱知识点/
-  我的题库/继续练习」，全部复用 `app/home_stats.py` 的真实口径（题库门禁复用 practice 查询构件；
-  个人指标以 `attempts` 为唯一来源），前端首页/学情页不得本地估算；`days` 1–3650，默认 90。
+- `GET /home?days=`（Phase 1 剩余，2026-11-21）→ 首页统计快照 `{generated_at, range, bank, official, personal, caliber}`：
+  题库全局「可练/可自动判分/待核验/门禁排除」+ **平台精选口径**（第四轮追加：`official{available,total_questions,
+  practice_pool,auto_gradable,attempts,practiced,wrong_count,due_reviews,caliber,note}`，与 `app/official.official_caliber`
+  同源，撤回/争议查询时剔除；`bank.official_practice_pool/official_auto_gradable` 供首页题库卡片）+ 个人「待复习/
+  今日练习/首次正确率/重复练习/待判分/薄弱知识点/我的题库/继续练习」，全部复用 `app/home_stats.py` 的真实口径
+  （题库门禁复用 practice 查询构件；个人指标以 `attempts` 为唯一来源），前端首页/学情页不得本地估算；
+  `days` 1–3650，默认 90。`GET /api/stats` 同步增加嵌套 `official` 块（平铺 `official_attempts/official_practiced/
+  official_wrong_count` 语义不变）。
 - `POST /narrative` `{provider_id, model, subject?}` → `{job}`（task=`insight-report`；AI 只基于真实统计生成文字建议，
   结果显著标注「AI 生成」）
 
@@ -357,10 +367,18 @@ cross_verify/requirements/document_ids 等）可直接复用。**不要修改 `a
   助手只准备候选，不直接确认成绩、发布或代用户执行未确认的写操作。
 - `GET /tools` → `{items:[{name,description,side_effect:bool,schema?}]}`（供 UI 展示能力边界）
 
-工具白名单（服务端函数直调，不暴露任意 HTTP）：`search_source_bank`、`read_question`、`list_wrongs`、
-`get_stats`、`list_notes`、`read_note`、`list_knowledge_points`、`list_mybank_questions`、
-`create_explain_job`、`create_revision_paper`、`compose_paper`。所有工具以 `user_id` 复校验权限；
-写操作只准备候选，用户通过 `POST /conversations/{id}/confirm` 二次确认后执行，助手不能确认成绩或发布。
+工具白名单（服务端函数直调，不暴露任意 HTTP，共 **13 个**）：`search_source_bank`、`read_question`、
+`search_official`（第四轮新增，只读检索平台精选）、`list_wrongs`、`get_stats`、`list_notes`、`read_note`、
+`list_knowledge_points`、`list_mybank_questions`、`create_explain_job`、`create_revision_paper`、`compose_paper`、
+`web_search`。所有工具以 `user_id` 复校验权限；写操作只准备候选，用户通过 `POST /conversations/{id}/confirm`
+二次确认后执行，助手不能确认成绩或发布。
+
+- **平台精选工具契约（2026-11-21 第四轮）**：`read_question` 接受 `official:<公开编号>`，读取走
+  `app/official.py` 的查询时可见性（撤回/争议/不可见给清晰中文提示并**绝不回显题面/选项/答案**）；答案/解析仍只在
+  「本人已作答」后返回。`search_official` 只返回公开投影（`public_id/source/source_label/review_status(_label)/
+  status_label/published_version/featured/community_pending/subject/grade/type/stem(≤160)/has_answer/
+  knowledge_tags`），不输出内部 ID/投稿人/审核员；至少给一个检索条件。系统提示要求引用写「平台精选 · 公开编号
+  plz-...」并说明审核状态；`get_stats` 结果可带 `official` 口径（与 `/api/stats` 同源），既有计数语义不变。
 
 - 技能库（P2）：`GET /skills`（内置 + 本人）、`POST /skills`、`PATCH /skills/{id}`（version CAS，内置 409）、
   `DELETE /skills/{id}`；会话/消息可选 `skill_ids`。技能只作为方法论注入系统提示末尾，不改变系统规则、
@@ -389,6 +407,27 @@ Phase 3 起任务中心/管理台另消费 AI 用量与配额（`app/ai/usage.py
 - **ai_usage → 任务中心**：任务终态写 `ai_job_usage` 并在 `GET /api/ai/jobs/{id}` 之外提供本人/全站用量查询；
   配额与并发在校验阶段返回 **429**，前端在任务创建失败时展示配额提示，不把失败请求算作已消耗。
 
+### 4.6.1 Phase 4 跨模块链路（2026-11-21 第四轮）
+
+- **official → 助手**：`app/assistant.py` 的 `read_question`/`search_official` 只读调用 `app/official.py`；
+  可见性在查询时判定，撤回/争议只给中文提示、不回显正文；工具结果携带公开编号与审核状态，回答必须写
+  「平台精选 · 公开编号」——助手不会把精选题写成内部 ID，也不会替用户作答或确认成绩。
+- **official → 课堂**：`POST /api/classroom/courses/{id}/generate` 的 `source_ref` 复用练习侧统一引用与可见性；
+  建课时按当时可见性读取快照并写入 `outline.sources`（公开编号/精选版本/审核状态/来源声明），撤回后不可新建课程，
+  已生成课程与导出保留来源标记（§4.1）。
+- **gate / restore → 公开可见性**：`POST /api/plaza/submissions/{id}/publish` 的抽检门禁（`app/plaza/gate.py`）
+  只决定「是否允许签发」，不改变公开可见性判定；签发被阻断时发布指针不落库，公开读保持原状。
+  `POST /api/plaza/releases/{public_id}/restore` 恢复活跃发布指针后，广场公开读与 `official:` 精选检索/详情/
+  作答**查询时即时**重新可见；`withdraw`/`rollback` 仍即时不可见——三者都只改指针/投稿状态，历史数据保留。
+- **批量处理 / 通知增强（Phase 4 运营端）**：`POST /api/plaza/admin/{issues|reports|appeals}/batch` 为编辑/管理员
+  批量处理反馈（≤50、部分成功 `updated/skipped`、每批写 `plaza_ops_batches` 审计）；`GET /api/plaza/notifications/
+  unread-count` 与 `POST /notifications/read`（`all|ids[≤200]|kind`）只服务本人，未知 kind **422**；通知按
+  「接收人+类型+投稿+版本」窗口去重（`STUDY_PLAZA_NOTIFY_DEDUPE_SECONDS`，默认 300s）。这些接口不改变
+  公开可见性，也不把反馈/通知内容泄露给无关用户。
+- **monitor → 只读探针**：`GET /api/admin/monitor` 复用 `app.main._health_token_ok` 的 `X-Health-Token` 口令做
+  只读探针；只执行 SELECT、单检查独立降级、进程内短缓存（默认 15s），不写业务表、不触发业务函数。
+  管理台 `web/js/pages/admin.js` 消费该接口展示五组卡片；部署可用同一探针口令读取而无需管理员会话。
+
 ## 5. 前端规范
 
 1. 每个页面导出 `export async function renderX(container, version, params)`（与 `web/js/pages/*.js`
@@ -415,6 +454,22 @@ Phase 3 起任务中心/管理台另消费 AI 用量与配额（`app/ai/usage.py
    练习页提供来源筛选（`bank`/`official`/`all`），题目详情显示精选来源/版本/状态与题库题「收录到我的题库」入口，
    组卷页提供平台精选选题页签；首页「平台精选可练数量」仅在能力探测成功时显示。所有未就绪接口一律降级
    （隐藏控件/占位/提示），不得伪造数字或审核结论。
+9. Phase 4 前端收口（2026-11-21 第四轮）：
+   - `question.js`：official 公开配图按 `images[].accessible/url` 渲染（撤回后回退 `figure_notice`，兼容旧
+     `figure_urls`）；精选纠错走 `POST /api/plaza/questions/{public_id}/issues`（登录引导、成功 toast、失败可读）；
+     保留「在广场查看」（`#/plaza?id=<public_id>`）与来源/版本徽标。
+   - `practice.js`：学段筛选（`grade`）进入筛选状态与 URL；选项来自 `GET /api/catalog` 的 `grade_stages`（缺失回退
+     固定学段）；以合法请求响应是否含 `grade_filter` 做能力探测，旧后端隐藏控件并丢弃 `grade`；
+     `grade_filter.applied=false` 时显示「仅平台精选生效」说明。
+   - `insight.js`/`home.js`：读取 `/api/insight/home` 顶层 `official`（可练/已练/错题）与
+     `bank.official_practice_pool`，能力探测失败隐藏，不写死数字。
+   - `tasks.js`：任务深链 `#/paperlab?import=`、`#/paperlab?tab=papers&paper=`、`#/classroom?course=`、
+     `#/notes?note=`、`#/notes?document=`（保持既有 `#/upload?upload=` 等）；未知任务不跳转、只提示。
+   - `notes.js`：站内题目引用 `bank:`/`app:`/`official:` 显示类型标签 + 跳转 + 版本提示（`version/published_version/
+     content_revision/bank_version`）；`app/anki_export.py` 只在错题卡/笔记卡背面与 tag 追加题目引用/来源/版本，
+     不改 `.apkg` 模板字段。
+   - `admin.js`：新增「运维监控」区（五组卡片、状态徽标、build/缓存/降级提示、`?refresh=1` 刷新），失败降级不崩页。
+   - 新增控件/接口未就绪时必须降级（隐藏/占位/中文提示），不得把默认题库伪装成精选、不得本地估算统计。
 
 ## 6. 测试与验收规范
 
@@ -436,6 +491,13 @@ Phase 3 起任务中心/管理台另消费 AI 用量与配额（`app/ai/usage.py
    `plaza_accept.py` 的 Phase 3 场景（抽检/收藏/纠错举报申诉/回滚/通知、精选学习链路、AI 用量）；
    `accept_runner --ui` 阶段接线与隔离实例一键验收由 Lead 收敛，最终结果以 Lead 收敛后的
    `screenshots/accept-report.json` 与 `docs/知序优化实施记录-20261121-第三轮.md` 为准。
+6. Phase 4 新增专项测试（2026-11-21 第四轮）：`tests/test_official_integrations.py`（助手 official 工具/课堂
+   official 素材与 sources/insight+stats official 口径/grade 筛选/catalog 元数据）、`tests/test_monitor.py`
+   （五组检查/权限与探针口令/降级/缓存/撤回传播/管理台契约）、`tests/test_build_fingerprint.py`（指纹范围与
+   `.dockerignore`/Dockerfile 契约）、`tests/test_plaza_quality_gate.py`（门禁模式/armed/override 审计/签发前抽检/
+   一键恢复/批量部分成功/通知增强/指标字段）、`tests/test_phase4_ui.py`（official 配图与纠错/学段筛选/精选口径/
+   任务深链/笔记与 Anki 字段/locale 对齐）；文档整理时实测五个文件 **105 passed in 81.34s**。
+   全量 pytest 与一键/浏览器验收由 Lead 在隔离实例收敛后回填（见 `docs/知序优化实施记录-20261121-第四轮.md` §6.4）。
 
 ## 7. 定义完成（DoD）
 

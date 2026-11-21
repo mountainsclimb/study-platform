@@ -33,6 +33,16 @@
 > 逐条对照；错误码/字段取自 `app/official.py`、`app/question_ref.py`、`app/practice.py`、
 > `app/paperlab/{papers,practice}.py`、`app/plaza/{notify,favorites,feedback,quality,metrics,release}.py`、
 > `app/ai/usage.py` 实现。
+>
+> **本轮增量（2026-11-21 · Phase 4 收尾，WS31）**：新增 §20 平台精选接入助手与课堂、§21 运维监控
+> （`GET /api/admin/monitor` 五组只读检查/降级/短缓存/构建分发治理）、§22 质量运营闭环
+> （抽检门禁 `app/plaza/gate.py`、签发前抽检、一键恢复 `POST /api/plaza/releases/{public_id}/restore`、
+> 三类批量处理、通知 `unread-count`/`kind` 全读/窗口去重、指标新增字段）、§23 第四轮前端收口
+> （official 配图/纠错、学段筛选、精选学情口径、任务深链、笔记/Anki 引用与版本、管理台监控区）；
+> 同步更新 §0 计数（`/api/plaza` **44 → 51 条**、`/api/admin/monitor` 1 条、`/api` 共 **324** 条目）、
+> §2.1 课堂生成参数、§4 `/api/insight`、§5 助手工具计数、§15.4 首页 official 口径、§17.2 学段筛选、
+> §17.5/§17.6 前端与边界、§18 计数与新增路由/指标、§9 文档索引、§10 变更记录。核实方式：临时数据目录
+> 只读导入应用生成路由清单 + `grep "@router"`/源码逐条对照（详见 §10 与实施记录 §6.1）。
 
 ## 0. 快速信息
 
@@ -44,8 +54,9 @@
 | 4 | AI 助手（小纸） | `/api/assistant` | 13 | `assistant-turn` | `app/assistant.md` |
 | 5 | 任务中心（复用） | `/api/ai/jobs*` | 7 | 全部任务 | `README.md` / `CO.md` 既有文档 + 本文 §5 |
 | 6 | 模型连接与设置（复用） | `/api/providers*`、`/api/ai/task-defaults`、`/api/models/*` | 复用 | — | `README.md`、`app/ai/providers.py` |
-| 7 | 广场 / 投稿 / 评审 / 发布 / 质量运营（Phase 2 + 3） | `/api/plaza` | **44** | — | 本文 §16、§18、`app/plaza/**` 模块 docstring |
+| 7 | 广场 / 投稿 / 评审 / 发布 / 质量运营（Phase 2 + 3 + 4） | `/api/plaza` | **51** | — | 本文 §16、§18、§22、`app/plaza/**` 模块 docstring |
 | 8 | AI 用量与配额（Phase 3） | `/api/ai/usage`、`/api/admin/ai/*` | **4** | 全部任务（账本/配额） | 本文 §19、`app/ai/usage.py` docstring |
+| 9 | 运维监控（Phase 4） | `/api/admin/monitor` | **1** | — | 本文 §21、`app/monitor.py` docstring |
 
 合计整合模块路由 **93** 条（classroom 25 / paperlab 50 / insight 5 / assistant 13），
 全部经依赖注入 `current_user` 校验登录（脚本遍历 `route.dependant` 校验，0 条缺失）；
@@ -73,6 +84,20 @@
 > 统计与工坊既有路由，由 `app/official.py` 只读适配层提供数据（§17）。本轮新增路由的鉴权：
 > 通知/收藏/反馈/申诉/用量为 `current_user`（用量管理为 `require_admin`），抽检/指标/队列/回滚为
 > `service.require_plaza_role("editor")`（`admin` 直通）。
+>
+> **2026-11-21 Phase 4 再次重算（本轮）**：临时数据目录只读导入 `app.main` 生成路由清单——
+> `/api/plaza` **51 条**（Phase 3 44 + 第四轮新增 7：`GET /notifications/unread-count` 1、
+> `GET|PUT /admin/quality/gate` 2、`POST /releases/{public_id}/restore` 1、
+> `POST /admin/{issues|reports|appeals}/batch` 3）、`GET /api/admin/monitor` **1 条**、
+> `/api` 方法条目共 **324 条**（Phase 3 316 + 8；路径 277 条）。其它模块面：`/api/classroom` 36、
+> `/api/paperlab` 64、`/api/insight` 6、`/api/assistant` 13、`/api/ai/usage` 2、`/api/admin/ai` 3（4 方法）。
+> 平台精选接入**助手/课堂**与**学段筛选**同样不新增 HTTP 路由：助手在既有 `/api/assistant/*` 上新增只读工具
+> `search_official` 并扩展 `read_question`（工具 12 → **13**），课堂在 `POST /courses/{id}/generate` 上新增
+> `source_ref` 参数，筛选复用 `GET /api/questions?grade=` 与 `GET /api/catalog` 元数据，学情/统计复用
+> `GET /api/insight/home`、`GET /api/stats` 新增字段（§20）。本轮新增路由鉴权：通知未读数为 `current_user`；
+> 抽检门禁读取为编辑/管理员、修改**仅管理员**（`require_admin`）；一键恢复与批量处理为编辑/管理员
+> （`require_plaza_role("editor")`，作者回避 403）；`/api/admin/monitor` 为管理员会话或 `X-Health-Token`
+> 部署探针口令只读（§21）。
 
 复现命令（不启动服务）：
 
@@ -115,7 +140,7 @@ python -X utf8 -c "from app.main import app; import json; open('openapi.json','w
 | GET | `/courses/{course_id}` | `{course, scenes}`（`course.interactive_mode`；scenes 含 content/actions/meta）；素材缺失时追加 `missing_asset_ids` 与中文 `warnings`（页面占位降级，不 500） |
 | PATCH | `/courses/{course_id}` | `{title?, description?, subject?, grade?}` |
 | DELETE | `/courses/{course_id}` | 级联删场景/会话；有运行中 `course` 任务 → 409；素材按跨课程存活引用安全回收，返回审计 `{deleted, course_id, assets:{examined,retained,reclaimed,shared_files_kept,files_removed,file_errors}}`（共享素材迁移归属课程、只回收无引用素材） |
-| POST | `/courses/{course_id}/generate` | `{stage:'outline'|'scenes'|'all', provider_id, model, scene_types?, scene_count?3-12, depth?, requirements?, material_text?, images?, images_per_scene?0-2, image_provider_id?, image_model?}` → `{job, course_id}`；`stage=outline/all` 先进入 `awaiting_outline` |
+| POST | `/courses/{course_id}/generate` | `{stage:'outline'|'scenes'|'all', provider_id, model, scene_types?, scene_count?3-12, depth?, requirements?, material_text?, images?, images_per_scene?0-2, image_provider_id?, image_model?, web_search?, web_search_limit?1-8, source_ref?}` → `{job, course_id}`；`stage=outline/all` 先进入 `awaiting_outline`；`source_ref=official:<公开编号>` 为第四轮新增**平台精选题课程素材**（见下方说明） |
 | POST | `/courses/{course_id}/scenes/{scene_id}/regenerate` | `{provider_id, model, instruction?}` → `{job, course_id, scene_id}`（单场景，不触发自动名册/配图） |
 | POST | `/courses/{course_id}/sessions` | 建学习会话 `{scene_id?}` → `{session}` |
 | GET | `/sessions/{session_id}` | `{session, course, progress, scenes(摘要), turns(最近 20)}` |
@@ -137,6 +162,18 @@ python -X utf8 -c "from app.main import app; import json; open('openapi.json','w
 > 共享时只删行、不删文件；只删除「无存活引用且文件未被共享」的素材（事务提交后复查，避免误删并发写入）。
 > 删除接口返回的 `assets` 审计可直接用于前端提示；`GET /courses/{id}` 的 `missing_asset_ids`/`warnings`
 > 让页面显示占位而不是 500；`GET /assets/{id}` 的类型判定以字节内容为准，导入素材的声明类型不参与信任。
+>
+> **平台精选题课程素材（P4，2026-11-21 第四轮，`app/classroom/{api,generate,prompts}.py`）**：
+> `POST /courses/{id}/generate` 新增可选 `source_ref=official:<公开编号>`（目前**只支持 official**，
+> `SEED_QUESTION_SOURCES=("official",)`）。格式非法/来源不支持 **422**；未发布/撤回/争议在任务准入
+> （`validate_course_job`，仅 `stage=outline|all` 且尚无大纲时）与生成大纲时各校验一次并 **404**，
+> 撤回题提示「不能再作为新课程素材；历史课程保留当时的来源标记」。大纲 prompt 注入
+> 「公开编号/审核状态/学科/学段/知识点/题面/选项/参考答案（仅供备课）/解析要点/来源声明」
+> （`prompts._official_seed_block`，上限 4000 字，规定引用必须写「平台精选 · 公开编号 plz-...」且不得编造）；
+> `outline.sources` 记录 `{kind:'official',public_id,published_version,review_status(_label),summary,
+> source_declaration,question_ref}`，`course.config.seed_source` 记录本次建课来源；任务结果追加
+> `official_source_count/official_sources[]`，summary 追加「课程素材来源：平台精选 plz-xxx（vN）」；
+> 导出（PPTX/HTML/ZIP `sources.json`/资源包）沿用 `outline.sources` 保留来源标记；撤回不影响已生成课程与导出。
 
 ### 2.2 角色名册（多智能体，task-14）
 
@@ -254,7 +291,7 @@ python -X utf8 -c "from app.main import app; import json; open('openapi.json','w
 | GET | `/knowledge` | `?days&subject=` 知识点掌握列表（弱项/未开始） |
 | GET | `/mistakes` | `?days&subject=` 错因/题型/知识点分布 |
 | GET | `/report` | `?days&subject=` 完整个人报告数据 |
-| GET | `/home` | **本轮新增**：首页统计口径（`?days(1-3650, 默认 90)`）→ `{generated_at, range, bank, personal, caliber}`：题库全局「可练/可自动判分/待核验/门禁排除」+ 个人「待复习/今日练习/首次正确率/重复练习/待判分/薄弱知识点/我的题库/继续练习」；实现 `app/home_stats.py`，与 `/overview`、`/report`、`/api/practice/stats` 同一数据源，见 §15.3 |
+| GET | `/home` | **第二轮新增 / 第四轮扩展**：首页统计口径（`?days(1-3650, 默认 90)`）→ `{generated_at, range, bank, official, personal, caliber}`：题库全局「可练/可自动判分/待核验/门禁排除」+ **平台精选口径**（第四轮：顶层 `official{available,total_questions,practice_pool,auto_gradable,attempts,practiced,wrong_count,due_reviews,caliber,note}`，`bank.official_practice_pool/official_auto_gradable`）+ 个人「待复习/今日练习/首次正确率/重复练习/待判分/薄弱知识点/我的题库/继续练习」；实现 `app/home_stats.py`，与 `/overview`、`/report`、`/api/stats` 同一数据源，见 §15.4、§20.2 |
 | POST | `/narrative` | `{provider_id, model, subject?, days?}` → `{job}`（task `insight-report`；无真实学习记录 422 不生成，避免编造） |
 
 ## 5. AI 助手 `/api/assistant`（13 条）
@@ -269,7 +306,7 @@ python -X utf8 -c "from app.main import app; import json; open('openapi.json','w
 | POST | `/conversations/{id}/messages` | `{content(≤4000), provider_id, model, skill_ids?}` → `{job, message, conversation}`（task `assistant-turn`） |
 | POST | `/conversations/{id}/stop` | 取消当前轮 → `{cancelled, notice, job, conversation}` |
 | POST | `/conversations/{id}/confirm` | 写操作二次确认 `{action_id, confirm}`（HITL：建卷/组卷/讲解任务） |
-| GET | `/tools` | 工具白名单（11 个，`side_effect`/`requires_confirmation`/参数摘要）+ 上限 |
+| GET | `/tools` | 工具白名单（**13 个**，`side_effect`/`requires_confirmation`/参数摘要）+ 上限 + `scope_note`（第四轮新增只读工具 `search_official`；`read_question` 支持 `official:<公开编号>`，见 §20.1） |
 | GET | `/skills` | 技能库（内置只读 + 本人自建，含 content/enabled/version/limits） |
 | POST | `/skills` | 新建自建技能 `{name≤40, description≤200, content≤20000, enabled?}`（≤100/人） |
 | PATCH | `/skills/{id}` | 编辑/启停（`version` CAS；内置 409） |
@@ -389,7 +426,10 @@ python -X utf8 -c "from app.main import app; import json; open('openapi.json','w
 | `app/official.py` docstring | 平台精选读取适配层：`official:<public_id>` 可见性（查询时判定）、公开投影、检索与不可见摘要（Phase 3） |
 | `app/plaza/{notify,favorites,feedback,quality,metrics}.py` docstring | 质量运营边界：通知去重与脱敏、收藏可收藏态、反馈/申诉状态机、抽检 100% 与 high 自动撤回、指标口径（Phase 3） |
 | `app/ai/usage.py` docstring | AI 用量账本（`ai_job_usage`）、配额/并发优先级与 429 语义、入参分类与保留策略（Phase 3） |
+| `app/monitor.py` docstring | 运维监控聚合：五组只读检查、单检查降级、进程内短缓存、SQLite/PG 兼容与阈值环境变量（Phase 4） |
+| `app/plaza/gate.py` docstring | 抽检门禁：`off/initial_100/always` 模式、DB > env > 默认解析、armed 试点激活、试点窗口计数、override 审计与 409 guidance（Phase 4） |
 | `docs/知序优化实施记录-20261121-第三轮.md` | Phase 3（平台精选接入 / 质量运营 / AI 可追踪）实施记录与验收证据 |
+| `docs/知序优化实施记录-20261121-第四轮.md` | Phase 4 收尾（精选接入助手/课堂、运维监控与构建分发、质量运营闭环、前端收口）实施记录与验收证据 |
 | `.omx/plans/integration/API-AUDIT.md` | 本次只读契约/安全审计报告（发现、证据、建议、Lead 决策项） |
 
 ## 10. 变更记录
@@ -400,6 +440,7 @@ python -X utf8 -c "from app.main import app; import json; open('openapi.json','w
 | 2026-11-21（第二轮） | task-10 增量：新增 §14 拍题入库 OCR-first（`/api/uploads/{id}/intake|ocr-draft|ai-answer|save-to-bank`，`PATCH .../confirm` 增加 `intake_revision` 乐观锁）；§3.5 整卷练习冻结（`pl_attempt_items`、`frozen/paper_deleted/notice`、作答侧配图路由）、§3.3 删卷保留练习（`attempts_kept`）、§3.2 题图资产所有权（`pl_assets`、越权 404、迁移脚本）、§2.1 课堂素材回收/类型白名单、§7 上传与像素上限、§0 计数口径说明。核实方式：`grep @router` 对照 `app/ai/upload_pipeline.py`、`app/paperlab/{practice,assets,bank,papers}.py`、`app/classroom/{images,api,importer}.py` 实现与错误码。 |
 | 2026-11-21（Phase 1 剩余 + Phase 2） | task-19 增量：新增 §15 统一题目引用（`bank:`/`app:`/`official:`）、`submission_ledger` 幂等入账、`GET /api/review/queue`、个人收录版本 4 条（`collect/versions/source-status/update-from-source`）、`GET /api/insight/home` 口径；新增 §16 广场/投稿/评审/发布 25 条（公开只读 4、作者端 7、评审端 4、签发/撤回/历史/事件 4、角色身份 3、编辑台 3），含公开可见性（`community_review` 待核验 / `verified` / `published=featured`）、公开衍生图授权、阈值/回避/一人一票、`optional_user` 访客口径；§0/§4/§7/§8/§9 同步。核实方式：临时数据目录 `from app.main import app` 生成路由清单并逐条 `grep @router`，错误码/字段对照 `app/plaza/{public,submissions,review,release,roles,admin,db,service,figures}.py`、`app/question_ref.py`、`app/practice.py`、`app/paperlab/versions.py`、`app/home_stats.py`。 |
 | 2026-11-21（Phase 3 · 第三轮） | WS25 增量：新增 §17 平台精选接入（`official:<public_id>` 读取适配层、`/api/questions?source=bank\|official\|all`、平台精选题作答/错题/复习/统计、工坊建卷快照与冻结练习、前端来源筛选/徽标/收录入口）、§18 质量运营（`/api/plaza` 44 条：通知 2 / 收藏 3 / 纠错举报申诉 10 / 抽检 2 / 指标 1 / 回滚 1；6 张新表、通知与事件钩子、100% 抽检与 high 自动撤回、回滚状态机、指标口径）、§19 AI 用量与配额（`ai_job_usage`/`ai_quotas`、任务生命周期入账、配额/并发 429、4 条查询/管理接口、前端任务中心/管理台/设置展示）；§0/§1/§7/§8/§9 同步。核实方式：临时数据目录只读生成路由清单（plaza 44、AI 用量 4、`/api` 共 316）+ `grep @router`/字段对照源码；本轮五个专项测试文件 `tests/test_official_refs.py`、`test_official_ui.py`、`test_ai_usage.py`、`test_plaza_quality_ops.py`、`test_plaza_ops_ui.py` 合计 **107 passed**（88.42s）；本轮全量 pytest **1557 passed / 3 skipped**（779.07s，无失败）；locale 中英键 4,534/4,534 一致；Phase 3 端到端脚本（`scripts/integration/{official_accept,ai_usage_accept}.py` + `plaza_accept.py` 扩展）由 WS24 交付，一键 UI 验收由 Lead 收敛。 |
+| 2026-11-21（Phase 4 · 第四轮） | WS31 增量：新增 §20 平台精选接入助手/课堂（只读工具 `search_official`、`read_question` 支持 `official:`、system prompt 引用规则；课堂 `source_ref=official:<公开编号>`、`outline.sources`/`config.seed_source`、`official_source_count/official_sources`）、§21 运维监控（`app/monitor.py` + `GET /api/admin/monitor` 五组只读检查、单检查降级、15s 短缓存、`X-Health-Token` 探针、管理台监控区、`.dockerignore`/Dockerfile/构建指纹）、§22 质量运营闭环（`app/plaza/gate.py` 门禁三模式/armed/试点窗口/409 guidance/override 审计、签发前抽检 `pre_publish`、`POST /releases/{public_id}/restore` 一键恢复、三类批量处理部分成功、`GET /notifications/unread-count` 与 `read` 的 `kind` 全读、通知窗口去重、指标新增 `quality.gate/restorations/ops.batch/notifications`）、§23 前端收口（official 配图/纠错、学段筛选、精选学情口径、任务深链、笔记/Anki 引用与版本、管理台监控区）；§0/§2/§4/§5/§9/§10/§15/§17/§18 同步（`/api/plaza` 44 → **51** 条、`/api/admin/monitor` 1 条、`/api` **324** 条目、助手工具 12 → **13**）。核实方式：临时数据目录只读生成路由清单（`/api/plaza` 51、monitor 1、`/api` 324 条目 / 277 路径）+ `grep "@router"`/字段对照源码；五个专项测试文件 `tests/test_official_integrations.py`、`test_monitor.py`、`test_build_fingerprint.py`、`test_plaza_quality_gate.py`、`test_phase4_ui.py` 合计 **105 passed**（81.34s）；locale 中英键 4,632/4,632 一致；全量/一键验收由 Lead 收敛后回填（见第四轮实施记录 §6.4）。 |
 
 ## 11. 本地 OCR / 联网搜索 / 服务端渲染（P0–P3 增量）
 
@@ -625,6 +666,12 @@ app_wrong_count`（个人题单独计数，既有 `total/practiced/wrong_count` 
   - `pending_grading` = 最近一次作答仍 `pending` 的题目数；`due_reviews` 与错题本一致（未归档且已到复习时间）。
   - `weak_knowledge` 复用 `app.insight` 知识点口径（<70% 为薄弱），返回真实样本数，已判定样本 <3 标
     `sample_limited`，不做个性化推断。
+- `official`（**第四轮新增**，`app/official.official_caliber`）：`available/total_questions/practice_pool/
+  auto_gradable/attempts/practiced/wrong_count/due_reviews/caliber/note`。口径：只统计当前公开可见精选题
+  （社区待核验/已核验/精选；撤回/争议在查询时即时剔除、不缓存）；可自动判分 = 单选/多选（有选项且有答案）或
+  填空题（有答案）；本人已练/错题/到期复习同样按题目当前可见性过滤（撤回题历史保留但不计入）。
+  `bank.official_practice_pool`/`bank.official_auto_gradable` 仅在 official `available` 时下发，供首页题库卡片展示；
+  广场表不可读时 official 块降级为 `available:false` + 中文 note，不影响其他统计。
 - `caliber`：各口径中文说明（前端直接展示，不复制数字/不本地估算）。前端 `home.js`/`insight.js` 与
   `/api/insight/report` 并行读取，首页/学情同一后端口径；接口失败时页面保留既有空态/降级，不编造数字。
 
@@ -795,6 +842,21 @@ app_wrong_count`（个人题单独计数，既有 `total/practiced/wrong_count` 
   关键词为快照 JSON 的 `LIKE`（`%\` 转义），题库专属排序参数对 official 不生效。
 - 前端能力探测：旧后端会忽略未知 `source` 参数并照常返回题库结果，因此练习页/组卷/首页均先用**非法值**确认
   参数受控（422）再展示来源控件；探测不通过时整体隐藏来源筛选（不把默认题库伪装成「平台精选」）。
+  **第四轮修正**：练习页/首页/组卷的能力探测改为合法 `source=official` 请求（200）并按响应是否含
+  `official_total`/`grade_filter` 判定（浏览器不再把 4xx 记为控制台错误），旧后端自然降级。
+
+#### 17.2.1 学段筛选 `grade`（第四轮新增，`app/practice.py` + `app/official.py`）
+
+- `GET /api/questions?grade=` 接受标准年级（小学一年级…高中三年级，**精确匹配**）与学段（小学/初中/高中，
+  **前缀匹配**），支持逗号分隔多值；未知/超长值**安全降级不 422**（`degraded:true` + `reason`）。
+- 生效范围：official 侧按**快照 grade** 过滤；题库侧仅当只读题库存在 `grade` 列时生效（`r5` 无该列 →
+  不筛选，`bank_applied:false`）。`source=bank|official|all` 合并分页语义不变（`all` 仍题库在前，学段两侧分别生效）。
+- 响应追加 `grade_filter:{requested,applied,bank_applied,official_applied,values,stages,reason}`；
+  `applied` = 任一侧实际生效；题库无列且请求了学段时 `reason` 为
+  「当前只读题库没有年级字段，学段筛选在题库侧暂不生效（平台精选按快照年级过滤）」。
+- `GET /api/catalog` 同步下发 `grades`（标准年级，优先 `paperlab.db.GRADES`）、`grade_stages`（小学/初中/高中）、
+  `grade_note`（口径说明）；前端练习页据此生成筛选项并做能力探测（§23.2）。
+- 错误口径：非法/未知学段值**不报错**（安全降级）；只有 `source`/`type` 等既有参数保持 422 语义。
 
 ### 17.3 练习 / 作答 / 错题 / 复习 / 统计（`app/practice.py`）
 
@@ -844,31 +906,38 @@ app_wrong_count`（个人题单独计数，既有 `total/practiced/wrong_count` 
   原样展示；official 题隐藏题库专属动作（AI 讲解/管理员标注/收录）；答案门控沿用「提交后揭示」（旧后端 `/reveal`
   未接 official 时只做一次降级提示，不把整页打成错误）；题库题的「收录到我的题库」按钮调用
   `POST /api/paperlab/questions/collect {qid}`（幂等，已在会话内标记「已收录」，重复点击由 `already_collected` 纠正）。
+  **第四轮补齐**（详见 §23.1）：official 公开配图按 `images[].accessible/url` 渲染（回退 `figure_notice`，兼容
+  `figure_urls`）；精选「报错」按钮改为真实纠错入口 `POST /api/plaza/questions/{public_id}/issues`（登录引导/
+  成功 toast）；保留「在广场查看」`#/plaza?id=<public_id>`。
 - 组卷 `web/js/pages/paperlab.js` + `web/js/components/paperCompose.js`：选题来源页签「我的题库/高考题库/平台精选/全部」；
   官方卡转试题篮用统一引用 `official:<public_id>`，建卷由服务端按引用冻结来源快照；能力探测未就绪时保守隐藏 official/all。
-- 首页 `web/js/pages/home.js`：题库口径卡片「平台精选可练数量」——优先读 `/api/insight/home` 的
-  `bank.official_practice_pool`/`featured_practice_pool`（当前后端未下发），否则用 `/api/questions?source=official`
-  能力探测计数；接口未就绪时**不显示**该计数（不伪造数字）。
-- 整卷练习 `web/js/components/paperAttempt.js`：显示来源徽标（当前只有 bank/非 bank 两档，非 bank 统一显示
-  `home.status.bankTotal`「我的题库」，official 与 app 未细分——见实施记录「未实施」）；official 快照配图用
-  `image.url` 直接渲染；题库/个人题配图仍走冻结配图路由。
+- 首页 `web/js/pages/home.js`：题库口径卡片「平台精选可练数量」——第四轮起后端 `GET /api/insight/home` 已下发
+  `official` 块与 `bank.official_practice_pool`/`official_auto_gradable`，首页/学情页**优先**展示官方精选口径
+  （`practice_pool/practiced/wrong_count`，字段缺失时隐藏）；`/api/questions?source=official` 能力探测仅作旧后端
+  回退（不伪造数字），`/api/stats` 的 `official` 块也可用。
+- 整卷练习 `web/js/components/paperAttempt.js`：来源徽标统一读后端 `source_label`（高考题库/平台精选/我的题库），
+  `source` 缺失时按来源兜底；official 快照配图用 `image.url` 直接渲染；题库/个人题配图仍走冻结配图路由。
 
 ### 17.6 错误码与已知边界速查
 
 - `404`：public_id 非法/不存在/不可见（draft、未发布、撤回、争议、无活跃发布指针）；快照建卷时不可见；撤回后的公开图
   （广场图接口）。`422`：`/api/questions` 的 `source` 非法、题型未知；工坊 `official:` 格式非法 / 重复引用 / 超上限。
   `401`：未登录（列表/详情/作答均需登录）。没有为 official 引入新的 409 语义。
-- 边界（已在实施记录登记）：练习详情页的 official **配图**仍走题库图片渲染（官方公开图 URL 只在组卷/整卷练习与广场页渲染）；
-  题目详情页 official 的「报错」按钮仍为占位提示（真实纠错/举报在广场公开页）；official 题**未接入 AI 助手工具与课堂素材**；
-  `/api/insight/home` 未提供 official 口径字段（前端用能力探测降级）。
+- 边界（第三轮登记项已在第四轮闭环，见 §20/§23）：练习详情页 official **配图**已渲染公开图（撤回回退
+  `figure_notice`）；official「报错」按钮已接广场纠错接口；official 已接入 AI 助手工具与课堂素材（`source_ref`）；
+  `/api/insight/home` 与 `/api/stats` 已下发 official 口径。仍保留的边界：official 未进入 AI 组卷候选池（手工选题
+  页签）；学段筛选在 `r5` 题库侧因无 `grade` 列而安全降级（仅 official 生效）；official 检索为快照 JSON `LIKE`。
 
-## 18. 质量运营：通知 / 收藏 / 反馈 / 抽检 / 指标 / 回滚（Phase 3，`/api/plaza` 44 条）
+## 18. 质量运营：通知 / 收藏 / 反馈 / 抽检 / 指标 / 回滚（Phase 3，`/api/plaza` 44 条；Phase 4 增至 51 条，见 §22）
 
 > 定位：方案 §5「投稿到官方发布」「文件、版权和未成年人」+ §8 阶段 3「上线抽检、通知及回滚」。
 > 实现 `app/plaza/{notify,favorites,feedback,quality,metrics}.py` 与 `release.py` 回滚；在 Phase 2 的 25 条上新增
 > **19 条**（合计 **44 条**）。新增 6 张表（`plaza_notifications`、`plaza_favorites`、`plaza_quality_checks`、
-> `plaza_issues`、`plaza_reports`、`plaza_appeals`），广场表共 14 张；所有写事务仍统一
+> `plaza_issues`、`plaza_reports`、`plaza_appeals`），广场表 14 张；所有写事务仍统一
 > `db.write_lock(con,"plaza-write")` + 显式主键，通知/事件与状态更新**同一事务**。
+> **第四轮（Phase 4）增量**：`/api/plaza` **44 → 51 条**（通知未读数 1、抽检门禁 GET/PUT 2、一键恢复 1、
+> 三类批量处理 3），新增 2 张表（`plaza_quality_gate_log`/`plaza_ops_batches`，广场表共 16 张）、
+> 签发前抽检与门禁接线、通知 `kind` 全读与窗口去重、指标新增字段；详见 §22。
 
 ### 18.1 本轮新增 19 条路由
 
@@ -894,6 +963,11 @@ app_wrong_count`（个人题单独计数，既有 `total/practiced/wrong_count` 
 | 指标（1） | GET | `/admin/metrics` | 质量指标（编辑/管理员）：题量/状态/学科/题型、可判分率、图可用率、评审中位时长、抽检问题率与 100% 覆盖、纠错/举报/申诉积压、撤回/回滚数 + `caliber` 口径说明（见 §18.6） |
 | 回滚（1） | POST | `/submissions/{submission_id}/rollback` | 发布回滚：`{reason(2–2000)}`；编辑/管理员、作者回避 **403**；无活跃发布/无更早历史发布/快照缺失/CAS 冲突 **409**；事务内撤回当前发布并恢复上一已发布版本（见 §18.7） |
 
+> **第四轮追加 7 条**（Phase 4，见 §22）：`GET /notifications/unread-count`、`GET|PUT /admin/quality/gate`、
+> `POST /releases/{public_id}/restore`、`POST /admin/{issues|reports|appeals}/batch`；并扩展
+> `POST /notifications/read`（`kind` 过滤）、`POST /submissions/{id}/publish`（`quality_gate_override`/
+> `override_reason`）、`POST /admin/quality/checks`（`pre_publish` 签发前抽检）。
+
 ### 18.2 通知中心（`app/plaza/notify.py`）
 
 - 只发给**相关用户**：投稿作者、收藏者、评审员本人、反馈人；`notify_many` 按 `user_id` 去重并支持 `exclude`
@@ -901,12 +975,14 @@ app_wrong_count`（个人题单独计数，既有 `total/practiced/wrong_count` 
 - 通知类型集中登记（`db.NOTIFICATION_KINDS`，新增只追加）：`submission_submitted/submission_revised/
   initial_review_approved/initial_review_rejected/submission_verified/submission_disputed/submission_published/
   release_withdrawn/release_rolled_back/submission_withdrawn/favorite_withdrawn/favorite_restored/quality_issue/
-  quality_withdrawn/issue_resolved/issue_rejected/report_resolved/report_rejected/appeal_resolved/appeal_rejected`。
-- 钩子位置：送审/改版/作者撤回（`submissions.py`）、初审通过与退回、核验通过/争议（`review.py`）、签发/撤回/回滚
-  （`release.py`）、抽检问题与自动撤回（`quality.py`）、反馈处理（`feedback.py`）、收藏者撤回/恢复
+  quality_withdrawn/issue_resolved/issue_rejected/report_resolved/report_rejected/appeal_resolved/appeal_rejected`
+  （Phase 4 追加 `release_restored`，共 21 类，见 §22.5）。
+- 钩子位置：送审/改版/作者撤回（`submissions.py`）、初审通过与退回、核验通过/争议（`review.py`）、签发/撤回/回滚/
+  一键恢复（`release.py`）、抽检问题与自动撤回（`quality.py`）、反馈处理（`feedback.py`，含批量）、收藏者撤回/恢复
   （`favorites.notify_favoriters`）。跳转 `link` 为前端 hash（`#/plaza?id=`、`#/submission?id=`、`#/review`、
   `#/plaza-admin?section=ops`）。
 - 读取接口只返回本人；`ids` 中属于他人的通知被忽略；`unread_count` 为本人全部未读数；匿名 `/me` 能力为 false。
+  第四轮另增轻量未读数与 `kind` 全读，并对同「接收人+类型+投稿+版本」窗口去重（§22.5）。
 
 ### 18.3 收藏（`app/plaza/favorites.py`）
 
@@ -959,6 +1035,10 @@ quality, feedback, withdrawals, caliber}`：
   100% 抽样覆盖率把「抽检后被撤回的题」仍计入发布基数，不因严重问题自动撤回而虚降。
 - `feedback`：纠错/举报/申诉总数与 `pending` 未处理数；`withdrawals`：发布撤回数、投稿撤回数、回滚次数（事件链口径）。
 - 所有口径由后端计算，前端只展示（`plazaAdmin.js` 指标分区）；指标为运营口径，不做个性化。
+- **第四轮新增字段**（见 §22.6）：`quality.gate{...门禁模式/激活/窗口/阻断/override/通过计数}`、
+  `quality.pre_publish_checks/post_publish_checks`、`withdrawals.restorations`、顶层 `restorations{total,latest_event}`、
+  `ops.batch{batches,requested,updated_total,skipped_total,by_kind}`、`notifications{total,unread_total,read_total}`；
+  `caliber` 同步追加对应中文口径说明。
 
 ### 18.7 回滚与撤回传播（`app/plaza/release.py`）
 
@@ -975,6 +1055,8 @@ quality, feedback, withdrawals, caliber}`：
   idempotent:false, message}`；CAS 失败 **409**「发布记录已被其他操作修改」/「投稿已被其他操作修改」。
 - 与撤回的一致性：两种操作都只改「活跃发布指针 + 投稿状态/版本」，公开读（列表/详情/公开图/精选检索）以查询时状态为准；
   `plaza_releases.active_public_id` 唯一索引保证单一活跃发布。
+- **Phase 4 增补**：抽检门禁与「一键恢复」见 §22.2/§22.4——回滚（rollback，版本回退）与恢复（restore，同版本重新 active）
+  是两条独立路径；`withdraw_mode='rollback'` 的撤回记录不支持一键恢复（**409**）。
 
 ### 18.8 前端（Phase 3）
 
@@ -1070,4 +1152,388 @@ quality, feedback, withdrawals, caliber}`：
 - **422**：配额调整参数非法/未知任务类型；**403/401**：非管理员调用 `/api/admin/ai/*`、未登录调用 `/api/ai/usage/me`。
 - 边界：`ai_job_usage` 记录的是任务终态快照，不替代 `ai_usage` 的逐次调用明细；费用为估算（不扣费）；单次汇总查询最多
   10000 行（`truncated` 标记）；老库 `ai_jobs` 无 `started_at/retry_count` 时由 `ensure_column` 补齐，历史任务耗时可能为 0。
+
+## 20. 平台精选接入助手 / 课堂（Phase 4 收尾）
+
+> 定位：方案 §8 阶段 3「发布精选接入检索、练习、错题、工坊、**助手和课堂**」中最后两个面（第三轮只做了
+> 检索/练习/错题/工坊）。实现：助手工具 `/api/assistant/*`（`app/assistant.py`）、课堂生成
+> `POST /api/classroom/courses/{id}/generate`（`app/classroom/{api,generate,prompts}.py`），读取统一走
+> `app/official.py`（查询时可见性）。**本组不新增 HTTP 路由**：助手新增工具、课堂新增参数、学情/统计新增字段。
+
+### 20.1 AI 助手接入 official（`app/assistant.py`）
+
+- 工具白名单 **12 → 13**：新增只读工具 `search_official`；`read_question` 扩展接受 `official:<公开编号>`。
+  写操作工具（`create_explain_job`/`create_revision_paper`/`compose_paper`）不变且仍需用户二次确认。
+- `search_official` 参数 `{keyword?, subject?, grade?, qtype?, limit?1-10(默认5)}`，至少给一个检索条件
+  （否则工具错误「请至少提供 keyword / subject / grade / qtype 之一后再检索平台精选」）；检索走
+  `official.search_official`（可见性查询时判定，撤回/争议不出现）。返回 `items[]`：
+  `{qid, source:'official', source_label:'平台精选', public_id, review_status, review_status_label, status_label,
+  published_version, featured, community_pending, subject, grade, type, stem(≤160), has_answer, knowledge_tags(≤5)}`；
+  `refs[]` 带 `qid/source/public_id/review_status`；`total` 与 `grade_filter` 同返回；summary
+  「平台精选命中 N 道（匹配总数 X，其中平台精选 Y 道；引用时写公开编号）」。**不输出内部 ID/投稿人/审核员**。
+- `read_question` 对 `official:` 的行为：
+  - 格式不正确（如 `official:`/`official:??`）→ 工具错误「平台精选引用格式不正确：应为 official:<公开编号>
+    （如 official:plz-xxxx）」（不是 500）；
+  - 读取走 `practice.load_question`/`official.load_official_question`；撤回/争议/不可见时用
+    `official.inspect_official` 组织中文提示（已撤回/有争议/当前不可见，均注明历史作答、错题与成绩记录保留），
+    **绝不回显题面/选项/答案**；
+  - 作答门控沿用「本人已作答才返回答案与解析」；结果含 `source=official/public_id/official_status/review_status(_label)/
+    published_version/source_declaration`，并在 `next_steps` 提示「回答中引用时写『平台精选 <公开编号>』，
+    不要提任何内部 ID、投稿人或审核员信息」。
+- 系统提示（`_system_prompt`）新增第 5 条规则：平台精选题只引用工具返回的公开信息；引用必须写
+  「平台精选 · 公开编号 plz-...」并说明审核状态（社区待核验/已核验/精选）；绝不透露或猜测内部 ID、投稿人、
+  审核员与后台字段；已撤回/有争议的题目不得复述题面、答案或解析。`GET /api/assistant/tools` 的 `scope_note`
+  明确「只读高考题库 + 当前公开可见的平台精选」。
+- `get_stats` 工具结果新增 `official`（与 `/api/stats` 同源）；`available` 时 summary 追加
+  「平台精选已练 X 道（可练 Y 道）、精选错题 Z 道」；既有统计字段语义不变。
+
+### 20.2 课堂以精选题为素材（`POST /api/classroom/courses/{id}/generate`）
+
+- 请求新增可选 `source_ref`（`max_length=160`）：只接受 `official:<公开编号>`（`SEED_QUESTION_SOURCES=("official",)`）；
+  格式非法/来源不支持 **422**「课程素材引用只支持平台精选题，格式为 official:<公开编号>（如 official:plz-xxxx）」；
+  超 160 字 **422**。
+- 可见性：`validate_course_job()` 在「`stage ∈ outline|all` 且课程尚无大纲」时校验一次（任务准入），
+  `run_course_job()` 生成大纲时再按查询时可见性读取一次；未发布/撤回/争议 **404**（任务失败原因可读，不落 500），
+  撤回题提示「该平台精选题已撤回，不能再作为新课程素材；历史课程保留当时的来源标记」，争议题提示暂停展示。
+  已有大纲的续跑/单场景重生成**不重新引用素材**，因此题目后续撤回不影响既有课程与导出。
+- 大纲 prompt：`generate.format_seed_question_material()` 输出「标题（平台精选·公开编号）/审核状态/学科·学段/
+  知识点/题面/选项/参考答案（仅供备课设计，不要直接写进学生题目文字）/解析要点（仅供备课设计）/来源声明/
+  公开提示」；`prompts._official_seed_block()` 上限 `OFFICIAL_SEED_PROMPT_MAX_CHARS=4000` 并规定引用写法、
+  禁止编造公开编号/来源声明/题目没有的数据、学生题面先作答再揭晓、不输出内部 ID/投稿人/审核员。
+- `outline.sources` 追加条目（`generate.official_source_entry()`）：
+  `{index, kind:'official', title, url:'', site:'平台精选', date:'', summary, question_ref:'official:<public_id>',
+  public_id, published_version, review_status, review_status_label, subject, grade, source_declaration}`；
+  `outline_sources()` 统一清洗 web/official 两类来源（缺失/损坏返回空列表，不抛错）；
+  `course.config.seed_source` 记录 `{source_ref, public_id, published_version, review_status(_label), title}`。
+- 任务结果：`_web_search_result_fields()` 统一追加 `official_source_count`/`official_sources[]`
+  （逐条 `source_ref/public_id/published_version/review_status(_label)/title/summary/source_declaration`），
+  同时保留既有 `web_search/source_count/web_source_count/web_search_skipped`；完成阶段 summary 追加
+  「课程素材来源：平台精选 plz-xxx（vN）」。
+- 导出/回看：既有 `outline.sources` 链路（PPTX 末页 / 离线 HTML / ZIP `sources.json` / 教学资源包 README /
+  讲义打印）保留 official 来源条目；`GET /courses/{id}` 的 `course.config.seed_source` 可回看建课来源。
+- 错误码速查：**422** 引用格式/来源不支持/超长；**404** 题不存在或当前不可见（撤回/争议/未发布）；
+  **401** 未登录；**409** 课程有运行中生成任务（既有语义）；**403** 课程归属他人（既有语义）。
+
+### 20.3 official 学情口径与学段筛选（`/api/insight/home`、`/api/stats`、`GET /api/questions?grade=`）
+
+- `GET /api/insight/home`（`app/home_stats.build_home`，路由在 `app/insight.py`）：
+  `{generated_at, range, bank, official, personal, caliber}`；`official` 为 `app/official.official_caliber()` 原样下发
+  （`available/total_questions/practice_pool/auto_gradable/attempts/practiced/wrong_count/due_reviews/caliber/note`）；
+  `bank` 块在 official 可用时追加 `official_practice_pool`/`official_auto_gradable`；`caliber.official` 为中文口径说明。
+  既有字段语义不变。
+- `GET /api/stats`（`app/practice.stats`）：新增嵌套 `official`（同一 caliber）；平铺
+  `official_attempts/official_practiced/official_wrong_count` 语义不变（按 `qid LIKE 'official:%'`，含已撤回题历史）。
+  精选口径失败降级 `available:false` + note，不影响整体统计。
+- `GET /api/questions?grade=` 与 `GET /api/catalog` 的 `grades/grade_stages/grade_note`：见 §17.2.1（safe-degrade、
+  `grade_filter` 元数据、`source=all` 合并分页不变、r5 题库无 grade 列时 bank 侧不生效）。
+- 错误码：精选/学段口径均**不新增错误码**；未知学段值安全降级（不 422），`source`/`type` 等既有参数保持原语义。
+
+## 21. 运维监控（Phase 4，`GET /api/admin/monitor`）
+
+> 定位：方案 §7「分发与运维」——监控作业失败、数据库等待、OCR 延迟、渲染队列、违规举报与撤回传播，并治理
+> 构建/镜像分发。实现 [`app/monitor.py`](app/monitor.py)（只读聚合、短缓存、单检查降级）；`app/main.py`
+> 只加 `include_router(monitor.router)` 与构建指纹范围，无新任务类型。
+
+### 21.1 接口与鉴权
+
+| 方法 | 路径 | 鉴权 | 说明 |
+|---|---|---|---|
+| GET | `/api/admin/monitor` | 管理员会话 **或** `X-Health-Token` 部署探针口令（只读） | `?refresh=1` 绕过进程内短缓存；返回五组只读检查（见 21.2）；非管理员 **403**「需要管理员权限」、未登录 **401**「请先登录」 |
+
+- 探针口令：`STUDY_HEALTH_TOKEN` 环境变量 + 请求头 `X-Health-Token`，复用 `app.main._health_token_ok` 常量时间比较
+  （与 `/api/health/ready` 同一口令，不新增密钥体系）；命中时 `monitor_access` 返回 `{role:'probe',username:'health-probe',
+  via:'health_token'}`，只读访问监控。
+- 管理台入口：`web/js/pages/admin.js` 的「运维监控」区（§23.6）。
+
+### 21.2 响应结构与五组检查
+
+`GET /api/admin/monitor` → 
+
+```json
+{
+  "ok": true, "status": "ok", "generated_at": "ISO-8601 UTC", "duration_ms": 12.3,
+  "build": {"build_id": "...", "version": "0.1.0", "bank_version": "bank-20261121-r5"},
+  "window_days": 7,
+  "thresholds": {"queue_warn_seconds":120,"queue_error_seconds":900,"failure_warn_rate":0.25,
+                 "job_timeout_seconds":1800,"lease_seconds":90,"ocr_p95_warn_ms":120000,
+                 "feedback_warn_pending":20,"feedback_warn_age_seconds":259200,
+                 "backup_warn_age_seconds":172800,"wal_warn_bytes":67108864,"db_wait_warn_ms":500},
+  "degraded": [], "checks": {"tasks": {...}, "ai": {...}, "media": {...}, "data": {...}, "plaza": {...}},
+  "cache": {"ttl_seconds": 15.0, "cached": false, "age_seconds": 0.0}
+}
+```
+
+| 分组 | 返回字段（`status/detail/alerts` 之外） | 告警/错误口径 |
+|---|---|---|
+| `tasks` | `window_days/timeout_seconds/lease_seconds/oldest_queued_seconds/oldest_queued_kind/timed_out/stale_running/reclaimed/failure_rate/success_rate/totals{active+terminal 各状态}/by_kind[≤20]/truncated`；`by_kind[]` 每项 `{kind,label,queued,running,cancel_requested,awaiting_outline,completed,failed,interrupted,cancelled,oldest_queued_seconds,timed_out,stale_running,failure_rate}` | 无 `ai_jobs` 表 → warn「AI 任务模块尚未初始化」；终态 ≥4 且失败率 ≥25% → warn；最老排队 ≥120s → warn / ≥900s → error；执行超时/心跳超期 → warn |
+| `ai` | `window_days/source('ai_job_usage'\|'ai_jobs')/totals{jobs,completed,failed,cancelled,failure_rate,duration_p50_ms,duration_p95_ms,duration_avg_ms,tokens_in,tokens_out,tokens_total,retries,cost_micro,cost_covered_jobs,cost_unpriced_jobs}/by_kind[≤20]/truncated/ocr{...同上聚合+kinds=['ocr','recognize']}/model_calls` | 账本不可读 → 退回任务表粗算并 warn；失败率 ≥25%（≥4）→ warn；OCR P95 ≥120s 或失败率 ≥30%（≥3）→ warn；费用无单价 → `cost_micro:null`（不伪造 0） |
+| `media` | `window_days/tasks=['course-video','course-narration']/totals/failure_rate/oldest_queued_seconds/timed_out/stale_running/by_kind[≤20]/assets{total,recent,by_kind}/courses{...}/scenes{...}/capabilities{render,ffmpeg,pdf,video}{available,detail}` | 失败率 ≥34%（≥2）→ warn；排队 ≥120s / 超时 / 心跳超期 → warn；有渲染任务但视频能力不可用 → warn |
+| `data` | `engine/database{engine,readable,wait_ms,table_count,size_bytes,wal_bytes,shm_bytes,database}/bank{present,readable,size_bytes,version,questions,expected_version,version_matches}/backups{count,latest|null,latest_age_seconds,warn_age_seconds,detail}`；`latest` 含 `{name,size_bytes,modified_at,age_seconds,manifest_ok,created_at,file_count,bank_version,format_version,key_included}` | 题库版本不匹配 → **error**；题库缺失/不可读 → warn；WAL ≥64MB → warn；库等待 ≥500ms → warn；备份清单不可解析或过期 → warn |
+| `plaza` | `initialized/releases{active,withdrawn,withdrawn_recent}/withdrawn{public_statuses,sample_size,checked,leaked,leaked_items[≤20],orphan_active,orphan_active_items[≤20],published_without_active,recent_withdrawn}/feedback{issues,reports,appeals,total_pending,oldest_pending_seconds}` | 广场表未初始化 → ok（提示）；撤回后的发布仍出现在公开读 → **error**；活跃发布对应投稿不在公开状态 → **error**；已发布但无活跃发布指针 → warn；未处理反馈 ≥20 或最老 ≥72h → warn |
+
+### 21.3 只读、降级与缓存语义
+
+- **只读**：只执行 `SELECT`/只读探测（题库以 `mode=ro` 打开、备份只读 ZIP `manifest.json` 且 >2MB 跳过），
+  不写业务表、不触发广场/AI 业务函数；不输出密钥、绝对宿主路径或用户内容（测试覆盖）。
+- **单检查失败不 500**：`_run_check()` 每检查独立连接 + 独立异常边界；失败只把该组标 `status='error'` 并给中文
+  `detail`/`alerts`，其它组照常返回；整体 `ok = (status != 'error')`，`status` 取五组最严重值；
+  `degraded` 列出非 ok 组名。检查函数未注册/返回非 dict 也按 error 呈现。
+- **短缓存**：进程内缓存 `STUDY_MONITOR_CACHE_SECONDS`（默认 15s，0 关闭，最大 300s）；
+  缓存键 `(db.DATA_DIR, postgres_enabled(), ai_window_days())`；命中时 `cache.cached=true` + `age_seconds`；
+  `refresh=1` 或 `reset_cache()` 绕过；按进程隔离（多 Worker 各自缓存）。
+- 阈值环境变量：`STUDY_MONITOR_AI_WINDOW_DAYS`（7，1-365）、`STUDY_MONITOR_JOB_TIMEOUT_SECONDS`
+  （回退 `STUDY_WORKER_JOB_TIMEOUT`，1800）、`STUDY_MONITOR_LEASE_SECONDS`（回退 `AI_JOB_LEASE_SECONDS`，90）、
+  `STUDY_MONITOR_WAL_WARN_MB`（64）、`STUDY_MONITOR_BACKUP_WARN_HOURS`（48）、
+  `STUDY_MONITOR_FEEDBACK_WARN_PENDING`（20）；查询行上限 5000、撤回抽样 200、单组 by_kind 输出 ≤20。
+- SQLite/PostgreSQL 兼容：只用 `db.connection()/db.table_names()` 封装，不使用 SQLite 专有函数；时间聚合在 Python 侧做；
+  广场模块不可用时用本地兜底常量（不反向依赖广场业务代码）。
+
+### 21.4 构建指纹与分发治理
+
+- `app/main.py::_compute_build_id()` → `BUILD_FINGERPRINT_PATTERNS`：
+  `app/**/*.py`、`app/migrations/**/*.sql`、`app/ai/prompts/**/*.yaml`、`web/js/**/*.js`、`web/locales/*.json`、
+  `web/styles*.css`、`web/index.html`、`web/editor/**/*`、`web/vendor/**/*`、`editor/src/**/*`、`editor/vendor/**/*`；
+  跳过 `__pycache__/node_modules/.git`；按相对路径排序聚合 sha256 取前 12 位，内容相同则稳定；
+  `STUDY_BUILD_ID` 显式覆盖（容器镜像写入提交号）。随响应头 `X-Zhixu-Build`、`/api/health`（`build_id`/`version_label`）、
+  就绪信息与 OpenAPI 下发；`X-Zhixu-Bank` 下发题库版本提示。
+- `.dockerignore`（新增）：排除 `data/`、`backups/`、`*.sqlite3*`、`api-key.key`、`.env*`（保留 `.env.example`）、
+  `.git/`、`.pytest_cache/`、`.ruff_cache/`、`.mypy_cache/`、`__pycache__/`、`*.pyc`、`node_modules/`、
+  `editor/node_modules/`、`screenshots/`、`*.log`、`accept-*.json`、`accept-*.log`、`pytest-*.log`、`*.zip`、
+  `.omx/`、`.playwright-cli/`、`eval/runs/`、`editor/dist/`；显式保留 `web/**`（含 `web/editor`、`web/vendor`、
+  `web/locales`）、`editor/vendor/**`、`editor/src/**`、`app/migrations/**`。
+- `deploy/Dockerfile`：由 `.dockerignore` 收敛构建上下文；`COPY app/web/eval/deploy/scripts` + `THIRD_PARTY_NOTICES.md`
+  + `editor/vendor`；保留 libgomp1/ffmpeg 与 `/api/health/live` HEALTHCHECK；非 root 用户 `zhixu`。
+
+### 21.5 管理台「运维监控」区（`web/js/pages/admin.js`）
+
+- 分组卡片 `tasks/ai/media/data/plaza`：状态徽标（ok/warn/error 三色）、`build.build_id/version/bank_version`、
+  `generated_at`/采集耗时/缓存命中（`cache.cached/age_seconds`）、`degraded` 组提示；
+  任务按 kind 表格、AI 总量与 OCR 指标（P50/P95/失败率/费用未知）、渲染队列与导出能力、应用库/题库/备份、
+  广场发布/撤回/反馈积压；「刷新」请求 `?refresh=1`；接口失败/未就绪显示降级提示（不崩页）。
+- 中英文键 `admin.monitor.*`（分组/状态/表格列/时长与字节格式化/缓存与降级提示），两语言键集合一致。
+
+### 21.6 错误码与边界
+
+- `401` 未登录且无探针口令；`403` 非管理员（无探针口令）；没有 422/409（`refresh` 为布尔型宽松解析）。
+- 边界：不持久化、无告警外发（邮件/IM/Webhook）、无历史趋势；撤回传播为最近 200 条撤回发布的抽样断言（非全量扫描）；
+  PG 下数据库大小/等待为增强信息（失败置 null）；真实 PostgreSQL/Redis/多 Worker 环境未联验；`X-Health-Token`
+  只读监控，不替代 `/api/health/ready` 的就绪判定。
+
+## 22. 质量运营闭环：门禁 / 恢复 / 批量 / 通知（Phase 4，`/api/plaza` 51 条）
+
+> 定位：方案 §8 阶段 3「试点首批 100% 独立抽检，发现严重错题或隐私问题停增并纠正」「上线抽检、通知及回滚」。
+> 实现 [`app/plaza/gate.py`](app/plaza/gate.py) + 扩展
+> [`quality.py`](app/plaza/quality.py)、[`release.py`](app/plaza/release.py)、
+> [`feedback.py`](app/plaza/feedback.py)、[`notify.py`](app/plaza/notify.py)、[`metrics.py`](app/plaza/metrics.py)、
+> [`db.py`](app/plaza/db.py)；`/api/plaza` **44 → 51 条**，新增 2 张表（广场表共 16 张）。不改变既有广场状态机、
+> 评审阈值与撤回/回滚语义（只追加/接线）。
+
+### 22.1 第四轮新增路由（7 条）
+
+| 分组 | 方法 | 路径 | 鉴权 | 说明 |
+|---|---|---|---|---|
+| 通知增强 | GET | `/api/plaza/notifications/unread-count` | 登录 | 轻量未读汇总：`{unread_count, by_kind, kinds_total, message}`；只本人 |
+| 抽检门禁（2） | GET | `/api/plaza/admin/quality/gate` | 编辑/管理员 | 门禁状态：配置（mode/mode_label/mode_source/armed/armed_source/enforced/required/blocking_possible/window_open/pilot_limit/published_total/pilot_remaining/checks_total）、审计计数（`counts{blocked,override,passed}` + override_total/blocked_total/passed_total/evaluated_total/by_mode）、`recent[≤10]`、`notice` |
+| | PUT | `/api/plaza/admin/quality/gate` | **仅管理员** | `{mode?:'off'\|'initial_100'\|'always', armed?:bool, pilot_limit?:0-1000000, reset?:bool}`；非法模式/负窗口 **422**；`reset` 删除设置恢复默认；返回最新状态 |
+| 一键恢复 | POST | `/api/plaza/releases/{public_id}/restore` | 编辑/管理员（作者回避 **403**） | `{reason(2–2000), confirm_resolved:true}`；恢复最近一次「抽检 high 自动撤回/编辑撤回」的发布（详见 §22.4） |
+| 批量处理（3） | POST | `/api/plaza/admin/issues/batch` | 编辑/管理员 | 批量处理纠错（详见 §22.5） |
+| | POST | `/api/plaza/admin/reports/batch` | 编辑/管理员 | 批量处理举报 |
+| | POST | `/api/plaza/admin/appeals/batch` | 编辑/管理员 | 批量处理作者申诉 |
+
+> 同时扩展（非新增路径）：`POST /api/plaza/notifications/read` 增加 `kind` 过滤；`POST /api/plaza/submissions/{id}/publish`
+> 增加 `quality_gate_override`/`override_reason` 并接门禁；`POST /api/plaza/admin/quality/checks` 增加签发前抽检
+> （`phase` 由状态推导，响应回显）；`GET /api/plaza/admin/metrics` 增字段。
+
+### 22.2 抽检门禁（`app/plaza/gate.py` + `plaza_quality_gate_log`）
+
+- 模式 `off|initial_100|always`（默认 `initial_100`）；解析优先级 **管理员运行期设置**（`app_settings.plaza_quality_gate`）>
+  **环境变量** `STUDY_PLAZA_QUALITY_GATE` > 内置默认；未知模式回退默认并在 `mode_source` 标 `:invalid`。
+  - `off`：不阻断（抽检记录保留）；
+  - `initial_100`：试点窗口内（按成功签发数 `pilot_limit`，默认 100，`0` 不限）每个版本都要独立 `pass`；
+    窗口结束后不再阻断；
+  - `always`：所有发布版本都要独立 `pass`。
+- `armed`（试点激活）：显式配置了模式（设置/环境变量且非 off）或库中已有任意抽检记录 → 已激活；也可
+  `plaza_quality_gate_armed`/`STUDY_PLAZA_QUALITY_GATE_ARMED` 显式 true/false（`armed_source=setting|env|auto`）；
+  未激活时签发不阻断（提示「抽检门禁尚未激活」）。
+- 判定：该版本**最新一条**抽检记录为 `pass` 且抽检员 ≠ 作者（`_independent_pass`）→ 允许签发；否则 `blocking`。
+- 签发接线（`publish_submission`，在状态/授权/阈值校验通过后）：阻断时抛 `QualityGateBlocked` → 签发事务回滚 →
+  `record_blocked()` 用**独立事务**写 `plaza_quality_gate_log`（`outcome='blocked'`，审计失败不掩盖 409）→
+  **409** `{code:'quality_gate_blocked', message, submission_id, version, mode, mode_label, guidance,
+  override_allowed:true, latest_check, gate:{mode,armed,enforced,required,window_open,pilot_limit,published_total}}`。
+- override：`quality_gate_override=true` 且 `override_reason` ≥2 字（否则 **422** 对象带 `field:'override_reason'` +
+  guidance）；同事务写 `quality_gate_override` 事件（mode/version/latest_check/guidance）与审计行 `outcome='override'`；
+  正常通过写 `outcome='passed'`；签发事件 payload 追加
+  `quality_gate{mode,armed,required,override,override_reason,pass_check_id}`；响应 `quality_gate{...}` 回显模式/激活/
+  窗口/override/最新抽检/guidance/message。
+- 审计表 `plaza_quality_gate_log(id, submission_id, version, mode, outcome, actor_id, reason, created_at)`，
+  `GATE_OUTCOMES=('blocked','override','passed')`；`outcome` 与 `mode` 建索引。
+- 设置键：`plaza_quality_gate`/`plaza_quality_gate_armed`/`plaza_quality_gate_limit`（管理员接口运行时写入，`reset` 删除）。
+
+### 22.3 签发前抽检（`app/plaza/quality.py`）
+
+- `POST /api/plaza/admin/quality/checks` 兼容两阶段：`post_publish`（`status='published'` + 活跃发布，既有口径）与
+  `pre_publish`（`status ∈ ('verified','pending_release')` 且无活跃发布，社区核验通过待签发）。
+  `community_review` 仍 **409**（保持既有语义）；其它状态 **409** 对象（`status/status_label`）。
+- 请求 `{submission_id?|public_id?, decision:'pass'|'issue', severity?:low|medium|high, findings?:[≤20，每条≤500],
+  note≤2000}`；`public_id` 与 `submission_id` 不匹配 **422**；作者抽检本人投稿 **403**；`issue` 必填 findings（否则 **422**）。
+- 发布后 `high` 自动撤回逻辑不变（同事务 `withdraw_active_release(mode='emergency',
+  event_action='quality_withdrawn')`：发布指针/投稿状态置 withdrawn、写事件、通知作者与收藏者、抽检行
+  `auto_withdrawn=1`，响应 `auto_withdrawn:true` + `withdraw` + `notified{author,favoriters}`）；**签发前抽检的 high
+  不撤回**（无发布），只记录并通知作者修订。
+- 响应追加 `phase`、`gate{mode,mode_label,mode_source,armed,enforced,required,blocking,publish_ready,guidance,
+  override_guidance}`、`message`（中文按结论/阶段说明）；`publish_ready` 仅在签发前 `pass` 且未阻断时为 true。
+
+### 22.4 一键恢复（`POST /api/plaza/releases/{public_id}/restore`）
+
+- 鉴权：编辑/管理员（`require_editor`）；作者恢复本人投稿 **403**「恢复回避：不能恢复本人投稿」。
+- 前置（按顺序）：发布记录不存在 **404**；无撤回记录且已有活跃发布 → **200 幂等** `{idempotent:true,
+  message:'该发布已处于活跃状态，无需重复恢复'}`；无撤回记录且无活跃 → **409**；恢复对象=该 public_id **最近一次**
+  撤回的发布。撤回来源必须为「抽检 high 自动撤回」（存在 `plaza_quality_checks.release_id + auto_withdrawn=1`）或
+  「编辑撤回」（`withdraw_mode ∈ normal|emergency` 且有 `withdrawn_at`）；`withdraw_mode='rollback'` → **409**
+  「回滚产生的撤回记录不支持一键恢复；如需恢复旧版本内容请重新送审并签发」；其它来源 **409**。
+- 条件（均 **409** 带 JSON 详情）：该投稿已有更新版本的活跃发布（返回 `active_public_id/active_version/restore_version`）、
+  投稿 `current_version` ≠ 要恢复的版本（`current_version/restore_version`）、投稿当前状态不是 `withdrawn`、
+  历史版本快照 `plaza_submission_versions` 缺失。`confirm_resolved` 未为 true → **422**
+  `{field:'confirm_resolved', guidance}`；理由 <2 字 → **422**。
+- 同事务：`plaza_releases` 该行 `status='active'`（清空 `withdrawn_at/withdraw_mode/reason`，CAS `WHERE status='withdrawn'`）→
+  `plaza_submissions` 恢复该版本快照/来源/指纹/授权并 `status='published'`（CAS `WHERE status='withdrawn' AND version=?`）→
+  重新登记公开衍生图 → 写 `release_restored` 事件（`release_id/public_id/version`、`source='quality_auto_withdraw'|
+  'editor_withdraw'`、`quality_check_id`、`previous_withdraw{mode,reason,withdrawn_at}`、`confirm_resolved:true`、figures 摘要）→
+  通知作者（`release_restored`）与收藏者（`favorite_restored`，返回通知人数）。
+- 响应：`{submission{status:'published',status_label,version,current_version,public_id,public_visible:true}, release,
+  restored_release, restored_version, restore_source, previous_withdraw, quality_check|null, notified{author,favoriters},
+  figures, public_url, idempotent:false, message}`。
+- 与回滚的区别：回滚是「撤销当前发布并恢复上一已发布版本」（`/submissions/{id}/rollback`，版本回退）；
+  一键恢复是「把被撤回的同版本发布重新设为 active」（不改变版本号，仅用于抽检/编辑撤回后问题已处理）。
+  两者都只改发布指针/投稿状态，公开读（广场列表/详情/公开图、`official:` 检索/详情/作答）**查询时即时**生效；
+  历史作答/成绩/收藏保留。
+
+### 22.5 批量处理（`POST /api/plaza/admin/{issues|reports|appeals}/batch`）
+
+- 请求 `{ids:[1-50], action:'resolve'|'reject', reason?≤2000}`：ids 去重、非正数忽略；空 ids **422**
+  `{field:'ids'}`；超过 `MAX_BATCH_ITEMS=50` **422** `{message,max_items:50}`；批量驳回 reason <2 字 **422**
+  「批量驳回必须填写原因（便于反馈人/作者理解）」。
+- 处理：同一写事务（`plaza-write`）内逐条 `_apply_feedback`（状态 resolve→resolved / reject→rejected、写事件、
+  通知提交人）；**部分成功**：不存在 → `skipped[{id,reason:'not_found',message}]`；已处理/非 pending →
+  `skipped[{id,reason:'already_handled',status,status_label,message}]`；单条冲突（HTTPException）→
+  `skipped[{id,reason:'conflict',message}]`；成功条目不会因其它条目失败被丢弃。
+- 响应 `{kind,kind_label,action,target_status,requested,updated[≤50],updated_ids,updated_count,skipped,skipped_count,
+  batch_id,max_items,message}`；每次批量动作写 `plaza_ops_batches` 审计行（供 `metrics.ops.batch` 聚合）。
+- 鉴权：编辑/管理员（`require_plaza_role("editor")`，`admin` 直通）。
+
+### 22.6 通知增强（`app/plaza/notify.py`）
+
+- `GET /api/plaza/notifications/unread-count`（登录，只本人）→ `{unread_count, by_kind, kinds_total, message}`；
+  `message` 为「你有 N 条未读通知」/「暂无未读通知」。
+- `POST /api/plaza/notifications/read` `{all?:bool, ids?:[≤200], kind?:str}`：
+  - `all:true`（可带 `kind`）：全部/某类型标记已读（`scope='all'`）；
+  - `ids`：按 id 标记（他人通知被忽略不报错、不泄露存在性；`scope='ids'`）；
+  - 仅 `kind`：该类型未读全部标记已读（`scope='kind'`）；
+  - 未知 kind **422** `{message:'未知的通知类型', field:'kind', allowed:[...]}`；三者都缺 **422**
+    `{message, field:'ids|kind|all'}`；响应 `{updated, unread_count, kind, scope, message}`。
+- 去重：`notify()` 默认按「接收人 + 类型 + 投稿 + 版本」在 `STUDY_PLAZA_NOTIFY_DEDUPE_SECONDS`（默认 **300s**，
+  0 关闭）窗口内去重（重复事件返回既有通知 id、不新增）；版本取 payload 的 `version/restored_version/withdrawn_version`，
+  缺失时回退投稿当前版本；`dedupe=False` 强制新增；`notify_many` 仍按 user_id 去重并支持 `exclude`。
+- 通知类型：`db.NOTIFICATION_KINDS` 追加 `release_restored`（20 → **21 类**）；正文只写事件与处理结论，不含他人
+  身份/评审原文；通知与状态更新/事件同事务（失败一起回滚）。
+
+### 22.7 指标新增字段（`GET /api/plaza/admin/metrics`）
+
+- `quality.gate{mode,mode_label,mode_source,armed,armed_source,enforced,required,window_open,pilot_limit,
+  pilot_remaining,published_total,checks_total,blocked_total,override_total,passed_total,evaluated_total,by_mode,notice}`；
+  `quality` 追加 `pre_publish_checks/post_publish_checks`。
+- `withdrawals.restorations`；顶层 `restorations{total, latest_event}`（`release_restored` 事件链口径）。
+- `ops.batch{batches,requested,updated_total,skipped_total,by_kind[{kind,batches,requested,updated,skipped}]}`。
+- `notifications{total,unread_total,read_total}`（admin 聚合，不含用户身份）。
+- `caliber` 追加 `quality.gate`/`withdrawals.restorations`/`ops`/`notifications` 中文口径说明；既有指标字段不变。
+
+### 22.8 数据表与常量
+
+| 表 | 关键列/约束 | 说明 |
+|---|---|---|
+| `plaza_quality_gate_log` | `id`、`submission_id`、`version`、`mode`、`outcome`、`actor_id`、`reason`、`created_at`；索引 `(submission_id,id)`、`(outcome,id)` | 门禁判定审计（blocked/override/passed）；阻断记录独立事务写入（签发事务已回滚） |
+| `plaza_ops_batches` | `id`、`kind`、`action`、`requested`、`updated`、`skipped`、`actor_id`、`reason`、`created_at`；索引 `(kind,id)` | 批量处理审计，供运营指标聚合 |
+
+- 新增常量：`QUALITY_GATE_MODES=('off','initial_100','always')`、`QUALITY_GATE_DEFAULT_MODE='initial_100'`、
+  `QUALITY_CHECK_PHASES=('post_publish','pre_publish')`、`QUALITY_PRE_PUBLISH_STATUSES=('verified','pending_release')`；
+  `NOTIFICATION_KINDS += 'release_restored'`；门禁常量集中在 `app/plaza/gate.py`。
+- 广场表 14 → **16 张**；无强制迁移、无数据回填。
+
+### 22.9 错误码速查（Phase 4 增量）
+
+- **401** 未登录（通知未读数/批量/恢复/门禁读取）；**403** 非编辑/管理员、作者回避（抽检/签发/恢复）。
+- **409**：`quality_gate_blocked`（未抽检签发，含 guidance/override_allowed）；抽检对象状态不符（community_review
+  或非可抽检状态）；恢复条件不满足（无撤回记录/已有更新版本活跃/current_version 不一致/状态非 withdrawn/快照缺失/
+  回滚来源不可恢复）；批量单条冲突（进入 `skipped`，整体仍 200）。
+- **422**：override 理由缺失/过短；门禁设置模式非法/负窗口；恢复未确认或理由过短；批量 ids 空/超 50/驳回缺原因；
+  通知已读未知 kind/无选择器；抽检 public_id 与 submission_id 不匹配/findings 缺失。
+- **404**：发布记录不存在；恢复的投稿不存在。
+
+## 23. 第四轮前端收口（页面契约）
+
+> 对应任务 WS29；均为既有页面的能力补齐/接线，不新增中央路由（沿用 `main.js` 既有页面键与 hash 参数约定）。
+
+### 23.1 题目详情（`web/js/pages/question.js`）
+
+- official 公开配图：解析 official 投影 `images[]`（`{index,role,alt,accessible,url,asset,media_type,reason}`），
+  仅 `accessible && url` 渲染；兼容 `figure_urls`（数组或对象，元素为字符串或 `{url}`）；撤回/争议导致公开图 404 时
+  回退 `figure_notice` 中文占位。
+- official 纠错：按钮打开 `data-official-issue-dialog` 对话框，字段 `stem/options/answer/explanation/figure/source/other`，
+  描述 2–4000 字；提交 `POST /api/plaza/questions/{public_id}/issues`；未登录引导登录；成功 toast（响应 `message`），
+  失败展示可读错误；不再只是占位提示。
+- 「在广场查看」：`#/plaza?id=<public_id>`（缺失 public_id 时不渲染）；来源标签/精选版本/审核状态徽标保持。
+- 题库题的收录按钮/来源徽标/答案门控保持第三轮行为。
+
+### 23.2 练习页学段筛选（`web/js/pages/practice.js`）
+
+- 学段筛选下拉（`grade`）进入 `state.filters` 与 URL 深链（`#/practice?...&grade=`），支持重置与清除芯片；
+  选项优先 `GET /api/catalog` 的 `grade_stages`（未下发回退固定「小学/初中/高中」）。
+- 能力探测：合法 `GET /api/questions?page=1&page_size=1&grade=<探测值>`，响应含 `grade_filter` 对象即支持；
+  旧后端无该字段 → 控件整体隐藏并从 URL/本地状态丢弃 `grade`（不留假筛选）。
+- `results.grade_filter.applied === false` 时显示 `practice.gradeFilterNotice` 中文说明（题库无年级列时仅平台精选生效）；
+  来源/审核徽标、分页、空态保持第三轮行为。
+
+### 23.3 学情 / 首页精选口径（`web/js/pages/insight.js` + `home.js`）
+
+- 读取 `/api/insight/home` 顶层 `official`（`practice_pool/total_questions/practiced/wrong_count/note|caliber`）与
+  `bank.official_practice_pool`；展示「精选可练 / 已练精选 / 精选错题」卡片 + 口径说明；字段缺失（旧后端/接口失败）
+  时整块隐藏，不写死数字、不本地估算。
+- 既有个人/题库统计卡与 `caliber` 说明透传逻辑不变。
+
+### 23.4 任务中心深链（`web/js/pages/tasks.js`）
+
+| 任务 | 深链 |
+|---|---|
+| `paper-import` | `#/paperlab?import=<import_id>` |
+| `paper-enrich` | `#/paperlab?tab=papers&paper=<paper_id>`；无试卷 id 时 `#/mybank?edit=<question_id>` |
+| `paper-compose` / `paper-revision` | `#/paperlab?tab=papers&paper=<paper_id>`（缺失回落 `#/paperlab`） |
+| `course` | `#/classroom?course=<course_id>` |
+| `notes` | `#/notes?note=<note_id>` |
+| `ocr` | `#/notes?document=<document_id>`（缺失回落 `#/notes?section=docs`） |
+| `recognize` | `#/upload?upload=<upload_id>`（既有） |
+| `tagging` / `insight-report` / `assistant-turn` | `#/admin` / `#/insight` / `#/assistant`（既有） |
+
+- 未知任务不跳转、只提示（`tasks.noRouteToast`）；深链参数与对应页面读取约定一致（paperlab 读 `import`/`tab`/`paper`，
+  classroom 读 `course`，notes 读 `note`/`document`/`section`）。
+
+### 23.5 笔记与 Anki 题目引用/版本
+
+- `web/js/pages/notes.js`：收集笔记中的站内题目引用（来源条目 `ref/qid/source_ref` + 正文统一引用文本），
+  按 `bank:`/`app:`/`official:` 显示类型标签与跳转，并带版本提示
+  （`version ?? published_version ?? content_revision ?? bank_version`）；无引用不渲染；笔记版本历史/回滚保持既有行为。
+- `app/anki_export.py`：`question_ref_of()` 统一解析 `bank:<qid>`/`app:<id>`/`official:<id>`（复用 `app.question_ref`），
+  `source_version_of()` 取 `bank_version/published_version/content_revision/source_version/version`；
+  错题卡背面追加「题目引用：… · 来源：… · 来源版本：…」脚注，tag 追加 `来源_…`/`版本_…`；笔记卡背面追加题目引用
+  （≤5 条，带版本）与 `source_versions`（`D<id> v<n>`）；**不改变 `.apkg` 模板字段与既有卡片结构**（无引用时输出不变）。
+- 相关测试：`tests/test_phase4_ui.py`（静态契约）、`tests/test_anki_export.py`（字段级用例）。
+
+### 23.6 管理台运维监控（`web/js/pages/admin.js`）
+
+- 见 §21.5：五组卡片 + 状态徽标 + build/缓存/degraded + 刷新；`admin.monitor.*` 中英文键对齐；接口失败降级不崩页。
+
+### 23.7 前端错误与降级边界
+
+- 所有新增控件（学段筛选、精选口径卡、监控卡、纠错对话框、深链）在接口未就绪/权限不足/数据缺失时**隐藏或提示**，
+  不 500、不伪造数字、不把默认题库伪装成精选；locale 新增键中英对齐（本轮 4,632/4,632）。
+
 

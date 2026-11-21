@@ -253,3 +253,115 @@ record: `docs/知序优化实施记录-20261121-第三轮.md`; API detail: `INTE
    cost is `null` unless both model prices are configured (never fabricated as zero). Ledger retention defaults to 180
    days; the legacy per-call `ai_usage` table keeps its own meaning and is not merged with the ledger.
 
+## Round invariants (2026-11-21 · Phase 4 close-out: assistant/classroom official + ops monitor + quality gate/restore/batch/notify)
+
+These invariants extend the three sections above for the Phase 4 close-out (platform-selected questions in the AI
+assistant and classroom, official stats caliber and grade filter, ops monitor and build/distribution governance,
+quality-gate/restore/batch/notification enhancements). Where an older statement is narrower, the rules here are
+authoritative. Implementation record: `docs/知序优化实施记录-20261121-第四轮.md`; API detail:
+`INTEGRATION-API-INDEX.md` §20–§23; module contract: `INTEGRATION-CONTRACT.md` §4.1/§4.3/§4.4/§4.6/§5/§6.
+
+1. **Official questions in the assistant (read-only, public ids only).** `read_question` accepts
+   `official:<public_id>` and resolves through the same query-time visibility as practice (`app/official.py`), so
+   withdrawn/disputed/invisible questions error with a Chinese explanation and **never** echo stem/options/answers.
+   Answers/solutions stay behind the existing "user has answered" gate. The new read-only tool `search_official`
+   returns only public projections (`public_id`, `source`, review status/label, published version, short stem) and
+   never internal ids, authors or reviewers. The system prompt requires citations as「平台精选 · 公开编号
+   plz-...」with review status and forbids repeating withdrawn/disputed content. `get_stats` may include the official
+   caliber while existing counters keep their meaning. `search_official` is read-only; the three write tools are
+   unchanged and still require `POST /api/assistant/conversations/{id}/confirm`.
+2. **Official questions as classroom source material.** `POST /api/classroom/courses/{id}/generate` accepts optional
+   `source_ref=official:<public_id>`; only the `official` source is supported (other sources **422**), malformed refs
+   **422**, and invisible/withdrawn/disputed questions **404** at job admission and again at outline generation. The
+   material is injected into the outline prompt with public id/review status/source declaration only; answer points
+   are for teacher preparation only, and internal ids/authors/reviewers must not be emitted. `outline.sources` carries
+   a `kind='official'` entry (`public_id`, `published_version`, `review_status(_label)`, `source_declaration`),
+   `course.config.seed_source` records the source, and job results expose `official_source_count`/`official_sources`.
+   Visibility is evaluated only when a new outline is generated, so withdrawing a question later never invalidates
+   existing courses/exports; it only blocks new courses that try to use it as source material.
+3. **Grade filter semantics (`GET /api/questions?grade=`).** `grade` accepts standard grades (exact match) and stage
+   prefixes (小学/初中/高中), comma-separated; unknown/too-long values **degrade safely without 422** and the response
+   appends `grade_filter{requested,applied,bank_applied,official_applied,values,stages,reason}`. The official side
+   filters on snapshot `grade`; the bank side filters only when the read-only bank actually has a `grade` column
+   (r5 does not → `bank_applied=false` + Chinese reason). `source=all` merged pagination semantics are unchanged.
+   `GET /api/catalog` exposes `grades`/`grade_stages`/`grade_note`. Frontends must capability-probe and must not
+   present a bank-side filter as applied when `applied=false`.
+4. **Official stats caliber.** `app/official.official_caliber()` is the single source for official counts on
+   `GET /api/insight/home` (top-level `official` block, plus `bank.official_practice_pool/official_auto_gradable`)
+   and `GET /api/stats` (`official` block; flat `official_attempts/official_practiced/official_wrong_count` keep
+   their old meaning). Only currently public questions count; withdrawn/disputed questions are excluded at query time
+   (their historical attempts/wrongbook rows are kept but not counted); no process cache. When plaza tables are
+   unreadable the block degrades to `available:false` + Chinese note and must not break the rest of the stats.
+5. **Quality gate before publishing.** `app/plaza/gate.py` decides whether a publish needs a passed independent
+   quality check. Mode `off|initial_100|always` (default `initial_100`), precedence db setting > env
+   `STUDY_PLAZA_QUALITY_GATE` > default. `armed` is true when a mode is explicitly configured or any quality check
+   already exists (or via explicit setting/env). `initial_100` requires an independent `pass` check for every version
+   while the pilot window is open (window counts successfully published releases; `pilot_limit` default 100, `0` =
+   unlimited). When blocking, publish returns **409** `{code:'quality_gate_blocked', guidance, override_allowed:true,
+   gate{...}}` and writes a `blocked` audit row in `plaza_quality_gate_log` in a separate transaction (the publish
+   transaction rolled back); an editor/admin may override with `quality_gate_override=true` + `override_reason`
+   (≥2 chars, otherwise **422**), which writes a `quality_gate_override` event plus an audit row
+   (`outcome='override'`) and is exposed in metrics. A normal pass writes `outcome='passed'`. Pre-publish sampling is
+   allowed for `verified`/`pending_release` (no active release); `community_review` stays **409**; only post-publish
+   `high` issues auto-withdraw. Gate settings (`GET|PUT /api/plaza/admin/quality/gate`) are editor-readable and
+   admin-writable only.
+6. **One-click restore (distinct from rollback).** `POST /api/plaza/releases/{public_id}/restore` (editor/admin,
+   author self **403**) restores the most recent withdrawn release of that public question only when the withdrawal
+   came from a quality `high` auto-withdraw or an editor withdrawal; `withdraw_mode='rollback'` and other sources are
+   **409**. It requires `confirm_resolved=true` (else **422**) and a reason (≥2 chars, else **422**); it returns
+   **409** when the submission already has a newer active release, when `current_version` ≠ restored version, when
+   the submission status is not `withdrawn`, or when the version snapshot is missing. In one transaction it
+   re-activates the release pointer, restores the submission snapshot/version/status to `published`, re-registers
+   public figures, writes `release_restored` with operator/reason, and notifies the author (`release_restored`) and
+   favoriters (`favorite_restored`). Restoring an already-active release is idempotent (200). Public reads (plaza
+   list/detail, public images, official search/detail) become visible again immediately at query time; history is
+   retained.
+7. **Batch feedback processing (partial success).** `POST /api/plaza/admin/{issues|reports|appeals}/batch`
+   (editor/admin) accepts `ids` (≤50, duplicate/non-positive ids dropped; empty **422**), `action:resolve|reject`,
+   optional `reason` (batch reject requires ≥2 chars, else **422**). Items are processed in one write transaction but
+   individually: unknown ids go to `skipped[{id,reason:'not_found'}]`, already handled/non-pending ones to
+   `skipped[...,'already_handled',status,status_label]`, per-item conflicts to `skipped[...,'conflict']`; successful
+   items are updated/notified and are never silently discarded because another item failed. Response reports
+   `requested/updated/updated_ids/updated_count/skipped/skipped_count/batch_id/max_items/message`, and every batch
+   writes a `plaza_ops_batches` audit row used by metrics.
+8. **Notification dedupe, unread count and kind-wide read.** Notifications are written in the same transaction as the
+   state change, only to directly involved users, and never contain another user's identity/review text/internal ids.
+   `notify()` dedupes by `(recipient, kind, submission, version)` within `STUDY_PLAZA_NOTIFY_DEDUPE_SECONDS` (default
+   300, 0 disables): a duplicate returns the existing notification id instead of inserting; `dedupe=False` forces a
+   new row. `GET /api/plaza/notifications/unread-count` returns `{unread_count, by_kind, kinds_total, message}` for
+   the caller only. `POST /api/plaza/notifications/read` supports `{all:true, kind?}` (all or one kind),
+   `{ids:[≤200]}` (foreign ids ignored without leaking existence) and `{kind}` alone (all unread of that kind);
+   unknown kind **422** with allowed list; no selector **422**. `release_restored` is an appended notification kind
+   (20 → 21).
+9. **Ops monitor is read-only, cached and degrade-safe.** `GET /api/admin/monitor` (admin session or
+   `STUDY_HEALTH_TOKEN`/`X-Health-Token` probe; otherwise 401/403) returns
+   `{ok,status,generated_at,checks{tasks,ai,media,data,plaza},build{...},thresholds,degraded,cache}`. It only executes
+   SELECTs/read-only probes and never writes business tables or triggers plaza/AI business functions; it must not
+   leak secrets, absolute host paths or user content. Each check runs on its own DB connection and exception
+   boundary: a failing check is reported as `status='error'` with a Chinese detail (never a 500), the other checks
+   still return, and overall `ok=false` only on `error`. Results are cached in-process for
+   `STUDY_MONITOR_CACHE_SECONDS` (default 15s, 0 disables, max 300), keyed by data dir/engine/window; `refresh=1`
+   bypasses. The plaza group asserts that withdrawn releases are no longer publicly readable (`leaked`/
+   `orphan_active` → error) and reports the pending feedback backlog.
+10. **Build fingerprint and distribution scope.** `_compute_build_id()` hashes `app/**/*.py`,
+    `app/migrations/**/*.sql`, `app/ai/prompts/**/*.yaml`, `web/js/**/*.js`, `web/locales/*.json`,
+    `web/styles*.css`, `web/index.html`, `web/editor/**/*`, `web/vendor/**/*`, `editor/src/**/*` and
+    `editor/vendor/**/*` (skipping `__pycache__`/`node_modules`/`.git`); the id is stable for identical content,
+    order-independent, exposed via `X-Zhixu-Build`/`/api/health`/readiness/OpenAPI, and `STUDY_BUILD_ID` overrides
+    it. `.dockerignore` must exclude local data/backups/databases/secrets/vcs/dependency caches and acceptance
+    artifacts while keeping `web/editor`, `web/vendor`, `web/locales`, `editor/vendor`, `editor/src` and
+    `app/migrations`; the Dockerfile ships `THIRD_PARTY_NOTICES.md` and `editor/vendor` in the image. Any future key
+    asset or migration must be added to the fingerprint/keep list rather than silently dropped.
+11. **Phase 4 frontend contracts.** `question.js` renders only `accessible && url` official images (falls back to
+    `figure_notice`), posts official corrections to `POST /api/plaza/questions/{public_id}/issues` (login-gated,
+    toast on success) and links to `#/plaza?id=<public_id>`. `practice.js` adds the grade filter with capability
+    probing, URL state and an explicit "not applied on bank side" notice. `insight.js`/`home.js` render the official
+    caliber only when present and never hardcode numbers. `tasks.js` deep links follow `#/paperlab?import=`,
+    `#/paperlab?tab=papers&paper=`, `#/classroom?course=`, `#/notes?note=`, `#/notes?document=`; `notes.js` shows
+    `bank:`/`app:`/`official:` refs with version; `anki_export.py` adds ref/source/version only to card footer/tags
+    without changing the `.apkg` template. All new controls degrade/hide when their endpoints are unavailable.
+
+Do not weaken these invariants in later modules: official reads in any surface must go through `app/official.py`
+visibility, new publish paths must keep the quality gate/audit behavior, withdrawals must stay immediately effective
+for every public read path, and distribution changes must keep the fingerprint/.dockerignore scope above.
+
