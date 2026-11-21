@@ -1536,4 +1536,92 @@ quality, feedback, withdrawals, caliber}`：
 - 所有新增控件（学段筛选、精选口径卡、监控卡、纠错对话框、深链）在接口未就绪/权限不足/数据缺失时**隐藏或提示**，
   不 500、不伪造数字、不把默认题库伪装成精选；locale 新增键中英对齐（本轮 4,632/4,632）。
 
+## 24. 第五轮共用学习数据层（2026-11-21，`/api/evidence`、`/api/artifacts`、`/api/review-cards`）
 
+> 对应《知序功能整合与优化总方案》§4/§5.1/§5.2/§5.4 与 §8 工单 A–E 首批；
+> 详细记录见 `docs/知序优化实施记录-20261121-第五轮.md`。全部路由需登录（`Depends(current_user)`）；
+> 错误统一 `{detail: 中文}`；私有资源他人/不存在一律 404，不泄露存在性。
+
+### 24.1 学习证据 `/api/evidence`（`app/study_evidence.py`，3 条）
+
+| 方法/路径 | 请求 | 响应要点 |
+| --- | --- | --- |
+| `GET /api/evidence/summary?days=90` | `days` 1–3650（越界夹取） | `{generated_at,window_days,effective_count,revised_count,counts:{kind,verdict,grade_source,prompt_state,reveal_state,self_report},by_source,by_question_source,caliber,note}`；`by_source` 是判分来源，`by_question_source` 是题目来源（bank/app/official/none）。 |
+| `GET /api/evidence/question/{ref:path}` | `ref` = `bank:<qid>`/裸 qid/`app:<id>`/`official:<public_id>` | `{ref,question_ref,counts:{total,correct,incorrect,pending},effective:<最新有效事件>,events:[最近 20 条有效版本（含自评）],first_independent_correct,sample_sufficient,note}`；非法引用 **422**，不回显题干/答案。 |
+| `POST /api/evidence/self-report` | `{ref, verdict:"correct"\|"incorrect", note?≤200}` | `{event}`：`kind=self_report`、`record_kind=self`、`self_report=independent`，**不改动**核验证据；同 `ref+verdict+note` 幂等。 |
+
+口径：一次有效证据一行；重判通过 `revise_attempt_evidence` 同键升版（旧行 `valid=0` + `superseded_by`）；
+`sample_sufficient=false` 表示独立且已核验的有效作答 <2 次，界面必须显示「样本不足」。四种题目引用之外的输入 422；
+空证据返回空结构而非 404。
+
+### 24.2 学习附件 `/api/artifacts`（`app/study_artifact.py`，9 条）
+
+| 方法/路径 | 请求 | 响应要点 |
+| --- | --- | --- |
+| `GET /api/artifacts?kind=&target_kind=&target_key=&page=&page_size=` | 分页 1–100 | `{items:[公开元数据，不含 data],total,page,page_size}` |
+| `GET /api/artifacts/by-target?target_kind=&target_key=` | target_kind ∈ question/note/classroom/review/assistant | `{items:[{artifact,revision,data,preview,link}],total,skipped}`；固定版本链接读旧版，`revision=NULL` 跟随最新；已删附件跳过并计入 `skipped`。 |
+| `POST /api/artifacts`（201） | `{kind,title,data,preview?,source_ref?,source_kind?,artifact_id?,links?:[{target_kind,target_key,revision?}]}` | `{artifact,revision:{revision,checksum,created_at}}`；自定义 `artifact_id` 需匹配 `^[a-z0-9][a-z0-9_-]{7,63}$`，重复（含已删）**409**。 |
+| `GET /api/artifacts/{artifact_id}?revision=` | 版本缺省=当前 | `{artifact,revision:{revision,data,preview,checksum,created_at,author_id}}`；他人/已删 **404**。 |
+| `PATCH /api/artifacts/{artifact_id}` | `{data,preview?,title?,expected_revision}` | 内容变化→新 revision；`expected_revision` 不符 **409**「附件已被更新，请刷新后重试」；仅改标题不升版。 |
+| `DELETE /api/artifacts/{artifact_id}` | — | `{deleted:true,artifact_id}` 软删；历史与链接保留在库，读取/列表/按目标均不可见。 |
+| `GET /api/artifacts/{artifact_id}/revisions` | — | `{items:[{revision,checksum,created_at,author_id}],total}`（已删附件 **404**）。 |
+| `POST /api/artifacts/{artifact_id}/links` | `{target_kind,target_key,revision?}` | `{link}`；同目标重链只更新 revision；单附件 ≤20 条链接（422）。 |
+| `DELETE /api/artifacts/{artifact_id}/links` | body `{target_kind,target_key}` | `{deleted:true}`；DELETE 携带请求体，前端/代理需保留 body。 |
+
+限额：data 序列化 ≤256 KiB、preview ≤64 KiB → **413**；title ≤120 → **422**；`data`/`preview` 必须是 JSON 对象。
+checksum = sha256(`json.dumps(data, ensure_ascii=False, sort_keys=True, separators=(",",":"))`)。
+题目详情在既有字段之外追加 `study:{evidence,artifacts,artifact_total,review_card,review_rating_scale,notice}`，
+模块读取失败降级为空结构（不 500）。
+
+### 24.3 四档复习卡 `/api/review-cards`（`app/study_review.py`，6 条）
+
+| 方法/路径 | 请求 | 响应要点 |
+| --- | --- | --- |
+| `GET /api/review-cards/due?limit=50&include_future=false` | limit 1–200 | `{items:[{card_id,card_key,card_type,question_ref,qid,due_at,state,version,reps,lapses,overdue_days}],total,now,message}`；`due_at` 升序、id 稳定次序；`total` 不受 limit 截断。 |
+| `GET /api/review-cards/compare` | — | `{checked,matched,mismatched:[{qid,old_due,new_due,diff_hours}],missing_cards,extra_cards,note}`：新旧到期双读对账（只读，不改数据）。 |
+| `GET /api/review-cards/stats` | — | `{due_today,due_now,new,learning,review,relearning,total,archived,algorithm,algorithm_version}` |
+| `POST /api/review-cards/sync` | — | `{created,updated,archived,total}`：把本人 `wrong_questions` 幂等迁成卡；已有卡不被覆盖。 |
+| `GET /api/review-cards/{card_id}` | — | `{card}`；他人/不存在 404。 |
+| `POST /api/review-cards/{card_id}/ratings` | `{rating:1\|2\|3\|4, card_version?, idempotency_key?}` | `{card,rating,due_at,replayed,degraded,retry_allowed,algorithm,algorithm_version,idempotency_key,note}`：rating 越界/幂等键非法 **422**；`card_version` 不符 **409**；同幂等键重放 `replayed=true`（不重复推进）；外部引擎不可用时 200 降级（到期不变、不写评分行、`retry_allowed=true`）。 |
+
+算法口径：`fsrs-reference` / `5.0-local`（FSRS-5 公开默认权重、保留率 0.9、日粒度、间隔夹 1–36500 天）；
+`STUDY_REVIEW_CLOCK` 固定服务端时钟（验收/测试）；`STUDY_REVIEW_ENGINE=ts-fsrs|external` 为外部引擎适配位
+（本环境必降级，恢复后同幂等键只应用一次）。旧 `GET /api/reviews`、`GET /api/review/queue` 未切换口径。
+
+### 24.4 OCR 块与拍题确认（增量字段，旧字段保留）
+
+- `GET /api/ai/ocr/info` → 追加 `engine_version`、`capabilities:{blocks:true,math_recognition:false,pix2text_adapter:"reserved"}`、
+  `block_schema_version:"ocr-blocks-v1"`；notice 说明公式识别未启用。
+- `POST /api/ai/ocr` → 图片顶层与 PDF 每页追加 `blocks`（PDF 顶层为各页块拼接，页内 `page` 为页码），
+  追加 `engine_version`/`capabilities`；旧 `text/lines/width/height/elapsed_ms/engine/version` 不变。
+- `POST /api/uploads/{id}/ocr-draft` → 追加 `blocks`、`engine`、`engine_version`、`capabilities`、`block_notice`；
+  `draft` 内追加 `schema_version:"intake-blocks-v1"` 与 `blocks`；OCR 不可用仍 200 + `ocr_available:false` + `blocks:[]`。
+- `PATCH /api/uploads/{id}/confirm` → 请求体新增可选 `blocks`（≤200）；`kind∈{text,math,table,image}`、`text≤4000`、
+  `latex≤2000`、`order 0–500`、`page 1–200`、bbox/norm 有限数值，非法 **422**；传了才覆盖、未传沿用、旧 JSON 不加空键；
+  响应 `confirmed` 内含 `blocks` 与 `schema_version`。
+- 块字段：`{id,kind,text,latex,needs_review,confidence,bbox{x,y,w,h},norm{x,y,w,h},page,order,rotation,source,engine,engine_version}`；
+  本地引擎不做公式识别（`kind=math` → `latex=null`、`needs_review=true`），必须人工校对。
+
+### 24.5 前端组件与静态契约
+
+- `web/js/components/formulaInput.js`：`createFormulaInput/parseBlocksWithFormulas/buildConfirmBlocks/renderBlockLocation/attachBlockOverlay`；
+  本地 KaTeX 预览、纯文本回退、`^ _ \frac \sqrt` 等工具栏、光标模板、`validate()`。
+- `web/js/components/reviewRating.js`：`renderReviewRating/ratingLabel/formatDue/formatDueNote/algorithmLabel/
+  ensureReviewCards/dueCards`；四档按钮 + 降级/409/重放分支；页面 `wrongbook.js` 接线。
+- `web/js/components/principleDemo.js` + `web/vendor/principles/*`：`renderPrincipleDemo/renderPrinciplePoster/PRESET_DEMOS`；
+  三视图（`flow_animation/isometric/demo_3d`）、键盘步进、`onFrameReady` 帧回执、无 WebGL 降级等距图并显示中文提示；
+  three.js 只从 `web/vendor/interactive/three.module.min.js` 懒加载；题目页按需 import。
+- `web/index.html` 引入 `styles-formula.css`、`styles-review.css`、`styles-principles.css`；
+  locale 新增 `study.formula.*`（77）/`study.review.*`（33）/`study.demo.*`（43），zh/en 各 4,785 键且键集合一致。
+- `scripts/integration/ui_static_accept.py` 新增第 7 步「第五轮组件与页面接线静态契约」：
+  组件文件齐全、三页面接入点、播放器三视图/帧回执/WebGL 降级、本地 three.js、无 CDN、样式与关键键。
+
+### 24.6 验收入口
+
+- `python -X utf8 scripts/integration/round5_baseline.py`：只读基线固定与数学知识点/OCR 分层抽检样本
+  （`screenshots/round5-baseline.json`、`docs/r5-数学知识点抽检-20261121.{json,md}`）。
+- `python -X utf8 scripts/integration/round5_accept.py`：端到端 28 项（拍题块→作答证据→错题→四档评分→附件→跨页读取），
+  报告 `screenshots/round5-accept-report.json`。
+- `python -X utf8 scripts/integration/ui_static_accept.py`：前端静态契约 7 步（含第五轮）。
+- 专项测试：`tests/test_study_{evidence,artifact,review}.py`、`tests/test_ocr_blocks.py`、
+  `tests/test_{paperlab,classroom}_study_evidence.py`、`tests/test_round5_integration.py`。

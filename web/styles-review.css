@@ -1,0 +1,362 @@
+/* 四档复习（fsrs-reference v5.0-local）样式：错题页顶部统计条 + 行内四档评分区。
+ *
+ * 设计约束：
+ * - 颜色全部复用 styles.css 的设计令牌（--paper/--surface/--ink/--soft/--muted/--line/
+ *   --tint/--accent/--accent-deep/--focus/--wrong/--wrong-bg），深浅主题自动跟随；
+ *   四档按钮另有 .review-rating-button--* 局部变量（--rr-ink/--rr-line/--rr-bg），
+ *   html[data-theme="dark"] 下逐档覆盖，保证「忘记红 / 困难橙 / 良好青 / 容易蓝」在
+ *   两种主题下都可辨认且对比度足够。
+ * - 前缀统一 .review-*（与广场评审页的 .plaza-review-* 不冲突）。
+ * - 触控目标 ≥44px，键盘焦点用 --focus 3px 描边；窄屏（≤600px）四档按钮改两列。
+ *
+ * 由 Lead 在 web/index.html 样式表列表末尾追加（本文件不自行改 index.html）：
+ *   <link rel="stylesheet" href="/static/styles-review.css">
+ */
+
+/* ---------------------------------------------------------------------------
+ * 1. 顶部统计条：今日到期 N 张（四档排程 fsrs-reference v5.0-local）
+ * ------------------------------------------------------------------------- */
+
+.review-due-bar {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  justify-content: space-between;
+  gap: 6px 16px;
+  margin: 0 0 20px;
+  padding: 12px 16px;
+  border: 1px solid var(--line);
+  border-radius: var(--radius, 12px);
+  background: var(--surface);
+  color: var(--soft);
+  font-size: 13px;
+  line-height: 1.6;
+}
+
+/* 隐藏态必须显式声明：上面的 display:flex 会覆盖浏览器对 [hidden] 的默认 display:none。 */
+.review-due-bar[hidden] {
+  display: none;
+}
+
+.review-due-bar-main {
+  display: inline-flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 6px 10px;
+  min-width: 0;
+}
+
+.review-due-bar-count {
+  color: var(--ink);
+  font-size: 14px;
+  font-weight: 600;
+}
+
+.review-due-bar-help {
+  max-width: 760px;
+  color: var(--muted);
+  font-size: 12px;
+}
+
+.review-due-bar.is-unavailable {
+  border-color: #e6d3ae;
+  background: #fbf3e3;
+  color: #7a5a1f;
+}
+
+html[data-theme="dark"] .review-due-bar.is-unavailable {
+  border-color: #5c4a2a;
+  background: #2f2a1c;
+  color: #e8c98a;
+}
+
+/* ---------------------------------------------------------------------------
+ * 2. 行内评分区：到期信息 + 状态徽标 + 四档按钮 + 结果/降级提示
+ * ------------------------------------------------------------------------- */
+
+.review-rating {
+  display: grid;
+  gap: 10px;
+  margin-top: 2px;
+  padding: 12px;
+  border: 1px solid var(--line);
+  border-radius: 10px;
+  background: var(--paper);
+}
+
+.review-rating-head {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 6px 10px;
+  color: var(--soft);
+  font-size: 12.5px;
+  line-height: 1.5;
+}
+
+.review-rating-due {
+  color: var(--ink);
+  font-weight: 600;
+}
+
+.review-rating-algo {
+  padding: 0 8px;
+  border: 1px dashed var(--line);
+  border-radius: 999px;
+  color: var(--muted);
+  font-family: ui-monospace, SFMono-Regular, Consolas, "Liberation Mono", monospace;
+  font-size: 11.5px;
+  line-height: 19px;
+}
+
+.review-rating-notice {
+  margin: 0;
+  color: var(--muted);
+  font-size: 12px;
+  line-height: 1.6;
+}
+
+.review-rating-buttons {
+  display: grid;
+  grid-template-columns: repeat(4, minmax(0, 1fr));
+  gap: 8px;
+}
+
+.review-rating-button {
+  display: inline-flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 6px;
+  min-height: 46px;
+  padding: 8px 10px;
+  border: 1px solid var(--rr-line, var(--line));
+  border-radius: 9px;
+  background: var(--rr-bg, var(--surface));
+  color: var(--rr-ink, var(--ink));
+  font: inherit;
+  font-size: 14px;
+  font-weight: 600;
+  line-height: 1.2;
+  text-align: left;
+  cursor: pointer;
+  touch-action: manipulation;
+  transition: transform 0.12s ease, box-shadow 0.12s ease, border-color 0.12s ease;
+}
+
+.review-rating-button-name {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.review-rating-button-key {
+  flex: none;
+  min-width: 20px;
+  padding: 0 5px;
+  border: 1px solid currentColor;
+  border-radius: 999px;
+  font-size: 11px;
+  font-weight: 500;
+  line-height: 17px;
+  text-align: center;
+  opacity: 0.75;
+}
+
+.review-rating-button:hover:not(:disabled) {
+  border-color: var(--rr-ink, var(--focus));
+  box-shadow: 0 2px 10px rgba(24, 41, 39, 0.12);
+  transform: translateY(-1px);
+}
+
+.review-rating-button:active:not(:disabled) {
+  box-shadow: none;
+  transform: translateY(0);
+}
+
+.review-rating-button:focus-visible {
+  outline: 3px solid var(--focus);
+  outline-offset: 2px;
+}
+
+.review-rating-button:disabled {
+  cursor: not-allowed;
+  opacity: 0.55;
+  box-shadow: none;
+  transform: none;
+}
+
+/* 四档配色：忘记=红、困难=橙、良好=青、容易=蓝（色值走局部变量便于深色覆盖）。 */
+.review-rating-button--again {
+  --rr-ink: #8f3a2e;
+  --rr-line: #e2beb6;
+  --rr-bg: #fbeeea;
+}
+
+.review-rating-button--hard {
+  --rr-ink: #8a5a17;
+  --rr-line: #e7d4ae;
+  --rr-bg: #fbf3e2;
+}
+
+.review-rating-button--good {
+  --rr-ink: #1f6653;
+  --rr-line: #bcd8cc;
+  --rr-bg: #e9f2ec;
+}
+
+.review-rating-button--easy {
+  --rr-ink: #2c5585;
+  --rr-line: #c3d3e6;
+  --rr-bg: #ebf1f8;
+}
+
+html[data-theme="dark"] .review-rating-button--again {
+  --rr-ink: #f0a49b;
+  --rr-line: #6b3a32;
+  --rr-bg: #3a2422;
+}
+
+html[data-theme="dark"] .review-rating-button--hard {
+  --rr-ink: #e8c98a;
+  --rr-line: #6b5730;
+  --rr-bg: #332c1b;
+}
+
+html[data-theme="dark"] .review-rating-button--good {
+  --rr-ink: #8ad8bd;
+  --rr-line: #2f5f4f;
+  --rr-bg: #1b352e;
+}
+
+html[data-theme="dark"] .review-rating-button--easy {
+  --rr-ink: #a9c8ea;
+  --rr-line: #32506e;
+  --rr-bg: #1d2b3a;
+}
+
+/* ---------------------------------------------------------------------------
+ * 3. 结果区：提交中 / 成功（下一次复习）/ 降级 / 错误
+ * ------------------------------------------------------------------------- */
+
+.review-rating-result {
+  display: grid;
+  gap: 6px;
+  color: var(--soft);
+  font-size: 12.5px;
+  line-height: 1.6;
+}
+
+.review-rating-result:empty {
+  display: none;
+}
+
+.review-rating-saving,
+.review-rating-result-note {
+  margin: 0;
+}
+
+.review-rating-saving {
+  color: var(--muted);
+}
+
+.review-rating-result-due {
+  margin: 0;
+  color: var(--accent-deep);
+  font-weight: 600;
+}
+
+.review-rating-degraded {
+  margin: 0;
+  padding: 8px 10px;
+  border: 1px solid #e6d3ae;
+  border-radius: 8px;
+  background: #fbf3e3;
+  color: #7a5a1f;
+}
+
+.review-rating-degraded-hint {
+  margin: 0;
+  color: var(--muted);
+  font-size: 12px;
+}
+
+.review-rating-error {
+  margin: 0;
+  padding: 8px 10px;
+  border: 1px solid #e4c7bc;
+  border-radius: 8px;
+  background: var(--wrong-bg);
+  color: var(--wrong);
+}
+
+.review-rating-result .button {
+  justify-self: start;
+  min-height: 36px;
+}
+
+html[data-theme="dark"] .review-rating-degraded {
+  border-color: #5c4a2a;
+  background: #2f2a1c;
+  color: #e8c98a;
+}
+
+html[data-theme="dark"] .review-rating-error {
+  border-color: #5a3833;
+  background: var(--wrong-bg);
+  color: var(--wrong);
+}
+
+/* 请求中（内部 pending 或外部 setBusy）不允许重复点击，视觉上给出进度语义。 */
+.review-rating[aria-busy="true"] .review-rating-button {
+  cursor: progress;
+}
+
+/* ---------------------------------------------------------------------------
+ * 4. 窄屏 / 低动态 / 打印
+ * ------------------------------------------------------------------------- */
+
+@media (max-width: 600px) {
+  .review-due-bar {
+    padding: 10px 12px;
+  }
+
+  .review-due-bar-help {
+    font-size: 11.5px;
+  }
+
+  .review-rating {
+    padding: 10px;
+  }
+
+  .review-rating-buttons {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+  }
+
+  .review-rating-button {
+    min-height: 44px;
+  }
+}
+
+@media (max-width: 360px) {
+  .review-rating-buttons {
+    grid-template-columns: 1fr;
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .review-rating-button {
+    transition: none;
+  }
+
+  .review-rating-button:hover:not(:disabled) {
+    transform: none;
+  }
+}
+
+@media print {
+  .review-due-bar,
+  .review-rating {
+    display: none !important;
+  }
+}

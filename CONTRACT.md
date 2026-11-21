@@ -365,3 +365,47 @@ Do not weaken these invariants in later modules: official reads in any surface m
 visibility, new publish paths must keep the quality gate/audit behavior, withdrawals must stay immediately effective
 for every public read path, and distribution changes must keep the fingerprint/.dockerignore scope above.
 
+12. **Round 5 shared study layer (2026-11-21).** Three owner modules add the shared study data layer. Existing routes
+    and fields keep their old semantics; everything below is additive and degrades instead of 500 on module failure.
+    - `app/study_evidence.py` owns table `study_evidence` (one row per evidence event; revisions are new rows with
+      `event_key=<base>#v<n>`, the old row gets `valid=0` + `superseded_by`, only `valid=1` counts). `record_event(...)`
+      is idempotent on `(user_id, event_key)` and accepts `con=` so callers write inside their own transaction;
+      `revise_event` supersedes instead of adding a second valid evidence; `question_evidence(user_id, ref)` and
+      `summary(user_id, days)` are the read projections. Evidence keys are stable: `attempt:attempts:<id>:-`,
+      `paper:item:<attempt>:<position>`, `paper:scan:<scan>:<position>`, `quiz:<quiz_attempt>:<item>`;
+      AI re-grading (`practice.set_ai_grade`) revises the same attempt key. Graded attempts without hint/reveal
+      information stay `unknown`; the student self-report (`POST /api/evidence/self-report`) is a separate
+      `kind=self_report` event and never overrides verified evidence. Routes: `GET /api/evidence/summary`,
+      `GET /api/evidence/question/{ref:path}` (invalid ref 422, never echoes answer content),
+      `POST /api/evidence/self-report`.
+    - `app/study_artifact.py` owns `study_artifacts` / `study_artifact_revisions` / `study_artifact_links`. Content is
+      immutable per revision (`expected_revision` mismatch → 409, only a title change keeps the revision); links use
+      `revision=NULL` to follow the latest version (personal notes) or a pinned revision (classroom publish/export);
+      reads are ownership-checked (foreign or deleted → 404), deletes are soft. Kinds:
+      `function_graph|whiteboard|reading_excerpt|flow_animation|isometric|science_demo|demo_3d`; targets:
+      `question|note|classroom|review|assistant`; data ≤256 KiB, preview ≤64 KiB (413), title ≤120 and ≤20 links per
+      artifact (422). Routes `/api/artifacts*`. Question detail adds
+      `study.{evidence,artifacts,artifact_total,review_card,review_rating_scale,notice}`.
+    - `app/study_review.py` owns `review_cards` / `review_ratings`. Four-button (1–4) scheduling runs server-side with
+      a deterministic local FSRS-5 reference implementation (`algorithm=fsrs-reference`, `algorithm_version=5.0-local`,
+      published default weights, day-granularity intervals 1–36500, `STUDY_REVIEW_CLOCK` fixed clock). The
+      `STUDY_REVIEW_ENGINE=ts-fsrs|external` seam raises `ReviewEngineUnavailable` locally and degrades to HTTP 200
+      without changing the card/due date and without writing a rating row (`retry_allowed=true`), so a later retry with
+      the same idempotency key applies exactly once. `sync_wrong_question`/`sync_user_cards` migrate from
+      `wrong_questions` idempotently and never overwrite an existing card's real schedule; ratings use `card_version`
+      CAS (409) and `idempotency_key` replay (`replayed=true`); `compare_due` is the dual-read reconciliation evidence.
+      Routes: `GET /api/review-cards/{due,compare,stats}`, `POST /api/review-cards/sync`,
+      `GET /api/review-cards/{id}`, `POST /api/review-cards/{id}/ratings`. The legacy `GET /api/reviews` and
+      `GET /api/review/queue` keep their current caliber until the comparison says the new due values match.
+    - OCR content blocks: `POST /api/ai/ocr`, `POST /api/uploads/{id}/ocr-draft` and `PATCH /api/uploads/{id}/confirm`
+      add `blocks` (`text|math|table|image` with bbox/norm/order/page/rotation/confidence/engine) while old fields stay
+      unchanged, and `recognize_image`/`recognize_pdf_pages` keep their default return shape (`include_blocks=True`
+      opts in). Math blocks carry `latex=null, needs_review=true` because the local engine does not recognize formulas
+      yet (Pix2Text adapter reserved, not installed). A confirm without `blocks` keeps the previous blocks and never
+      adds an empty key; invalid blocks are 422 with a Chinese detail.
+    - Frontend: `web/js/components/{formulaInput,reviewRating,principleDemo}.js` and `web/vendor/principles/*` are
+      lazy-loaded only when used; `web/index.html` loads `styles-formula.css` / `styles-review.css` /
+      `styles-principles.css`; no CDN and no new build step; three.js only from `web/vendor/interactive/`. New locale
+      namespaces `study.formula.*` / `study.review.*` / `study.demo.*` stay zh/en aligned (4,785 keys each).
+      `tests/test_round5_integration.py` and the per-module tests cover idempotency, version conflicts, two-account
+      isolation and degraded paths.

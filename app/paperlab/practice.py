@@ -23,19 +23,21 @@ from __future__ import annotations
 
 import base64
 import json
+import logging
 import re
 from datetime import datetime, timedelta, timezone
 
 from fastapi import APIRouter, Depends, HTTPException, Response
 from pydantic import BaseModel, Field
 
-from .. import question_ref
+from .. import question_ref, study_evidence
 from ..auth import current_user
 from ..db import connection, ensure_column, postgres_enabled, utcnow, write_lock
 from . import papers
 from .db import json_dump, json_load
 
 router = APIRouter()
+_log = logging.getLogger("zhixu.paperlab.practice")
 
 CHOICE_TYPES = ("SINGLE", "MULTIPLE")
 TYPE_LABELS = {
@@ -498,6 +500,94 @@ def _reference_choice_labels_from_part(part: dict) -> list[str]:
     for value in part.get("answers") or []:
         found.extend(_labels_from_value(value))
     return found
+
+
+# ---------------------------------------------------------------------------
+# 学习证据投影（方案 §4「作答与学习证据」）：整卷逐题判分结果同事务写入统一证据事件，
+# 同一题在练习、工坊、课堂、错题都能按 question_ref 定位；证据只是判分结果的投影，
+# 写入失败只记日志，绝不回滚/阻断判分主流程。
+# ---------------------------------------------------------------------------
+
+#: 学习证据表就绪缓存键：(数据目录, 是否 PostgreSQL)；换库/测试临时目录后自动重新幂等建表。
+_evidence_ready_key: tuple[str, bool] | None = None
+
+
+def _ensure_study_evidence_ready() -> None:
+    """幂等确保学习证据表已建好（启动钩子之外的进程内兜底）。
+
+    ``study_evidence.record_event(con=...)`` 约定由启动钩子建表；整卷练习这里再按进程
+    幂等兜底一次，避免启动顺序不同导致证据静默丢失。必须在写事务之外调用；调用方负责
+    捕获异常（建表失败不影响判分主流程）。
+    """
+    global _evidence_ready_key
+    from .. import db
+
+    key = (str(db.DATA_DIR), db.postgres_enabled())
+    if _evidence_ready_key == key:
+        return
+    study_evidence.init_study_evidence()
+    _evidence_ready_key = key
+
+
+def _paper_item_evidence_key(attempt_id: int, position: int) -> str:
+    """整卷逐题学习证据的幂等基础键：同一 attempt 的同一题位只保留一条有效证据。
+
+    与普通作答（``attempt:attempts:<attempt_id>:-``）互不干扰；重判（若业务允许）用同一
+    基础键走 ``study_evidence.revise_event`` 升版，不新增有效证据。
+    """
+    return f"paper:item:{int(attempt_id)}:{int(position)}"
+
+
+def _evidence_verdict_source(judged: dict) -> tuple[str, str]:
+    """判分结论 → (verdict, grade_source)：只有明确判对错才算参照答案核验，其余如实待核验。"""
+    judgement = str(judged.get("judgement") or "pending")
+    if judgement in ("correct", "incorrect"):
+        return judgement, "reference"
+    return "pending", "pending"
+
+
+def _record_paper_item_evidence(con, user_id: int, *, attempt_id: int, position: int,
+                                ref: str, judged: dict, max_score: float) -> None:
+    """整卷练习逐题证据：冻结快照的判分结果 → 共享证据事件（同一事务内、幂等）。
+
+    ``question_ref`` 为空或格式非法时跳过并记日志（不因证据问题让提交 500）；判分未明确
+    对错（主观题/缺参考答案等）一律记 ``pending``，不伪造对错。
+    """
+    if not ref:
+        _log.warning("整卷练习学习证据跳过：attempt=%s 第 %s 题缺少题目引用", attempt_id, position)
+        return
+    try:
+        normalized_ref = question_ref.normalize(ref)
+    except question_ref.QuestionRefError as error:
+        _log.warning(
+            "整卷练习学习证据跳过：attempt=%s 第 %s 题题目引用非法（%s）",
+            attempt_id, position, type(error).__name__,
+        )
+        return
+    verdict, grade_source = _evidence_verdict_source(judged)
+    try:
+        study_evidence.record_event(
+            user_id,
+            kind="paper_attempt",
+            record_kind="pl_paper_attempts",
+            record_id=int(attempt_id),
+            item_key=str(position),
+            question_ref=normalized_ref,
+            verdict=verdict,
+            grade_source=grade_source,
+            # 整卷练习按冻结快照判分：作答时未看提示、答案未揭晓，属于可采信的独立作答。
+            prompt_state="none",
+            reveal_state="before",
+            event_key=_paper_item_evidence_key(attempt_id, position),
+            con=con,
+            meta={
+                "score": round(float(judged.get("score") or 0), 2),
+                "max_score": round(float(max_score or 0), 2),
+                "judgement": str(judged.get("judgement") or "pending"),
+            },
+        )
+    except Exception as error:  # noqa: BLE001 - 证据是投影，失败不阻断提交判分
+        _log.warning("整卷练习学习证据写入失败（判分已保存）：%s", type(error).__name__)
 
 
 # ---------------------------------------------------------------------------
@@ -1107,6 +1197,11 @@ def submit_attempt(attempt_id: int, data: SubmitInput | None = None, user=Depend
         position = int(entry.get("item_position") or entry.get("position") or 0)
         if position:
             payload_answers[position] = entry.get("answer", entry.get("value"))
+    # 兜底建表放在写事务之外（进程内幂等一次），避免启动顺序不同导致证据静默丢失。
+    try:
+        _ensure_study_evidence_ready()
+    except Exception as error:  # noqa: BLE001 - 建表失败只记日志，提交判分照常
+        _log.warning("学习证据表初始化失败（提交判分继续）：%s", type(error).__name__)
     now = utcnow()
     wrong_added: list[dict] = []
     app_unlinked: list[dict] = []
@@ -1137,6 +1232,11 @@ def submit_attempt(attempt_id: int, data: SubmitInput | None = None, user=Depend
             snapshot = _snapshot(item)
             ref = str(item.get("question_ref") or "")
             max_item = round(float(item.get("score") or 0), 2)
+            # 方案 §4：判分结果在同一事务内投影为共享学习证据（失败只记日志，不影响提交）。
+            _record_paper_item_evidence(
+                con, user["id"], attempt_id=attempt_id, position=position, ref=ref,
+                judged=judged, max_score=max_item,
+            )
             max_score += max_item
             if judged["judgement"] == "correct":
                 score += float(judged["score"] or 0)

@@ -19,6 +19,8 @@ from fastapi.staticfiles import StaticFiles
 from starlette.middleware.trustedhost import TrustedHostMiddleware
 
 from . import admission, assistant, auth, classroom, config_guard, db, focus, insight, paperlab, plaza
+# 第五轮共用接口：学习证据 / 学习附件 / 四档复习卡（各自 init_* 幂等建表）。
+from . import study_artifact, study_evidence, study_review
 
 WEB_DIR = Path(__file__).resolve().parents[1] / "web"
 health_log = logging.getLogger("zhixu.health")
@@ -208,6 +210,10 @@ async def lifespan(app):
     assistant.init_assistant()
     # 顶栏专注计时（番茄钟）的会话表；纯应用自有数据，不依赖题库与模型。
     focus.init_focus()
+    # 第五轮：学习证据、学习附件与四档复习卡（共用数据层，页面接线见后续接线提交）。
+    study_evidence.init_study_evidence()
+    study_artifact.init_study_artifacts()
+    study_review.init_study_review()
     dispatcher = asyncio.create_task(ai.recover_queued_jobs()) if ai.redis_url() else None
     try:
         yield
@@ -705,6 +711,10 @@ app.include_router(focus.router)
 app.include_router(plaza.router)
 # 运维监控（WS27 / 方案 §7「分发与运维」）：只读聚合，管理员或部署探针口令可读。
 app.include_router(monitor.router)
+# 第五轮共用接口（方案 §4）：学习证据、学习附件与四档复习卡。
+app.include_router(study_evidence.router)
+app.include_router(study_artifact.router)
+app.include_router(study_review.router)
 
 app.mount("/static", StaticFiles(directory=str(WEB_DIR)), name="static")
 

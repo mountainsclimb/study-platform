@@ -2548,11 +2548,53 @@ def _detail_blocked_message(question) -> str:
     return f"{message}（隔离原因：{reason}）" if reason else message
 
 
+def _study_context(user_id: int, ref: str) -> dict:
+    """第五轮：题目详情的共用学习上下文（证据 / 附件 / 复习卡）。
+
+    读取失败一律降级为空结构并给中文提示，详情主流程不得因共用模块不可用而 500。
+    """
+    context = {
+        "evidence": None,
+        "artifacts": [],
+        "artifact_total": 0,
+        "review_card": None,
+        "review_rating_scale": [1, 2, 3, 4],
+        "notice": "",
+    }
+    try:
+        from . import study_evidence
+
+        context["evidence"] = study_evidence.question_evidence(user_id, ref)
+    except Exception as error:  # noqa: BLE001
+        _log.warning("题目详情读取学习证据失败：%s", type(error).__name__)
+        context["notice"] = "学习证据暂不可读"
+    try:
+        from . import study_artifact
+
+        artifacts = study_artifact.artifacts_for_target(user_id, "question", ref)
+        context["artifacts"] = list(artifacts.get("items") or [])
+        context["artifact_total"] = int(artifacts.get("total") or 0)
+    except Exception as error:  # noqa: BLE001
+        _log.warning("题目详情读取学习附件失败：%s", type(error).__name__)
+        context["notice"] = context["notice"] or "学习附件暂不可读"
+    try:
+        from . import study_review
+
+        context["review_card"] = study_review.card_by_ref(user_id, ref)
+    except Exception as error:  # noqa: BLE001
+        _log.warning("题目详情读取复习卡失败：%s", type(error).__name__)
+    return context
+
+
 def _question_detail_payload(question, user_id: int):
     if question["quarantined"]:
         raise HTTPException(409, _detail_blocked_message(question))
     # context 成员可读但不可作答（快照契约 §6.1），作答门禁在 POST /api/attempts。
-    return _public_question(question, user_id)
+    payload = _public_question(question, user_id)
+    # 第五轮（方案 §4）：详情带同一题目引用下的证据、附件与复习卡，供跨页面入口使用。
+    ref = payload.get("ref") or question_ref.build(question_ref.SOURCE_BANK, question.get("qid") or "")
+    payload["study"] = _study_context(user_id, ref)
+    return payload
 
 
 @router.get("/questions/{qid:path}")
@@ -2995,6 +3037,30 @@ def _choice_answer(text, options, multi):
     return "".join(sorted(selections))
 
 
+def _record_study_evidence(con, user_id, qid, attempt_id, verdict, can_grade):
+    """第五轮：作答同事务写入共享学习证据，并同步四档复习卡（方案 §4）。
+
+    证据是作答的投影：共享模块不可用或写入失败时只记日志，绝不影响作答与错题调度
+    主流程；重判（AI 复核）走 :func:`set_ai_grade` 的 revise 路径，不新增有效证据。
+    """
+    try:
+        from . import study_evidence
+
+        study_evidence.record_attempt_evidence(
+            user_id, ref=qid, attempt_id=int(attempt_id), verdict=verdict,
+            grade_source="reference" if can_grade else "pending",
+            prompt_state="unknown", reveal_state="before", con=con,
+        )
+    except Exception as error:  # noqa: BLE001 - 证据是投影，失败不阻断作答
+        _log.warning("学习证据写入失败（作答已保存）：%s", type(error).__name__)
+    try:
+        from . import study_review
+
+        study_review.sync_wrong_question(user_id, qid, con=con)
+    except Exception as error:  # noqa: BLE001 - 复习卡同步失败不影响作答与错题本
+        _log.warning("复习卡同步失败（作答已保存）：%s", type(error).__name__)
+
+
 def _record_attempt(user_id, qid, submitted, image_name, verdict, can_grade, now, submission_key=None):
     """同步写入作答与复习调度；``async`` 端点经由 threadpool 调用，避免阻塞事件循环。
 
@@ -3028,6 +3094,7 @@ def _record_attempt(user_id, qid, submitted, image_name, verdict, can_grade, now
                 con, user_id, LEDGER_KIND_ATTEMPT, submission_key, int(attempt_id),
             )
         _schedule_result(con, user_id, qid, verdict)
+        _record_study_evidence(con, user_id, qid, int(attempt_id), verdict, can_grade)
     return {"attempt_id": int(attempt_id), "attempt": None, "duplicate": False}
 
 
@@ -3253,6 +3320,23 @@ def set_ai_grade(user_id: int, attempt_id: int, verdict: str, report: dict):
         )
         if row["result"] != verdict:
             _schedule_result(con, user_id, row["qid"], verdict)
+        # 第五轮：AI 复核重判只升版同一条证据，不新增有效证据（方案 §4「判分修订」）。
+        try:
+            from . import study_evidence
+
+            study_evidence.revise_attempt_evidence(
+                user_id, attempt_id=attempt_id, verdict=verdict,
+                grade_source="ai_cross_verified" if source == "ai_cross_verified" else "pending",
+                con=con,
+            )
+        except Exception as error:  # noqa: BLE001 - 重判证据失败不影响作答记录本身
+            _log.warning("AI 重判证据写入失败（作答已保存）：%s", type(error).__name__)
+        try:
+            from . import study_review
+
+            study_review.sync_wrong_question(user_id, row["qid"], con=con)
+        except Exception as error:  # noqa: BLE001
+            _log.warning("复习卡同步失败（重判已保存）：%s", type(error).__name__)
 
 
 @router.get("/attempt-image/{id}")

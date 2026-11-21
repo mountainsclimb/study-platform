@@ -652,7 +652,9 @@ def test_video_size_limit_is_enforced(client, monkeypatch, video_ready):
         ).fetchone()[0] == 0
 
 
-def test_video_render_course_video_rejects_bad_course(video_ready):
+def test_video_render_course_video_rejects_bad_course(client, video_ready):
+    # 依赖应用库表已初始化：用 client fixture 走 lifespan（隔离数据目录下也能稳定复现）；
+    # 不依赖外部环境里恰好已存在 cls_* 表。
     with pytest.raises(ValueError) as excinfo:
         asyncio.run(video.render_course_video(999999, 999999))
     assert "课程不存在" in str(excinfo.value)

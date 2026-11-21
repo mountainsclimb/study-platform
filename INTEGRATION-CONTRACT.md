@@ -504,3 +504,58 @@ Phase 3 起任务中心/管理台另消费 AI 用量与配额（`app/ai/usage.py
 - 功能可用：真实页面入口 + 真实 API + 空状态/错误/加载/取消/重试齐全，无 `TODO`/占位式假数据。
 - 数据可靠：用户隔离、幂等、版本冲突可解释、删除级联正确、上限校验有中文提示。
 - 证据齐全：测试通过、截图、实施记录（改了什么、验证了什么、未做什么及原因）。
+
+## 8. 第五轮共用学习数据层（2026-11-21）
+
+> 对应《知序功能整合与优化总方案》§4/§5.1/§5.2/§5.4 与 §8 工单 A–E 的首批交付；
+> 详细记录见 `docs/知序优化实施记录-20261121-第五轮.md`。
+
+### 8.1 模块与表归属（`init_*()` 各自幂等建表，不在 `app/db.py` 建业务表）
+
+| 模块 | 表 | 归属/口径 |
+| --- | --- | --- |
+| `app/study_evidence.py` | `study_evidence` | 单事件表 + 版本行（`valid=1` 才算有效证据）；`UNIQUE(user_id,event_key)` 幂等；`record_event(con=)` 复用调用方事务；`revise_event` 只升版。 |
+| `app/study_artifact.py` | `study_artifacts`、`study_artifact_revisions`、`study_artifact_links` | 附件元数据/不可变版本/跨页链接；CAS 版本冲突 409；软删；本人 404 隔离；data ≤256KiB、preview ≤64KiB。 |
+| `app/study_review.py` | `review_cards`、`review_ratings` | 每用户每卡面键一行；四档评分日志含评分前后状态与服务端到期；幂等键唯一；算法/版本随行落库。 |
+
+三张表的 `id` 已登记 `app/db.py::_ID_TABLES`（PostgreSQL 主键适配）；所有私有表带 `user_id` 并做归属校验；
+时间统一 `db.utcnow()` ISO-8601 UTC；JSON 列 TEXT；SQL `?` 占位；不使用 SQLite 专有函数/PG `RETURNING`。
+
+### 8.2 写入接线（同一事务，失败只记日志、不阻断主流程）
+
+| 写入方 | 事件 `kind` / `record_kind` | `event_key` 规则 |
+| --- | --- | --- |
+| `app/practice.py::_record_attempt` | `attempt` / `attempts` | `attempt:attempts:<attempt_id>:-`（AI 复核经 `revise_attempt_evidence` 同键升版） |
+| `app/paperlab/practice.py::submit_attempt` | `paper_attempt` / `pl_paper_attempts` | `paper:item:<attempt_id>:<position>` |
+| `app/paperlab/scan.py::confirm_scan` | `paper_scan` / `paper_scan` | `paper:scan:<scan_id>:<position>`（表名 `pl_card_scans`，record_id 为扫描 id） |
+| `app/classroom/api.py::submit_quiz` | `classroom_quiz` / `cls_quiz_attempts` | `quiz:<quiz_attempt_id>:<item_key>`（无统一引用时不伪造 `bank:/app:/official:`） |
+
+`verdict` 仅 `correct/incorrect/pending/unknown`；`grade_source` 仅明确参考/交叉核验判分记 `reference`/`ai_cross_verified`，
+否则 `pending`；缺少提示/揭晓信息记 `unknown`；学生自评单独 `self_report`，不覆盖核验结果。
+
+### 8.3 复习卡与旧错题的关系
+
+- `sync_wrong_question`/`sync_user_cards` 只读 `wrong_questions`；首次迁移取旧 `next_review_at` 建 `new` 卡，
+  已有卡只同步归档标记（**不覆盖真实排程**）；可重复调用。
+- 评分：`POST /api/review-cards/{id}/ratings`，请求 `{rating:1-4, card_version, idempotency_key}`；
+  版本不符 409、同幂等键重放 `replayed=true`；外部引擎不可用时 200 降级（到期保持不变、不写评分行、`retry_allowed=true`）。
+- 切换读路径前用 `GET /api/review-cards/compare` 输出 `matched/mismatched/missing/extra` 作为对账证据；
+  旧 `GET /api/reviews`、`GET /api/review/queue` 暂不改口径。
+
+### 8.4 OCR 块与确认请求体
+
+- `POST /api/ai/ocr`、`POST /api/uploads/{id}/ocr-draft` 响应新增 `blocks/engine_version/capabilities`（旧字段保留）；
+- `PATCH /api/uploads/{id}/confirm` 新增可选 `blocks`（≤200，kind∈{text,math,table,image}），传了才覆盖、
+  未传沿用 draft/confirmed、旧 confirmed 无 blocks 时不加空键；
+- `recognize_image`/`recognize_pdf_pages` 默认返回不变，`include_blocks=True` 才返回块（向后兼容）。
+
+### 8.5 前端入口与降级
+
+- 拍题页识别块校对（公式块用 `formulaInput.js`，原图定位框 `attachBlockOverlay`，确认带 `blocks`，422 保留本地编辑）；
+- 错题复习页四档评分（`reviewRating.js`）：`/due` + `/stats` 并行读取，评分后只更新本行日期；接口不可用时显示
+  「四档复习暂不可用，仍按原有到期时间复习」；
+- 题目详情「查看原理」（`principleDemo.js` + `web/vendor/principles/*`）：按需 import，三视图（流程/等距/3D），
+  无 WebGL 自动降级等距并中文提示，`onFrameReady` 回执供后续视频录制；「保存为学习附件」走 `/api/artifacts`；
+- 新样式 `web/index.html` 引入；`study.formula/review/demo` locale 中英各 4,785 键对齐；
+- `scripts/integration/ui_static_accept.py` 新增「第五轮组件与页面接线静态契约」步骤（组件齐全、页面接入点、
+  播放器降级分支、本地 three.js、无 CDN、样式与关键键）。

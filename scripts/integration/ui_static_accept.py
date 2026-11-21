@@ -58,6 +58,18 @@ ADMIN_JS = JS / "pages" / "admin.js"
 PLAZA_JS = JS / "pages" / "plaza.js"
 PLAZA_ADMIN_JS = JS / "pages" / "plazaAdmin.js"
 NOTIFY_JS = JS / "components" / "plazaNotifications.js"
+# 第五轮（方案 §5.1/§5.2/§5.4）：公式输入、四档评分、原理演示与离线示例。
+WRONGBOOK_JS = JS / "pages" / "wrongbook.js"
+FORMULA_INPUT_JS = JS / "components" / "formulaInput.js"
+REVIEW_RATING_JS = JS / "components" / "reviewRating.js"
+PRINCIPLE_DEMO_JS = JS / "components" / "principleDemo.js"
+PRINCIPLE_DIR = WEB / "vendor" / "principles"
+PRINCIPLE_FLOW_JS = PRINCIPLE_DIR / "flow.js"
+PRINCIPLE_ISO_JS = PRINCIPLE_DIR / "iso.js"
+PRINCIPLE_THREE_JS = PRINCIPLE_DIR / "threeLite.js"
+PRINCIPLE_PRESETS_JS = PRINCIPLE_DIR / "presets.js"
+ROUND5_STYLES = ("styles-formula.css", "styles-review.css", "styles-principles.css")
+INDEX_HTML = WEB / "index.html"
 ANKI_PY = ROOT / "app" / "anki_export.py"
 APP_PRACTICE_PY = ROOT / "app" / "practice.py"
 APP_OFFICIAL_PY = ROOT / "app" / "official.py"
@@ -76,12 +88,18 @@ LOCALE_NAMESPACES = (
     ("plaza.quality.", 10),
     ("plaza.notify.", 5),
     ("plaza.metrics.", 8),
+    # 第五轮新增命名空间：公式校对、四档复习评分、原理演示（键量下限按本轮交付）。
+    ("study.formula.", 70),
+    ("study.review.", 30),
+    ("study.demo.", 40),
 )
 
 #: 直接 t('literal') 键扫描的前端文件（WS30 相关页面/组件；其余页面键由既有 pytest 覆盖）。
 LOCALE_SCAN_FILES = (
     TASKS_JS, QUESTION_JS, PRACTICE_JS, INSIGHT_JS, HOME_JS, NOTES_JS, CLASSROOM_JS,
     PAPERLAB_JS, MYBANK_JS, UPLOAD_JS, ADMIN_JS, PLAZA_JS, PLAZA_ADMIN_JS, NOTIFY_JS,
+    # 第五轮接线页面/组件（t('...') 字面量必须都能在两种语言中找到）。
+    WRONGBOOK_JS, REVIEW_RATING_JS, PRINCIPLE_DEMO_JS,
 )
 
 #: 通过常量映射/模板字符串间接引用的 locale 键（静态扫描 t('...') 覆盖不到）。
@@ -111,6 +129,10 @@ INDIRECT_LOCALE_KEYS = (
     "admin.monitor.status.ok",
     "admin.monitor.status.warn",
     "admin.monitor.status.error",
+    # 第五轮：原理演示在常量映射里按 labelKey 间接引用（静态 t('...') 扫描不到）。
+    "study.demo.modeFlow",
+    "study.demo.modeIso",
+    "study.demo.modeThree",
 )
 
 
@@ -512,6 +534,85 @@ class UiStaticAccept:
                         "namespaces": namespace_report,
                         "scanned_files": len(LOCALE_SCAN_FILES)})
 
+    def check_round5_components(self) -> None:
+        """第五轮（方案 §5.1/§5.2/§5.4）：公式输入、四档评分、原理演示的静态契约。
+
+        只做可脚本化的静态断言：组件文件存在、页面确有接入点、样式随主站加载、
+        本地资源（KaTeX / three.js）不引 CDN、演示有三视图与无 WebGL 降级分支。
+        """
+        started = time.time()
+        checks = []
+        components = {
+            "公式输入组件": FORMULA_INPUT_JS,
+            "四档评分组件": REVIEW_RATING_JS,
+            "原理演示播放器": PRINCIPLE_DEMO_JS,
+            "流程示例": PRINCIPLE_FLOW_JS,
+            "等距示例": PRINCIPLE_ISO_JS,
+            "最小 3D 示例": PRINCIPLE_THREE_JS,
+            "示例预置数据": PRINCIPLE_PRESETS_JS,
+        }
+        missing = [name for name, path in components.items() if not path.is_file()]
+        checks.append((f"第五轮组件文件齐全（{len(components)} 个）", not missing,
+                       f"缺少: {missing}"))
+        sources = {}
+        for path in components.values():
+            try:
+                sources[path.name] = self._read(path)
+            except Exception:  # noqa: BLE001 - 缺失已在上一项记录
+                sources[path.name] = ""
+
+        upload = self._read(UPLOAD_JS)
+        checks.append(("拍题页接入公式输入与识别块提交",
+                       "createFormulaInput" in upload and "buildConfirmBlocks" in upload
+                       and 'blocks' in upload and 'ocr-draft' in upload,
+                       "upload.js 需引用 createFormulaInput/buildConfirmBlocks 并提交 blocks"))
+
+        wrongbook = self._read(WRONGBOOK_JS)
+        checks.append(("错题复习页接入四档评分与到期读取",
+                       "renderReviewRating" in wrongbook and "/review-cards/due" in wrongbook
+                       and "/ratings" in wrongbook,
+                       "wrongbook.js 需引用 renderReviewRating 并调用 due/ratings 接口"))
+
+        question = self._read(QUESTION_JS)
+        checks.append(("题目详情接入「查看原理」并懒加载播放器",
+                       "renderPrincipleDemo" in question and "study.demo.open" in question
+                       and "principleDemo.js" in question,
+                       "question.js 需按需 import 播放器并提供查看原理入口"))
+
+        player = sources.get("principleDemo.js", "")
+        checks.append(("播放器具备三视图分派、帧就绪回执与无 WebGL 降级",
+                       all(token in player for token in
+                           ("flow_animation", "isometric", "demo_3d", "onFrameReady",
+                            "isWebGLAvailable", "webglFallback")),
+                       "principleDemo.js 需含三视图分派/onFrameReady/WebGL 探测与降级文案"))
+        three = sources.get("threeLite.js", "")
+        checks.append(("3D 示例只从站内 vendor 动态加载 three.js",
+                       "vendor/interactive/three.module.min.js" in three
+                       and "https://" not in three and "http://" not in three,
+                       "threeLite.js 必须走本地 vendor 且无外链"))
+        external = [name for name, text in sources.items()
+                    if re.search(r"https?://(?:cdn|unpkg|jsdelivr|esm\.sh)", text)]
+        checks.append(("第五轮组件无 CDN 外链 / 无远程脚本", not external,
+                       f"含外链: {external}"))
+
+        index_source = self._read(INDEX_HTML)
+        styles_missing = [name for name in ROUND5_STYLES if name not in index_source]
+        checks.append(("主站加载第五轮样式表", not styles_missing,
+                       f"index.html 缺少: {styles_missing}"))
+
+        zh = json.loads(self._read(LOCALES / "zh-CN.json"))
+        en = json.loads(self._read(LOCALES / "en-US.json"))
+        required = (
+            "study.formula.review.sectionTitle", "study.formula.validate.braces",
+            "study.review.scaleNote", "study.review.degraded",
+            "study.demo.open", "study.demo.webglFallback", "study.demo.saveArtifact",
+        )
+        missing_keys = [key for key in required if key not in zh or key not in en]
+        checks.append(("第五轮关键 locale 键存在（公式/四档/原理）", not missing_keys,
+                       f"缺少: {missing_keys}"))
+        self.step("第五轮组件与页面接线静态契约", checks, started=started,
+                  data={"components": list(components), "styles": list(ROUND5_STYLES)})
+
     # -- 收尾 -------------------------------------------------------------
     def run(self) -> None:
         for name, fn in (
@@ -521,6 +622,7 @@ class UiStaticAccept:
             ("grade_filter", self.check_grade_filter),
             ("anki_reference", self.check_anki_reference_fields),
             ("locales", self.check_locales),
+            ("round5_components", self.check_round5_components),
         ):
             self._started = time.time()
             try:

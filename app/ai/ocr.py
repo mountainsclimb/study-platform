@@ -21,6 +21,25 @@
      "width": 1200, "height": 800, "elapsed_ms": 1234}
 
 坐标是缩放后图片的像素坐标（``box`` 为 4 点四边形，顺序与 RapidOCR 一致）。
+
+内容块（blocks，本轮新增）::
+
+    {"id": "b1", "kind": "text|math|table|image", "text": "...", "latex": None,
+     "needs_review": False, "confidence": 0.98,
+     "bbox": {"x": 10.0, "y": 20.0, "w": 120.0, "h": 24.0},   # 原图像素坐标
+     "norm": {"x": 0.05, "y": 0.08, "w": 0.6, "h": 0.1},      # 0–1 归一化
+     "page": 1, "order": 0, "rotation": 0, "source": "rapidocr",
+     "engine": ENGINE_NAME, "engine_version": "..."}
+
+块构造口径（可解释、不伪造）：
+* 一行一个块（不做跨行合并），``order`` 即阅读顺序：先按行 ``top`` 聚类成视觉行，
+  同一视觉行内再按 ``x`` 从左到右编号；
+* ``kind`` 用启发式判定：含 LaTeX 反斜杠/公式定界符或数学符号占比高（``=``、``×``、
+  ``√``、``^``、``_{}`` 等）→ ``math``；连续 ≥2 行含 ``|``/制表符/多列等宽数字 → ``table``；
+  其余 → ``text``；``image`` 预留给后续版面/裁图来源，本地 OCR 不会凭空造图片块；
+* 本地引擎**不做公式识别**：所有块 ``latex`` 恒为 ``None``，``math`` 块
+  ``needs_review=true`` 并提示需人工或后续 Pix2Text 适配层校对，绝不复述/伪造 LaTeX；
+* ``rotation`` 固定 0（RapidOCR 不返回角度），字段保留供后续引擎填充。
 """
 from __future__ import annotations
 
@@ -30,6 +49,7 @@ from contextlib import closing
 from io import BytesIO
 import importlib.metadata
 import importlib.util
+import math
 import os
 from pathlib import Path
 import re
@@ -43,11 +63,17 @@ from ..auth import current_user
 
 __all__ = [
     "ENGINE_NAME",
+    "BLOCK_KINDS",
+    "BLOCK_SCHEMA_VERSION",
+    "BLOCKS_NOTICE",
+    "CAPABILITIES",
     "OcrError",
     "OcrUnavailable",
     "OcrTimeout",
     "local_ocr_available",
     "engine_status",
+    "engine_meta",
+    "build_blocks",
     "reset_engine",
     "recognize_image",
     "recognize_pdf_pages",
@@ -66,6 +92,33 @@ MAX_PDF_BYTES = 32 * 1024 * 1024     # 本地 PDF 渲染的内存保护上限
 IMAGE_SUFFIXES = (".png", ".jpg", ".jpeg", ".webp", ".bmp", ".gif", ".tif", ".tiff")
 _EXIF_ORIENTATION = 274
 OCR_NOTICE = "本地 OCR 由本机模型生成，仅供草稿/校对参考；识别内容不会上传外网，重要内容请人工核对。"
+BLOCKS_NOTICE = (
+    "本轮提供文字块与原图定位；公式识别尚未启用（由 Pix2Text 适配层后续启用），"
+    "math 块 latex 为空、需人工校对。"
+)
+
+# 内容块能力声明：blocks=true 表示返回块与原图定位；math_recognition=false 表示本地引擎
+# 不做公式识别（不伪造 LaTeX）；pix2text_adapter=reserved 表示后续由 Pix2Text 适配层接入。
+BLOCK_SCHEMA_VERSION = "ocr-blocks-v1"
+BLOCK_KINDS = ("text", "math", "table", "image")
+CAPABILITIES = {
+    "blocks": True,
+    "math_recognition": False,
+    "pix2text_adapter": "reserved",
+}
+
+# 块 kind 启发式阈值（集中定义，便于后续调参和解释）：
+# * math：数学符号字符占比 ≥ MATH_RATIO_MIN 且含运算符；含 LaTeX 反斜杠/公式定界符直接判 math；
+#   中文较多且符号占比低于 MATH_STRONG_RATIO 的混排行按 text 处理（避免把普通题干误标公式）；
+# * table：含 "|"/制表符，或由 2+ 空格分隔出 ≥3 列的行，连续 ≥TABLE_MIN_ROWS 行判 table。
+MATH_SYMBOL_CHARS = frozenset("=×÷±√∑∫≤≥≠°²³^_{}[]\\→⇌")
+MATH_OPERATORS = frozenset("=×÷±√∑∫≤≥≠→⇌")
+MATH_RATIO_MIN = 0.12
+MATH_STRONG_RATIO = 0.45
+MATH_MIN_SYMBOLS = 2
+TABLE_MIN_ROWS = 2
+TABLE_SEPARATORS = ("|", "\t")
+READ_ORDER_ROW_TOLERANCE = 6.0
 
 
 class OcrError(RuntimeError):
@@ -241,22 +294,42 @@ def _unavailable_reason() -> str:
     return "本地 OCR 引擎不可用（未安装 rapidocr-onnxruntime 或 onnxruntime），将改用视觉模型识别"
 
 
+def engine_meta() -> dict:
+    """引擎名/版本/能力三元组（不加载模型），供 HTTP 响应与拍题草稿响应复用。
+
+    ``engine_version`` 取随包安装的 RapidOCR 版本（未安装时为 None）；
+    ``capabilities`` 如实声明本轮能力：有文字块与原图定位、不做公式识别。
+    """
+    return {
+        "engine": ENGINE_NAME,
+        "engine_version": _engine_version(),
+        "capabilities": dict(CAPABILITIES),
+    }
+
+
 def engine_status() -> dict:
-    """本地 OCR 状态：引擎、版本、模型与限制；不触发模型加载。"""
+    """本地 OCR 状态：引擎、版本、模型、能力与限制；不触发模型加载。"""
     mode = ocr_mode()
     available = local_ocr_available()
     if mode == "off":
         notice = "本地 OCR 已关闭（STUDY_LOCAL_OCR=off）；拍题/扫描资料仅使用视觉模型。"
+        notice += "文字块与原图定位随本地 OCR 一起停用；公式识别尚未启用（由 Pix2Text 适配层后续启用）。"
     elif available:
-        notice = OCR_NOTICE
+        notice = OCR_NOTICE + BLOCKS_NOTICE
     else:
         notice = _unavailable_reason() + "；不影响其它功能。"
+        notice += "文字块与原图定位仅在本地 OCR 可用时提供；公式识别尚未启用（由 Pix2Text 适配层后续启用）。"
+    version = _engine_version() if available else None
     return {
         "engine": ENGINE_NAME,
         "mode": mode,
         "available": available,
         "loaded": _engine is not None,
-        "version": _engine_version() if available else None,
+        "version": version,
+        # 新增：引擎版本（与 version 同值）与内容块能力声明；旧字段保持不变。
+        "engine_version": version,
+        "capabilities": dict(CAPABILITIES),
+        "block_schema_version": BLOCK_SCHEMA_VERSION,
         "models": _engine_models() if available else [],
         "limits": _limits(),
         "notice": notice,
@@ -366,6 +439,218 @@ def _lines_from_result(result) -> list[dict]:
     return lines
 
 
+# ---------------------------------------------------------------------------
+# 内容块：在 OCR 行结果基础上构造（本轮一行一个块，order 即阅读顺序）
+# ---------------------------------------------------------------------------
+
+def _round_number(value, digits: int) -> float:
+    """四舍五入并消除 -0.0，保证坐标/归一化值序列化稳定。"""
+    number = round(float(value), digits)
+    return 0.0 if number == 0 else number
+
+
+def _clamp_score(value) -> float:
+    """行置信度归一到 0–1（非法值按 0 处理），保留 4 位小数。"""
+    try:
+        number = float(value)
+    except (TypeError, ValueError):
+        return 0.0
+    if not math.isfinite(number):
+        return 0.0
+    return _round_number(min(1.0, max(0.0, number)), 4)
+
+
+def _is_math_line(text: str) -> bool:
+    """判断一行是否像公式/数学表达式（启发式，口径可解释）。
+
+    含 LaTeX 反斜杠或 ``$`` 定界符直接判定为 math；否则统计数学符号占比：
+    含运算符（``=``、``×``、``√``、``^`` 等）且占比 ≥ ``MATH_RATIO_MIN``，或符号数
+    ≥ ``MATH_MIN_SYMBOLS`` 且占比达标。中文较多（符号占比 < ``MATH_STRONG_RATIO``）的混排行
+    按 text 处理，避免把普通题干误标成公式。本函数只做分类，不解析也不生成 LaTeX。
+    """
+    value = str(text or "").strip()
+    if not value:
+        return False
+    if "\\" in value or "$" in value:
+        return True
+    compact = re.sub(r"\s+", "", value)
+    if not compact:
+        return False
+    symbol_count = sum(1 for char in compact if char in MATH_SYMBOL_CHARS)
+    if symbol_count <= 0:
+        return False
+    math_ratio = symbol_count / len(compact)
+    has_operator = any(char in MATH_OPERATORS for char in compact)
+    if not has_operator and symbol_count < MATH_MIN_SYMBOLS:
+        return False
+    cjk_count = sum(1 for char in compact if "\u4e00" <= char <= "\u9fff")
+    if cjk_count and math_ratio < MATH_STRONG_RATIO:
+        return False
+    if has_operator:
+        return math_ratio >= MATH_RATIO_MIN
+    return symbol_count >= MATH_MIN_SYMBOLS and math_ratio >= MATH_RATIO_MIN
+
+
+def _is_table_like_line(text: str) -> bool:
+    """判断一行是否带表格特征：含 ``|``/制表符，或由 2+ 空格分出 ≥3 列（制表分隔/等宽列）。
+
+    表头行通常不含数字，因此不再要求列里含数字；正常 OCR 文本行很少出现 2+ 连续空格
+    分隔的 ≥3 列，误判风险可控，连续多行成立才判 table（见 :func:`build_blocks`）。
+    """
+    value = str(text or "")
+    if any(separator in value for separator in TABLE_SEPARATORS):
+        return True
+    parts = [part for part in re.split(r"\s{2,}", value.strip()) if part]
+    return len(parts) >= 3
+
+
+def _line_bbox(line: dict, width: int, height: int) -> dict | None:
+    """行四边形 → 原图像素包围盒（保留 1 位小数），越界坐标裁剪到图片范围。"""
+    box = line.get("box") if isinstance(line, dict) else None
+    points: list[tuple[float, float]] = []
+    for point in box or []:
+        try:
+            x_value, y_value = float(point[0]), float(point[1])
+        except (TypeError, IndexError, ValueError):
+            continue
+        if math.isfinite(x_value) and math.isfinite(y_value):
+            points.append((x_value, y_value))
+    if not points:
+        return None
+    image_width = max(0.0, float(width or 0))
+    image_height = max(0.0, float(height or 0))
+    left = min(point[0] for point in points)
+    top = min(point[1] for point in points)
+    right = max(point[0] for point in points)
+    bottom = max(point[1] for point in points)
+    if image_width > 0:
+        left = min(max(0.0, left), image_width)
+        right = min(max(0.0, right), image_width)
+    else:
+        left = max(0.0, left)
+    if image_height > 0:
+        top = min(max(0.0, top), image_height)
+        bottom = min(max(0.0, bottom), image_height)
+    else:
+        top = max(0.0, top)
+    return {
+        "x": _round_number(left, 1),
+        "y": _round_number(top, 1),
+        "w": _round_number(max(0.0, right - left), 1),
+        "h": _round_number(max(0.0, bottom - top), 1),
+    }
+
+
+def _norm_bbox(bbox: dict, width: int, height: int) -> dict:
+    """像素包围盒 → 0–1 归一化（保留 4 位小数）。"""
+    image_width = max(0.0, float(width or 0))
+    image_height = max(0.0, float(height or 0))
+
+    def ratio(value, total: float) -> float:
+        if total <= 0:
+            return 0.0
+        return _round_number(min(1.0, max(0.0, float(value) / total)), 4)
+
+    return {
+        "x": ratio(bbox["x"], image_width),
+        "y": ratio(bbox["y"], image_height),
+        "w": ratio(bbox["w"], image_width),
+        "h": ratio(bbox["h"], image_height),
+    }
+
+
+def build_blocks(lines, width: int, height: int, *, page: int = 1) -> list[dict]:
+    """把 OCR 行结果构造成内容块列表（**一行一个块**，``order`` 即阅读顺序）。
+
+    - 阅读顺序：先按行 ``top`` 聚类视觉行（相差 ``READ_ORDER_ROW_TOLERANCE`` 像素内视为同一行），
+      同一视觉行内按 ``x`` 从左到右；``order`` 从 0 递增，``id`` 为 ``b1..bN``（页内稳定顺序）；
+    - ``kind``：连续 ≥``TABLE_MIN_ROWS`` 个表格特征视觉行 → ``table``；否则数学特征 → ``math``；
+      其余 → ``text``；``image`` 仅保留在 :data:`BLOCK_KINDS` 枚举中，本地 OCR 不产出图片块；
+    - 不伪造公式识别：所有块 ``latex=None``，``math`` 块 ``needs_review=True``；
+    - ``bbox`` 为原图像素坐标（0 保留 1 位小数），``norm`` 为 0–1 归一化（保留 4 位小数）；
+    - ``page``：单图固定 1；PDF 为页码（1 基）；多图拍题由调用方传图片序号。
+    """
+    entries: list[dict] = []
+    for line in lines or []:
+        if not isinstance(line, dict):
+            continue
+        text_value = str(line.get("text") or "").strip()
+        if not text_value:
+            continue
+        bbox = _line_bbox(line, width, height)
+        if bbox is None:
+            continue
+        entries.append({
+            "text": text_value,
+            "bbox": bbox,
+            "top": bbox["y"],
+            "left": bbox["x"],
+            "confidence": _clamp_score(line.get("score")),
+            "table_like": _is_table_like_line(text_value),
+        })
+    if not entries:
+        return []
+
+    # 1) 视觉行聚类：按 top 排序，top 相差在容差内归入同一视觉行，行内按 x 从左到右。
+    rows: list[list[dict]] = []
+    for entry in sorted(entries, key=lambda item: (item["top"], item["left"])):
+        if rows and abs(entry["top"] - rows[-1][0]["top"]) <= READ_ORDER_ROW_TOLERANCE:
+            rows[-1].append(entry)
+        else:
+            rows.append([entry])
+    for row in rows:
+        row.sort(key=lambda item: (item["left"], item["top"]))
+
+    # 2) 连续 ≥TABLE_MIN_ROWS 个表格特征视觉行判为表格行；单独一行表格特征不算表格。
+    table_rows: set[int] = set()
+    run_start: int | None = None
+    for index, row in enumerate(rows):
+        if any(item["table_like"] for item in row):
+            if run_start is None:
+                run_start = index
+        else:
+            if run_start is not None and index - run_start >= TABLE_MIN_ROWS:
+                table_rows.update(range(run_start, index))
+            run_start = None
+    if run_start is not None and len(rows) - run_start >= TABLE_MIN_ROWS:
+        table_rows.update(range(run_start, len(rows)))
+
+    # 3) 按阅读顺序逐行生成块。
+    engine_version = _engine_version()
+    blocks: list[dict] = []
+    for row_index, row in enumerate(rows):
+        for entry in row:
+            order = len(blocks)
+            if row_index in table_rows:
+                kind = "table"
+            elif _is_math_line(entry["text"]):
+                kind = "math"
+            else:
+                kind = "text"
+            blocks.append({
+                "id": f"b{order + 1}",
+                "kind": kind,
+                "text": entry["text"],
+                "latex": None,
+                "needs_review": kind == "math",
+                "confidence": entry["confidence"],
+                "bbox": dict(entry["bbox"]),
+                "norm": _norm_bbox(entry["bbox"], width, height),
+                "page": int(page),
+                "order": order,
+                "rotation": 0,
+                "source": "rapidocr",
+                "engine": ENGINE_NAME,
+                "engine_version": engine_version,
+            })
+    return blocks
+
+
+def _blocks_extension(lines, width: int, height: int, *, page: int = 1) -> dict:
+    """识别结果可选新增字段：内容块 + 引擎名/版本 + 能力声明（旧字段保持不变）。"""
+    return {"blocks": build_blocks(lines, width, height, page=page), **engine_meta()}
+
+
 def _infer_guarded(bgr):
     with _infer_slots:
         engine = _get_engine()
@@ -380,7 +665,14 @@ def _infer_guarded(bgr):
     return _lines_from_result(result)
 
 
-async def _recognize_prepared(bgr, width: int, height: int, *, started: float, timeout: float) -> dict:
+async def _recognize_prepared(
+    bgr, width: int, height: int, *, started: float, timeout: float,
+    include_blocks: bool = False, page: int = 1,
+) -> dict:
+    """识别预处理后的图片；``include_blocks=True`` 时追加 blocks/engine/能力字段。
+
+    默认（``include_blocks=False``）返回结构与此前完全一致，旧调用方不受影响。
+    """
     if not local_ocr_available():
         raise OcrUnavailable(_unavailable_reason())
     remaining = timeout - (time.monotonic() - started)
@@ -391,13 +683,16 @@ async def _recognize_prepared(bgr, width: int, height: int, *, started: float, t
     except asyncio.TimeoutError:
         raise OcrTimeout(f"本地 OCR 超过 {timeout:g} 秒未完成，请缩小图片或分批识别") from None
     text = "\n".join(line["text"] for line in lines)
-    return {
+    result = {
         "text": text,
         "lines": lines,
         "width": int(width),
         "height": int(height),
         "elapsed_ms": int((time.monotonic() - started) * 1000),
     }
+    if include_blocks:
+        result.update(_blocks_extension(lines, width, height, page=page))
+    return result
 
 
 # ---------------------------------------------------------------------------
@@ -442,14 +737,20 @@ def _resolve_timeout(value) -> float:
     return min(600.0, max(0.1, number))
 
 
-async def recognize_image(data=None, path=None, *, lang: str = "ch", max_side=None, timeout=None) -> dict:
+async def recognize_image(
+    data=None, path=None, *, lang: str = "ch", max_side=None, timeout=None,
+    include_blocks: bool = False,
+) -> dict:
     """识别单张图片，返回 ``{text, lines, width, height, elapsed_ms}``。
 
     * ``data``：图片 bytes，也兼容 PIL.Image 与 ``content_refs.image_part`` 的 ``{mime, data}``；
     * ``path``：本地图片路径（与 ``data`` 二选一）；
     * ``lang``：仅 ``ch``/``en``（随包中文模型同时支持英文）；其它语言暂不支持；
     * ``max_side``：最长边上限，``None`` 时取 ``STUDY_OCR_MAX_SIDE``（默认 2400）；
-    * ``timeout``：推理超时秒数，``None`` 时取 ``STUDY_OCR_TIMEOUT``（默认 45）。
+    * ``timeout``：推理超时秒数，``None`` 时取 ``STUDY_OCR_TIMEOUT``（默认 45）；
+    * ``include_blocks``：默认 ``False``，返回结构与本轮之前完全一致（旧调用方零改动）；
+      传 ``True`` 时追加 ``blocks``（内容块+原图定位）、``engine``、``engine_version``、
+      ``capabilities``。调用方需要块/公式校对时显式打开。
 
     引擎不可用抛 :class:`OcrUnavailable`，超时抛 :class:`OcrTimeout`，
     图片/参数问题抛 :class:`ValueError`（中文信息，供接口转 422）。
@@ -464,7 +765,10 @@ async def recognize_image(data=None, path=None, *, lang: str = "ch", max_side=No
     wait_seconds = _resolve_timeout(timeout)
     # 先在事件循环外完成解码/缩放/校验：坏图片立刻报错，也不会为非法输入加载模型。
     bgr, width, height = await asyncio.to_thread(_prepare_image, source, limit)
-    return await _recognize_prepared(bgr, width, height, started=started, timeout=wait_seconds)
+    return await _recognize_prepared(
+        bgr, width, height, started=started, timeout=wait_seconds,
+        include_blocks=include_blocks, page=1,
+    )
 
 
 # ---------------------------------------------------------------------------
@@ -548,12 +852,15 @@ def _select_pages(pages, total: int) -> list[int]:
     return sorted(selected)
 
 
-async def recognize_pdf_pages(path, pages=None, dpi: int = 144) -> list[dict]:
+async def recognize_pdf_pages(path, pages=None, dpi: int = 144, *, include_blocks: bool = False) -> list[dict]:
     """逐页识别 PDF，返回 ``[{"page", "text", "lines", "width", "height", "elapsed_ms"}]``。
 
     * ``path``：PDF 文件路径，也兼容 PDF bytes；
     * ``pages``：``None`` 表示全部页；支持 ``1``、``"1-3"``、``"1,3,5"``、``[1, 2]`` 等写法；
     * ``dpi``：渲染清晰度，默认 144（``scale=dpi/72``），限制在 72–400；
+    * ``include_blocks``：默认 ``False`` 时每页结构与之前完全一致；``True`` 时每页追加
+      ``blocks``（``page`` 为页码、``order`` 为页内阅读顺序）、``engine``、``engine_version``、
+      ``capabilities``（单页渲染失败的页也会带 ``blocks: []`` 与引擎信息）；
     * 页数超过 ``STUDY_OCR_MAX_PAGES``（默认 5）抛 :class:`ValueError` 提示分批；
     * 单页渲染失败只在该页返回 ``error``，不中断整批。
 
@@ -586,15 +893,19 @@ async def recognize_pdf_pages(path, pages=None, dpi: int = 144) -> list[dict]:
         try:
             image = await asyncio.to_thread(_render_pdf_page, raw, page_no, render_dpi)
         except Exception:
-            results.append({
+            page_result = {
                 "page": page_no, "text": "", "lines": [], "width": 0, "height": 0,
                 "elapsed_ms": int((time.monotonic() - page_started) * 1000),
                 "error": f"第 {page_no} 页渲染失败，请检查 PDF 是否损坏或加密",
-            })
+            }
+            if include_blocks:
+                page_result.update(_blocks_extension([], 0, 0, page=page_no))
+            results.append(page_result)
             continue
         bgr, width, height = await asyncio.to_thread(_prepare_image, image, page_max_side)
         result = await _recognize_prepared(
             bgr, width, height, started=page_started, timeout=page_timeout,
+            include_blocks=include_blocks, page=page_no,
         )
         results.append({"page": page_no, **result})
     return results
@@ -624,7 +935,7 @@ async def _read_upload(file: UploadFile) -> tuple[str, bytes]:
 
 @router.get("/ai/ocr/info")
 def ocr_info(user=Depends(current_user)):
-    """本地 OCR 就绪状态/版本/模型/限制，供设置页与前端能力探测；不加载模型。"""
+    """本地 OCR 就绪状态/版本/模型/限制，以及内容块能力声明；不加载模型。"""
     return engine_status()
 
 
@@ -636,8 +947,13 @@ async def ocr_upload(
 ):
     """同步识别一张图片或 ≤5 页 PDF（multipart）。
 
-    * 图片返回 ``{kind:"image", text, lines, width, height, elapsed_ms, ...}``；
-    * PDF 返回 ``{kind:"pdf", pages:[{page, text, ...}], text, page_count, ...}``；
+    * 图片返回 ``{kind:"image", text, lines, width, height, elapsed_ms, blocks,
+      engine_version, capabilities, ...}``（旧字段全部保留）；
+    * PDF 返回 ``{kind:"pdf", pages:[{page, text, ..., blocks, engine_version}],
+      blocks, text, page_count, engine_version, capabilities, ...}``；每页 ``blocks`` 的
+      ``page`` 为该页页码、``order`` 为页内阅读顺序，顶层 ``blocks`` 为各页块顺序拼接；
+    * 本轮本地引擎不做公式识别：``blocks[].latex`` 恒为 null，``math`` 块
+      ``needs_review=true``，需人工或后续 Pix2Text 适配层校对；
     * 页数超限/参数错误 422，文件超限 413，引擎不可用 503，识别超时 504；均要求登录。
     """
     name, raw = await _read_upload(file)
@@ -646,22 +962,31 @@ async def ocr_upload(
     started = time.monotonic()
     try:
         if is_pdf:
-            page_results = await recognize_pdf_pages(raw, pages=pages)
+            page_results = await recognize_pdf_pages(raw, pages=pages, include_blocks=True)
+            blocks = [
+                block
+                for page_result in page_results
+                for block in (page_result.get("blocks") or [])
+            ]
+            version = _engine_version()
             return {
                 "kind": "pdf",
                 "filename": name,
                 "engine": ENGINE_NAME,
-                "version": _engine_version(),
+                "version": version,
+                "engine_version": version,
+                "capabilities": dict(CAPABILITIES),
+                "blocks": blocks,
                 "page_count": len(page_results),
                 "pages": page_results,
                 "text": "\n\n".join(item["text"] for item in page_results if item.get("text")),
                 "elapsed_ms": int((time.monotonic() - started) * 1000),
                 "limits": _limits(),
-                "notice": OCR_NOTICE,
+                "notice": OCR_NOTICE + BLOCKS_NOTICE,
             }
         if suffix and suffix not in IMAGE_SUFFIXES:
             raise ValueError("仅支持 PNG、JPG、WebP、BMP、GIF、TIFF 图片或 PDF 文件")
-        result = await recognize_image(raw)
+        result = await recognize_image(raw, include_blocks=True)
         return {
             "kind": "image",
             "filename": name,
@@ -669,7 +994,7 @@ async def ocr_upload(
             "version": _engine_version(),
             **result,
             "limits": _limits(),
-            "notice": OCR_NOTICE,
+            "notice": OCR_NOTICE + BLOCKS_NOTICE,
         }
     except HTTPException:
         raise

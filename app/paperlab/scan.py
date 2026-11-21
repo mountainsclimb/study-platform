@@ -20,6 +20,7 @@ from __future__ import annotations
 
 import asyncio
 from io import BytesIO
+import logging
 import math
 import os
 from typing import Any
@@ -30,6 +31,7 @@ from PIL import Image
 from fastapi import APIRouter, Depends, File, Form, HTTPException, UploadFile
 from pydantic import BaseModel, Field
 
+from .. import question_ref, study_evidence
 from ..auth import current_user
 from ..db import connection, utcnow, write_lock
 from . import card_svg, cards, papers
@@ -37,6 +39,7 @@ from . import practice as paper_practice
 from .db import MAX_PAGE_PIXELS, json_dump, json_load
 
 router = APIRouter()
+_log = logging.getLogger("zhixu.paperlab.scan")
 
 # ---------------------------------------------------------------------------
 # 常量与表（幂等建表）
@@ -1263,6 +1266,80 @@ def _validate_confirm_answers(layout: dict, item_map: dict[int, dict], result: d
     return cleaned
 
 
+# ---------------------------------------------------------------------------
+# 学习证据投影（方案 §4「作答与学习证据」）：答题卡确认后的逐题判分同事务写入统一
+# 证据事件，同一题可按 question_ref 在练习/工坊/课堂/错题中定位；证据只是判分结果的
+# 投影，写入失败只记日志，绝不回滚/阻断确认与判分主流程。
+# 共享证据模块的 record_kind 白名单中答题卡记录对应 "paper_scan"（业务表 pl_card_scans
+# 由 record_id 承载扫描记录 ID），与整卷练习的 paper_attempt 事件互不干扰。
+# ---------------------------------------------------------------------------
+
+def _scan_item_evidence_key(scan_id: int, position: int) -> str:
+    """答题卡逐题学习证据的幂等基础键：同一扫描记录的同一题位只有一条有效证据。"""
+    return f"paper:scan:{int(scan_id)}:{int(position)}"
+
+
+def _scan_pending_note(judged: dict) -> str:
+    """待核验证据的 meta.note：如实说明缺参考答案/主观题不自动判分，不伪造对错。"""
+    reference = judged.get("reference") if isinstance(judged.get("reference"), dict) else {}
+    parts = reference.get("parts") if isinstance(reference.get("parts"), list) else []
+    has_reference = bool(
+        reference.get("answers")
+        or str(reference.get("answer_text") or "").strip()
+        or any(isinstance(part, dict) and part.get("answers") for part in parts)
+    )
+    if not has_reference:
+        return "答题卡无可核对参考答案"
+    return "答题卡只自动判客观题，主观题按待核验记录"
+
+
+def _record_scan_item_evidence(con, user_id: int, *, scan_id: int, position: int,
+                               ref: str, judged: dict, max_score: float) -> None:
+    """答题卡逐题证据：确认后的判分结果 → 共享证据事件（同一事务内、幂等）。
+
+    ``question_ref`` 为空或格式非法时跳过并记日志（不因证据问题让确认 500）；判分未明确
+    对错时 verdict 如实记 ``pending``，并在 ``meta.note`` 说明原因（缺参考答案/主观题）。
+    """
+    if not ref:
+        _log.warning("答题卡学习证据跳过：scan=%s 第 %s 题缺少题目引用", scan_id, position)
+        return
+    try:
+        normalized_ref = question_ref.normalize(ref)
+    except question_ref.QuestionRefError as error:
+        _log.warning(
+            "答题卡学习证据跳过：scan=%s 第 %s 题题目引用非法（%s）",
+            scan_id, position, type(error).__name__,
+        )
+        return
+    verdict, grade_source = paper_practice._evidence_verdict_source(judged)
+    meta = {
+        "source": "scan",
+        "score": round(float(judged.get("score") or 0), 2),
+        "max_score": round(float(max_score or 0), 2),
+    }
+    if verdict == "pending":
+        meta["note"] = _scan_pending_note(judged)
+    try:
+        study_evidence.record_event(
+            user_id,
+            kind="paper_scan",
+            record_kind="paper_scan",
+            record_id=int(scan_id),
+            item_key=str(position),
+            question_ref=normalized_ref,
+            verdict=verdict,
+            grade_source=grade_source,
+            # 答题卡是作答后的纸质提交：判分时未看提示、答案未揭晓，属于独立作答。
+            prompt_state="none",
+            reveal_state="before",
+            event_key=_scan_item_evidence_key(scan_id, position),
+            con=con,
+            meta=meta,
+        )
+    except Exception as error:  # noqa: BLE001 - 证据是投影，失败不阻断确认与判分
+        _log.warning("答题卡学习证据写入失败（判分已保存）：%s", type(error).__name__)
+
+
 def _create_scan_attempt(con, user_id: int, paper: dict, items_raw: list[dict],
                          answers: dict[int, list[str] | None], scan_id: int) -> dict:
     """按 practice 口径生成一次已提交练习（detail.source='scan'），复用错题联动。"""
@@ -1290,6 +1367,11 @@ def _create_scan_attempt(con, user_id: int, paper: dict, items_raw: list[dict],
         snapshot = paper_practice._snapshot(item)
         ref = str(item.get("question_ref") or "")
         item_max = round(float(item.get("score") or 0), 2)
+        # 方案 §4：确认判分结果在同一事务内投影为共享学习证据（失败只记日志，不影响确认）。
+        _record_scan_item_evidence(
+            con, user_id, scan_id=scan_id, position=position, ref=ref,
+            judged=judged, max_score=item_max,
+        )
         if answer is not None:
             answers_json[str(position)] = answer
         if judged["judgement"] == "correct":
@@ -1561,6 +1643,11 @@ def confirm_scan(scan_id: int, data: ConfirmInput | None = None, user=Depends(cu
         raise HTTPException(422, f"单次最多确认 {MAX_CONFIRM_ANSWERS} 题答案")
     answers = _validate_confirm_answers(layout, item_map, result, submitted)
     graded = _grade_scan(item_map, answers)
+    # 兜底建表放在写事务之外（进程内幂等一次），避免启动顺序不同导致证据静默丢失。
+    try:
+        paper_practice._ensure_study_evidence_ready()
+    except Exception as error:  # noqa: BLE001 - 建表失败只记日志，确认判分照常
+        _log.warning("学习证据表初始化失败（答题卡确认继续）：%s", type(error).__name__)
     now = utcnow()
     with connection() as con:
         write_lock(con, "paperlab-scan")

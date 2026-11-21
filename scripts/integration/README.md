@@ -14,6 +14,8 @@
 | `ui_static_accept.py` | WS30 前端静态验收（不启动服务/不联网）：`node --check` 遍历 `web/js/**/*.js` + ESM 解析；任务深链格式（课堂/笔记/OCR/工坊/我的题库/拍题）；平台精选公开配图与纠错接口；学段筛选接线；笔记/Anki 题链接与来源版本字段；locale 中英文键对齐，输出 `ui-static-accept-report.json` |
 | `ai_usage_accept.py` | AI 用量与配额端到端验收：脚本内嵌只监听 127.0.0.1 的 OpenAI 兼容假模型 → 普通用户创建 explain 任务完成任务 → `/api/ai/usage/me` 用量行（模型/耗时/tokens/入参分类）→ 管理台 `/api/admin/ai/usage` 汇总 → 普通用户 403 → 配额收紧为 1 后超额 429（不落库/不消耗）→ 恢复默认配额，输出 `ai-usage-accept-report.json`；不产生真实模型费用 |
 | `fake_model_server.py` | 仅供本目录验收使用的 **OpenAI 兼容假模型服务**（只监听 `127.0.0.1`，按 prompt 标记返回固定结构化 JSON） |
+| `round5_baseline.py` | 第五轮基线固定与样本抽检（**只读**）：仓库 HEAD/工作树、构建指纹、`releases/CURRENT` 题库版本与计数、应用库快照（知识点/关联/用户）、只读写探测；产出 3–5 个数学叶子知识点 + 候选题 + OCR 分层标注模板（**待人工审核**，不伪造结论），输出 `screenshots/round5-baseline.json` 与 `docs/r5-数学知识点抽检-<日期>.{json,md}` |
+| `round5_accept.py` | 第五轮端到端验收（临时数据目录 + TestClient，不访问外网/不读写生产数据、不调用真实模型）：拍题上传 → 确认含识别块（公式 LaTeX + bbox 往返/非法块 422）→ 题库取单选题 → 独立作答 → 同 `submission_id` 重复提交只入账一次 → 证据可读 → 错题本 → 四档复习迁移/评分/幂等重放/版本 409/他人 404/新旧到期对账 → 学习附件创建/新版本 CAS/固定版本读取/跨账号 404 → 题目详情 `study` 聚合 → 自评不覆盖核验证据 → 证据汇总与复习统计，输出 `round5-accept-report.json`；已接入 `scripts/accept_runner.py` 的 `round5` 阶段 |
 | `README.md` | 本文件 |
 
 ## 安全边界（务必遵守）

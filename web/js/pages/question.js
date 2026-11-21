@@ -530,6 +530,390 @@ function openOfficialIssueDialog(q, publicId) {
   dialog.showModal();
 }
 
+/* ---------------------------------------------------------------------------
+ * 原理演示入口（方案 §3「科学与机械主流程」界面落点 / §8 工单 D）
+ * ---------------------------------------------------------------------------
+ * 只对 物理/数学/科学/化学/生物/机械 六科显示「查看原理」，未知学科不显示。
+ * 视图按主题映射：
+ * - 物理、机械 → 流程视图（flow）：先看「动力输入 → 降速增矩 → 输出」的传动原理；
+ * - 数学、科学、化学、生物 → 等距结构（iso）：用拆解/装配结构演示空间关系；
+ * - 3D（最小 Three.js 视图）只作为可选第三视图；无 WebGL / three 加载失败时
+ *   统一播放器自动回退等距示意图，本页不额外处理。
+ * 演示数据为本地离线预设（presets.js），播放接口见 components/principleDemo.js。
+ * ------------------------------------------------------------------------- */
+
+const PRINCIPLE_SUBJECTS = new Set(['物理', '数学', '科学', '化学', '生物', '机械']);
+
+const PRINCIPLE_VIEWS = Object.freeze([
+  { id: 'flow', presetId: 'flow-gear-transmission', labelKey: 'study.demo.modeFlow' },
+  { id: 'iso', presetId: 'iso-gearbox', labelKey: 'study.demo.modeIso' },
+  { id: 'three', presetId: 'three-gearbox', labelKey: 'study.demo.modeThree' },
+]);
+
+const PRINCIPLE_VIEW_BY_ID = new Map(PRINCIPLE_VIEWS.map((view) => [view.id, view]));
+
+function defaultPrincipleView(subject) {
+  const normalized = String(subject || '').trim();
+  if (normalized === '物理' || normalized === '机械') return 'flow';
+  if (['数学', '科学', '化学', '生物'].includes(normalized)) return 'iso';
+  return '';
+}
+
+// 统一题目引用：bank:<qid> / app:<id> / official:<public_id>；裸 qid 按题库题补 bank:。
+function questionRefOf(q) {
+  const raw = String(q?.ref || q?.qid || '').trim();
+  if (!raw) return '';
+  if (/^(bank|app|official):/.test(raw)) return raw;
+  if (q?.source === 'app') return `app:${raw}`;
+  if (q?.source === 'official') {
+    const publicId = String(q?.public_id || raw.replace(/^official:/, ''));
+    return publicId ? `official:${publicId}` : '';
+  }
+  return `bank:${raw}`;
+}
+
+// 已保存学习附件按题目缓存：接口未就绪/无权限时静默降级到预设，不打扰作答。
+const principleArtifactCache = new Map();
+
+function savedArtifactsFor(ref) {
+  if (!ref) return Promise.resolve([]);
+  const cached = principleArtifactCache.get(ref);
+  if (cached) return cached.promise;
+  const entry = { items: null, promise: null };
+  entry.promise = api(`/artifacts/by-target?${query({ target_kind: 'question', target_key: ref })}`)
+    .then((response) => {
+      const items = Array.isArray(response?.items) ? response.items : [];
+      entry.items = items;
+      return items;
+    })
+    .catch(() => {
+      // 静默降级：后端附件接口未上线时仍可直接看本地预设。
+      entry.items = [];
+      return [];
+    });
+  principleArtifactCache.set(ref, entry);
+  return entry.promise;
+}
+
+/** 把 by-target 返回项转成可交给播放器的 artifact；结构不合法时返回 null。 */
+function savedArtifactFrom(item, preset) {
+  if (!item || typeof item !== 'object') return null;
+  const artifact = item.artifact && typeof item.artifact === 'object' ? item.artifact : {};
+  let data = item.data;
+  if (typeof data === 'string') {
+    try {
+      data = JSON.parse(data);
+    } catch {
+      return null;
+    }
+  }
+  if (!data || typeof data !== 'object') return null;
+  const kind = String(artifact.kind || preset?.kind || '');
+  if (!kind) return null;
+  // by-target 的 revision 是版本号数字；兼容早期/对象形态，统一取整数版本号。
+  const revision = typeof item.revision === 'object' && item.revision !== null
+    ? item.revision.revision
+    : item.revision;
+  return {
+    id: artifact.artifact_id,
+    kind,
+    title: String(artifact.title || preset?.title || t('study.demo.dialogTitle')),
+    data,
+    source: String(artifact.source || preset?.source || ''),
+    // 附件接口只存 kind + data；假设文案沿用同主题预设（保存时的来源就是该预设）。
+    assumptions: Array.isArray(artifact.assumptions) && artifact.assumptions.length
+      ? artifact.assumptions
+      : (preset?.assumptions || []),
+    sourceRef: String(artifact.source_ref || preset?.id || ''),
+    revision: Number.isFinite(Number(revision)) ? Number(revision) : null,
+    saved: true,
+  };
+}
+
+/** 题目详情「查看原理」按钮；学科不匹配时返回 null。 */
+function principleEntryButton(q) {
+  const subject = String(q?.subject || '').trim();
+  if (!PRINCIPLE_SUBJECTS.has(subject)) return null;
+  const ref = questionRefOf(q);
+  // 页面加载时预取已保存附件（失败静默）；点击打开时优先渲染已保存版本。
+  if (ref) savedArtifactsFor(ref);
+  return button(t('study.demo.open'), event => {
+    openPrincipleDialog(q, event.currentTarget).catch((error) => {
+      toast(error?.message || t('study.demo.renderFailed', { v1: '' }), true);
+    });
+  }, 'soft small', 'layers', {
+    title: t('study.demo.openHint'),
+    'data-principle-open': subject,
+  });
+}
+
+/**
+ * 打开「查看原理」弹层：视图切换 + 已保存附件优先 + 保存为学习附件。
+ * 不改变题目作答/揭晓/图片/公式等既有行为，入口挂载失败只 toast。
+ */
+async function openPrincipleDialog(q, trigger) {
+  const initialView = defaultPrincipleView(q?.subject);
+  if (!initialView) return;
+  const ref = questionRefOf(q);
+  // 先动态 import：原理播放器与预设不在题目首屏加载链路上，减少详情页初始体积。
+  let principleModule;
+  try {
+    principleModule = await import('../components/principleDemo.js');
+  } catch (error) {
+    toast(t('study.demo.renderFailed', { v1: error?.message || '' }), true);
+    return;
+  }
+  const { renderPrincipleDemo, PRESET_DEMOS } = principleModule;
+
+  let controller = null;
+  const viewState = {
+    currentView: initialView,
+    artifact: null,
+    savedByKind: new Map(), // kind -> artifact_id（用于「已保存」状态）
+    savedArtifactsByKind: new Map(), // kind -> 已保存 artifact（用于优先渲染）
+    interacted: false,
+    upgraded: false,
+  };
+
+  const titleNode = el('h3', { class: 'pd-dialog-title', 'data-no-i18n': 'true' }, t('study.demo.dialogTitle'));
+  const statusNode = el('p', { class: 'pd-dialog-status' }, el('span', { class: 'spinner' }), t('study.demo.loading'));
+  const savedNotice = el('p', { class: 'pd-saved-notice', hidden: true }, t('study.demo.loadedSaved'));
+  const switchBar = el('div', {
+    class: 'pd-view-switch', role: 'group', 'aria-label': t('study.demo.switchView'),
+  });
+  const viewButtons = new Map();
+  for (const view of PRINCIPLE_VIEWS) {
+    const viewButton = el('button', {
+      type: 'button', class: 'pd-view-btn', 'aria-pressed': 'false', 'data-principle-view': view.id,
+      onClick: () => switchPrincipleView(view.id),
+    }, t(view.labelKey));
+    viewButtons.set(view.id, viewButton);
+    switchBar.append(viewButton);
+  }
+  const demoHost = el('div', { class: 'pd-dialog-demo' });
+  const metaHost = el('div', { class: 'pd-dialog-meta' });
+  const saveButton = button(t('study.demo.saveArtifact'), event => {
+    const triggerButton = event.currentTarget;
+    busy(triggerButton, async () => {
+      try {
+        const saved = await savePrincipleArtifact();
+        viewState.savedByKind.set(viewState.artifact.kind, saved.artifactId);
+        const savedArtifact = {
+          ...viewState.artifact, id: saved.artifactId, revision: saved.revision, saved: true,
+        };
+        viewState.savedArtifactsByKind.set(viewState.artifact.kind, savedArtifact);
+        // 同步本次保存到按题缓存：关闭再打开弹层时也能优先展示刚保存的版本。
+        const cacheEntry = principleArtifactCache.get(ref);
+        if (cacheEntry?.items) {
+          cacheEntry.items = cacheEntry.items
+            .filter((item) => item?.artifact?.kind !== savedArtifact.kind);
+          cacheEntry.items.push({
+            artifact: {
+              artifact_id: saved.artifactId,
+              kind: savedArtifact.kind,
+              title: savedArtifact.title,
+              source_ref: savedArtifact.sourceRef,
+              current_revision: saved.revision,
+            },
+            // 与服务端 by-target 返回结构保持一致：revision 是数字版本号。
+            revision: saved.revision,
+            data: savedArtifact.data,
+          });
+        }
+        toast(t('study.demo.artifactSaved'));
+      } catch (error) {
+        // 不伪造成功：失败时按服务端/网络返回的中文原因提示。
+        throw new Error(t('study.demo.saveFailed', { v1: error?.message || '' }));
+      }
+    }).finally(() => {
+      if (dialog.open) updateSaveButton();
+    });
+  }, 'secondary small', 'download', { 'data-principle-save': 'true' });
+
+  const dialog = el('dialog', {
+    class: 'pd-dialog',
+    'aria-label': t('study.demo.dialogTitle'),
+    'data-principle-dialog': '',
+  },
+  el('div', { class: 'pd-dialog-head' },
+    el('div', { class: 'pd-dialog-heading' },
+      el('span', { class: 'eyebrow' }, t('study.demo.title')),
+      titleNode),
+    el('button', {
+      type: 'button', class: 'close-dialog', 'aria-label': t('common.close'), onClick: () => dialog.close(),
+    }, icon('close'))),
+  el('div', { class: 'pd-dialog-body' },
+    statusNode,
+    switchBar,
+    demoHost,
+    metaHost,
+    el('div', { class: 'pd-dialog-actions' }, saveButton)));
+
+  // 用户一旦操作演示（点击/键盘），就不再自动替换成已保存版本，避免打断观看。
+  const markInteracted = () => { viewState.interacted = true; };
+  demoHost.addEventListener('pointerdown', markInteracted, { capture: true });
+  demoHost.addEventListener('keydown', markInteracted, { capture: true });
+
+  dialog.addEventListener('close', () => {
+    if (controller) {
+      try { controller.destroy(); } catch { /* 释放失败不影响关闭 */ }
+      controller = null;
+    }
+    dialog.remove();
+    trigger?.focus?.();
+  });
+  dialog.addEventListener('click', (event) => { if (event.target === dialog) dialog.close(); });
+  document.body.append(dialog);
+  dialog.showModal();
+
+  function presetOfView(viewId) {
+    const config = PRINCIPLE_VIEW_BY_ID.get(viewId) || PRINCIPLE_VIEWS[0];
+    return PRESET_DEMOS[config.presetId] || null;
+  }
+
+  // 按 artifact.kind 找同一主题的本地预设（用于已保存附件的出处/假设兜底）。
+  function presetForKind(kind) {
+    const key = String(kind || '');
+    for (const view of PRINCIPLE_VIEWS) {
+      const preset = PRESET_DEMOS[view.presetId];
+      if (preset && preset.kind === key) return preset;
+    }
+    return null;
+  }
+
+  function artifactForView(viewId) {
+    const preset = presetOfView(viewId);
+    const saved = preset ? viewState.savedArtifactsByKind.get(preset.kind) : null;
+    return { artifact: saved || preset, preset, saved: Boolean(saved) };
+  }
+
+  function updateSaveButton() {
+    const kind = viewState.artifact?.kind;
+    const saved = Boolean(kind && viewState.savedByKind.has(kind));
+    saveButton.disabled = saved || !ref;
+    saveButton.textContent = saved ? t('study.demo.saved') : t('study.demo.saveArtifact');
+    saveButton.classList.toggle('is-saved', saved);
+  }
+
+  function updateSwitchButtons() {
+    for (const [id, node] of viewButtons) {
+      const active = id === viewState.currentView;
+      node.classList.toggle('is-active', active);
+      node.setAttribute('aria-pressed', String(active));
+    }
+  }
+
+  function renderMeta(artifact, preset, saved) {
+    const source = artifact?.source || preset?.source || '';
+    const assumptions = (Array.isArray(artifact?.assumptions) && artifact.assumptions.length
+      ? artifact.assumptions
+      : (preset?.assumptions || []));
+    savedNotice.hidden = !saved;
+    metaHost.replaceChildren(
+      el('p', { class: 'pd-artifact-notice' }, t('study.demo.artifactNotice')),
+      source
+        ? el('p', { class: 'pd-source' }, `${t('study.demo.sourceLabel')}：`,
+          el('span', { 'data-no-i18n': 'true' }, source))
+        : null,
+      assumptions.length
+        ? el('details', { class: 'pd-assumptions' },
+          el('summary', {}, t('study.demo.assumptionsLabel')),
+          el('ul', {}, ...assumptions.map((item) => el('li', { 'data-no-i18n': 'true' }, item))))
+        : null,
+      savedNotice,
+    );
+  }
+
+  function renderCurrentView() {
+    const { artifact, preset, saved } = artifactForView(viewState.currentView);
+    if (!artifact) {
+      statusNode.hidden = false;
+      statusNode.textContent = t('study.demo.renderFailed', { v1: t('study.demo.modeUnknown') });
+      return;
+    }
+    viewState.artifact = artifact;
+    titleNode.textContent = artifact.title || t('study.demo.dialogTitle');
+    updateSwitchButtons();
+    renderMeta(artifact, preset, saved);
+    updateSaveButton();
+    statusNode.hidden = true;
+    if (controller) {
+      try { controller.destroy(); } catch { /* 旧播放器可能已随弹层移除 */ }
+      controller = null;
+    }
+    demoHost.replaceChildren();
+    controller = renderPrincipleDemo(demoHost, artifact, {
+      onFrameReady: () => { statusNode.hidden = true; },
+    });
+  }
+
+  function switchPrincipleView(viewId) {
+    if (!PRINCIPLE_VIEW_BY_ID.has(viewId) || viewId === viewState.currentView) return;
+    viewState.currentView = viewId;
+    renderCurrentView();
+  }
+
+  async function savePrincipleArtifact() {
+    const artifact = viewState.artifact;
+    if (!artifact) throw new Error(t('study.demo.missingArtifact'));
+    if (!ref) throw new Error(t('study.demo.missingQuestionRef'));
+    const payload = {
+      kind: artifact.kind,
+      title: artifact.title,
+      data: artifact.data,
+      source_ref: artifact.sourceRef || PRESET_DEMOS[PRINCIPLE_VIEW_BY_ID.get(viewState.currentView)?.presetId]?.id || '',
+      source_kind: 'principle_preset',
+    };
+    const created = await api('/artifacts', { method: 'POST', data: payload });
+    const artifactId = created?.artifact?.artifact_id;
+    if (!artifactId) throw new Error(t('study.demo.missingArtifactId'));
+    const revision = created?.revision?.revision;
+    const linkBody = { target_kind: 'question', target_key: ref };
+    if (revision !== undefined && revision !== null) linkBody.revision = revision;
+    await api(`/artifacts/${encodeURIComponent(String(artifactId))}/links`, {
+      method: 'POST',
+      data: linkBody,
+    });
+    return { artifactId, revision };
+  }
+
+  // 已保存附件：先读缓存快照（页面加载时已预取），命中则直接渲染已保存版本；
+  // 未命中时先渲染本地预设，等接口返回且用户尚未操作时再自动升级，失败静默。
+  const cachedArtifacts = principleArtifactCache.get(ref);
+  function applySavedItems(items) {
+    for (const item of items || []) {
+      const saved = savedArtifactFrom(item, presetForKind(item?.artifact?.kind));
+      if (!saved) continue;
+      viewState.savedByKind.set(saved.kind, saved.id);
+      viewState.savedArtifactsByKind.set(saved.kind, saved);
+    }
+  }
+  if (cachedArtifacts?.items) applySavedItems(cachedArtifacts.items);
+  renderCurrentView();
+  if (!cachedArtifacts?.items) {
+    const pending = cachedArtifacts ? cachedArtifacts.promise : savedArtifactsFor(ref);
+    pending.then((items) => {
+      if (!dialog.open) return;
+      applySavedItems(items);
+      const { saved } = artifactForView(viewState.currentView);
+      if (!saved) {
+        updateSaveButton();
+        return;
+      }
+      if (viewState.upgraded) return;
+      // 已交互或已切换视图时不打断当前播放，只更新「已保存」状态。
+      if (viewState.interacted || viewState.currentView !== initialView) {
+        updateSaveButton();
+        return;
+      }
+      viewState.upgraded = true;
+      renderCurrentView();
+    }).catch(() => {
+      /* 静默降级到本地预设 */
+    });
+  }
+}
+
 export async function openQuestion(qid, container = $('#question-detail'), { scrollOnMobile = false, onSubmitted = null } = {}) {
   if (!container) return;
   revokePreviewUrl();
@@ -622,6 +1006,8 @@ export function renderQuestion(
     q.subject === '物理'
       ? button(t('nav.physics'), () => go('physics'), 'ghost small', 'atom')
       : null,
+    // 方案界面落点：题目详情提供「查看原理」；仅六科显示（见 principleEntryButton）。
+    principleEntryButton(q),
     button(t('question.presentationMode'), () => {
       openPresentationMode({ qid: q.qid, question: q })
         .catch(error => toast(error?.message || t('wrongbook.presentationFailed'), true));

@@ -24,6 +24,11 @@ import { go, current, setHashParams, renderRoute } from '../core/router.js';
 import { mountJob, taskNames, statusNames, statusBadgeVariant, closeJobStreams } from '../core/jobs.js';
 import { createModelPicker } from '../components/modelPicker.js';
 import { filePicker, attachPasteImage } from '../components/filePicker.js';
+// W0/W1：识别块（OCR blocks）校对与公式输入组件；语言包键 study.formula.* 由 Lead 统一合并。
+import {
+  attachBlockOverlay, buildConfirmBlocks, createFormulaInput, formulaText,
+  parseBlocksWithFormulas, renderBlockLocation,
+} from '../components/formulaInput.js';
 
 const STORAGE_KEY = 'zhixu.uploadState';
 
@@ -315,6 +320,24 @@ export async function renderUpload(container, version, params = null) {
   const aiSuggestionMount = el('div');
   const versionHintMount = el('div');
 
+  // ===== W0/W1：识别块校对（OCR blocks → 公式输入组件）状态 =====
+  // blockState 是 parseBlocksWithFormulas() 的编辑态数组；blockMeta 汇总引擎能力与降级信息。
+  const blockReviewMount = el('div', { class: 'upload-block-review' });
+  const blockSection = el('div', { class: 'pg-substep upload-block-section', hidden: true },
+    el('p', { class: 'pg-substep-label' }, formulaText('study.formula.review.sectionTitle')),
+    el('p', { class: 'help' }, formulaText('study.formula.review.sectionSub')),
+    blockReviewMount);
+  let blockState = [];
+  const blockMeta = {
+    attempted: false, engine: '', engineVersion: '', capabilities: null, message: '', ocrAvailable: true,
+  };
+  let blockGeneration = 0;
+  let blockRenderSignature = '';
+  const blockEditors = new Map(); // 编辑态块 → createFormulaInput 实例（提交前同步实时值）
+  let blockOverlays = [];
+  const previewShells = []; // 原图预览容器（pageIndex 从 0 开始），供 attachBlockOverlay 使用
+  let blockActiveId = null;
+
   const subjInput = select(
     ['', '数学', '物理', '化学', '生物', '语文', '英语', '历史', '地理', '政治', '其他'].map(s => ({ value: s, label: s || t('upload.subjectPlaceholder') })),
     restored?.recognized?.subject || ''
@@ -522,12 +545,463 @@ export async function renderUpload(container, version, params = null) {
       t('upload.intake.versionBadge', { v: intake.revision }) + ' · ' + t('upload.intake.confirmHint'));
   }
 
+  /* --------------------------------------------------------------------- *
+   * W0/W1：识别块校对（OCR blocks ↔ 公式输入组件）
+   * - 契约：POST /ocr-draft 与 GET /intake 的 draft/confirmed 里可带 `blocks`
+   *   （intake-blocks-v1），PATCH /confirm 可选回传人工校对后的 `blocks`；
+   * - 兼容：旧后端没有 blocks 时本区整体隐藏，原有手工录入流程完全不变；
+   * - 安全：块文本一律 textContent / el() 渲染，公式预览由组件内部经 KaTeX 净化。
+   * --------------------------------------------------------------------- */
+
+  const BLOCK_LOW_CONFIDENCE = 0.8;
+  const BLOCK_KIND_BADGES = { text: '', math: 'blue', table: 'amber', image: 'teal' };
+
+  function blockKindLabel(kind) {
+    return formulaText(`study.formula.review.kind.${BLOCK_KIND_BADGES[kind] === undefined ? 'text' : kind}`);
+  }
+
+  function blockPageOf(block) {
+    const page = Number(block?.page);
+    return Number.isFinite(page) && page >= 1 ? Math.floor(page) : 1;
+  }
+
+  function blockConfidenceOf(block) {
+    const value = Number(block?.confidence);
+    return Number.isFinite(value) ? value : null;
+  }
+
+  /** 从 OCR/入库响应里取识别块：顶层 blocks 优先，其次 confirmed / draft / intake 内嵌。 */
+  function extractResponseBlocks(payload) {
+    if (!payload || typeof payload !== 'object') return null;
+    const candidates = [
+      payload.blocks,
+      payload.confirmed?.blocks,
+      payload.draft?.blocks,
+      payload.intake?.blocks,
+      payload.intake?.confirmed?.blocks,
+      payload.intake?.draft?.blocks,
+    ];
+    for (const candidate of candidates) {
+      if (Array.isArray(candidate)) return candidate;
+    }
+    return null;
+  }
+
+  /** 从响应里取引擎/能力/提示信息（缺字段时用空值，不覆盖已有信息）。 */
+  function extractBlockMeta(payload) {
+    if (!payload || typeof payload !== 'object') return {};
+    const draft = payload.draft && typeof payload.draft === 'object' ? payload.draft : {};
+    const capabilities = payload.capabilities || draft.capabilities || undefined;
+    const engine = payload.engine || draft.engine || '';
+    const engineVersion = payload.engine_version || draft.engine_version || '';
+    const message = typeof payload.message === 'string' ? payload.message : '';
+    const meta = {
+      capabilities,
+      engine: String(engine || ''),
+      engineVersion: String(engineVersion || ''),
+      message,
+    };
+    if (typeof payload.ocr_available === 'boolean') meta.ocrAvailable = payload.ocr_available;
+    return meta;
+  }
+
+  function destroyBlockEditors() {
+    for (const editor of blockEditors.values()) {
+      try { editor.destroy(); } catch { /* 单个组件销毁异常不影响页面 */ }
+    }
+    blockEditors.clear();
+    destroyBlockOverlays();
+  }
+
+  function destroyBlockOverlays() {
+    for (const overlay of blockOverlays) {
+      try { overlay.destroy(); } catch { /* 忽略 */ }
+    }
+    blockOverlays = [];
+  }
+
+  function clearBlockReviewState() {
+    destroyBlockEditors();
+    blockState = [];
+    blockMeta.attempted = false;
+    blockMeta.engine = '';
+    blockMeta.engineVersion = '';
+    blockMeta.capabilities = null;
+    blockMeta.message = '';
+    blockMeta.ocrAvailable = true;
+    blockGeneration += 1;
+    blockRenderSignature = '';
+    blockActiveId = null;
+    previewShells.length = 0;
+    blockReviewMount.replaceChildren();
+    blockSection.hidden = true;
+  }
+
+  function blockReviewSignature() {
+    const katexReady = typeof window !== 'undefined' && Boolean(window.katex);
+    return [
+      blockGeneration,
+      blockMeta.attempted ? '1' : '0',
+      blockMeta.engine,
+      blockMeta.engineVersion,
+      JSON.stringify(blockMeta.capabilities || null),
+      blockMeta.ocrAvailable ? '1' : '0',
+      katexReady ? '1' : '0',
+      previewShells.length,
+    ].join('|');
+  }
+
+  function updateBlockSummary() {
+    const node = blockReviewMount.querySelector('.upload-block-summary');
+    if (!node) return;
+    const reviewCount = blockState.filter(block => block.needsReview).length;
+    const lowCount = blockState.filter(block => {
+      const confidence = blockConfidenceOf(block);
+      return confidence !== null && confidence < BLOCK_LOW_CONFIDENCE;
+    }).length;
+    let text = formulaText('study.formula.review.blockCount', { count: blockState.length, review: reviewCount });
+    if (lowCount) text += ` · ${formulaText('study.formula.review.lowConfidenceCount', { count: lowCount })}`;
+    node.textContent = text;
+  }
+
+  function setBlockActive(id) {
+    blockActiveId = id;
+    for (const overlay of blockOverlays) {
+      try { overlay.setActive(id); } catch { /* 忽略 */ }
+    }
+    for (const item of blockReviewMount.querySelectorAll('.upload-block-item')) {
+      item.classList.toggle('is-active', item.dataset.blockId === String(id));
+    }
+  }
+
+  /** 点击原图叠加框 → 高亮并滚动到对应识别块。 */
+  function pickBlockFromOverlay(id) {
+    setBlockActive(id);
+    const target = [...blockReviewMount.querySelectorAll('.upload-block-item')]
+      .find(item => item.dataset.blockId === String(id));
+    if (target) target.scrollIntoView({ behavior: 'smooth', block: 'center' });
+  }
+
+  function syncBlockItemState(item, block) {
+    if (!item) return;
+    item.classList.toggle('needs-review', Boolean(block.needsReview));
+    item.classList.toggle('is-edited', Boolean(block.changed));
+    // 同步原图叠加框的「需校对」虚线样式（不改位置，不重绘整个叠加层）。
+    for (const overlay of blockOverlays) {
+      if (!overlay || !overlay.element) continue;
+      const box = [...overlay.element.querySelectorAll('.block-overlay-box')]
+        .find(node => node.dataset.blockId === String(block.id));
+      if (box) box.classList.toggle('needs-review', Boolean(block.needsReview));
+    }
+    const stateBadge = item.querySelector('.upload-block-review-state');
+    if (stateBadge) {
+      stateBadge.className = `badge upload-block-review-state${block.needsReview ? ' amber' : ' teal'}`;
+      stateBadge.textContent = block.needsReview
+        ? formulaText('study.formula.review.needsReview')
+        : formulaText('study.formula.review.reviewed');
+    }
+    const reviewBtn = item.querySelector('.upload-block-review-btn');
+    if (reviewBtn) reviewBtn.disabled = !block.needsReview;
+  }
+
+  function syncStemInput() {
+    stemInput.dispatchEvent(new Event('input', { bubbles: true }));
+  }
+
+  /** 在题干编辑器光标处插入片段（「插入公式」用 `$latex$`）。 */
+  function insertIntoStem(snippet) {
+    const source = stemInput.value;
+    let start = Number.isInteger(stemInput.selectionStart) ? stemInput.selectionStart : source.length;
+    let end = Number.isInteger(stemInput.selectionEnd) ? stemInput.selectionEnd : start;
+    start = Math.min(Math.max(0, start), source.length);
+    end = Math.min(Math.max(start, end), source.length);
+    stemInput.value = `${source.slice(0, start)}${snippet}${source.slice(end)}`;
+    const caret = Math.min(stemInput.value.length, start + snippet.length);
+    try { stemInput.setSelectionRange(caret, caret); } catch { /* 个别环境不支持选区 */ }
+    syncStemInput();
+    stemInput.focus();
+  }
+
+  function appendToStem(content) {
+    const current = String(stemInput.value || '').trimEnd();
+    stemInput.value = current ? `${current}\n${content}` : content;
+    syncStemInput();
+    stemInput.focus();
+  }
+
+  function insertBlockFormula(block) {
+    const latex = String(block.latexInput || '').trim();
+    if (!latex) {
+      toast(formulaText('study.formula.review.emptyLatex'), true);
+      return;
+    }
+    insertIntoStem(`$${latex}$`);
+    toast(formulaText('study.formula.review.inserted'));
+  }
+
+  function adoptBlockAsStem(block) {
+    const latex = String(block.latexInput || '').trim();
+    const content = block.kind === 'math' && latex ? `$${latex}$` : String(block.text || '').trim();
+    if (!content) {
+      toast(formulaText('study.formula.review.blockEmpty'), true);
+      return;
+    }
+    appendToStem(content);
+    toast(formulaText('study.formula.review.adopted'));
+  }
+
+  function markBlockReviewed(block, item) {
+    block.changed = true;
+    block.needsReview = false;
+    syncBlockItemState(item, block);
+    updateBlockSummary();
+    toast(formulaText('study.formula.review.marked'));
+  }
+
+  function renderBlockActions(block, item) {
+    const actions = el('div', { class: 'upload-block-actions' });
+    if (block.kind === 'math') {
+      actions.append(button(formulaText('study.formula.review.insertFormula'),
+        () => insertBlockFormula(block), 'ghost small', 'plus'));
+    }
+    actions.append(button(formulaText('study.formula.review.useAsStem'),
+      () => adoptBlockAsStem(block), 'ghost small', 'check'));
+    const reviewBtn = el('button', {
+      type: 'button',
+      class: 'button ghost small upload-block-review-btn',
+      disabled: !block.needsReview,
+      onClick: () => markBlockReviewed(block, item),
+    }, icon('check'), el('span', {}, block.needsReview
+      ? formulaText('study.formula.review.markReviewed')
+      : formulaText('study.formula.review.reviewed')));
+    actions.append(reviewBtn);
+    return actions;
+  }
+
+  function renderBlockItem(block) {
+    const item = el('div', {
+      class: 'upload-block-item',
+      'data-block-id': String(block.id),
+    });
+    item.dataset.blockId = String(block.id);
+    if (block.needsReview) item.classList.add('needs-review');
+    if (block.changed) item.classList.add('is-edited');
+    if (blockActiveId !== null && String(blockActiveId) === String(block.id)) item.classList.add('is-active');
+
+    const head = el('div', { class: 'upload-block-head' },
+      badge(blockKindLabel(block.kind), BLOCK_KIND_BADGES[block.kind] || ''),
+      el('button', {
+        type: 'button',
+        class: 'upload-block-location',
+        title: formulaText('study.formula.review.overlayHint'),
+        'aria-label': `${blockKindLabel(block.kind)} · ${renderBlockLocation(block)}`,
+        onClick: () => setBlockActive(block.id),
+      }, renderBlockLocation(block)));
+    const confidence = blockConfidenceOf(block);
+    if (confidence !== null) {
+      const confidenceNode = el('span', { class: 'upload-block-confidence' },
+        formulaText('study.formula.review.confidence', { percent: Math.round(confidence * 100) }));
+      if (confidence < BLOCK_LOW_CONFIDENCE) {
+        confidenceNode.append(badge(formulaText('study.formula.review.lowConfidence'), 'amber'));
+      }
+      head.append(confidenceNode);
+    }
+    head.append(el('span', {
+      class: `badge upload-block-review-state${block.needsReview ? ' amber' : ' teal'}`,
+    }, block.needsReview
+      ? formulaText('study.formula.review.needsReview')
+      : formulaText('study.formula.review.reviewed')));
+    item.append(head);
+
+    if (block.kind === 'math') {
+      // 公式块：createFormulaInput 编辑 latex（值模型不含 $ 定界符），改动即视为已校对。
+      const editor = createFormulaInput({
+        value: block.latexInput,
+        placeholder: formulaText('study.formula.review.formulaPlaceholder'),
+        ariaLabel: formulaText('study.formula.review.mathEditorAria', { id: block.id }),
+        rows: 2,
+        allowPlainFallback: true,
+        onChange: value => {
+          block.latexInput = value;
+          block.changed = true;
+          block.needsReview = false;
+          syncBlockItemState(item, block);
+          updateBlockSummary();
+        },
+      });
+      blockEditors.set(block, editor);
+      if (editor.textarea) {
+        // 实时同步编辑值（提交前 currentBlocksPayload 还会再取一次组件值兜底）。
+        editor.textarea.addEventListener('input', () => {
+          block.latexInput = editor.getValue();
+          block.changed = true;
+          block.needsReview = false;
+          syncBlockItemState(item, block);
+          updateBlockSummary();
+        });
+      }
+      item.append(editor.element);
+    } else if (block.kind === 'text') {
+      const editor = el('textarea', {
+        class: 'upload-block-text',
+        rows: '2',
+        maxlength: '4000',
+        placeholder: formulaText('study.formula.review.textPlaceholder'),
+        'aria-label': formulaText('study.formula.review.textEditorAria', { id: block.id }),
+        value: block.text,
+      });
+      editor.addEventListener('input', () => {
+        block.text = editor.value;
+        block.changed = true;
+        block.needsReview = false;
+        syncBlockItemState(item, block);
+        updateBlockSummary();
+      });
+      item.append(editor);
+    } else {
+      // 表格/图片块只读：保持原图，不做重绘或转换。
+      if (block.text) item.append(el('pre', { class: 'upload-block-readonly-text' }, block.text));
+      item.append(el('p', { class: 'upload-block-readonly' },
+        formulaText('study.formula.review.keepOriginal')));
+    }
+    item.append(renderBlockActions(block, item));
+    return item;
+  }
+
+  function attachBlockOverlays() {
+    destroyBlockOverlays();
+    if (!blockState.length) return;
+    if (!previewShells.length) {
+      blockReviewMount.append(el('p', { class: 'help upload-block-overlay-hint' },
+        formulaText('study.formula.review.noPreview')));
+      return;
+    }
+    let attached = 0;
+    for (const preview of previewShells) {
+      const pageBlocks = blockState.filter(block => blockPageOf(block) === preview.pageIndex + 1);
+      if (!pageBlocks.length) continue;
+      const overlay = attachBlockOverlay(preview.img, preview.shell, pageBlocks, id => pickBlockFromOverlay(id));
+      blockOverlays.push(overlay);
+      attached += 1;
+      if (blockActiveId !== null) overlay.setActive(blockActiveId);
+    }
+    blockReviewMount.append(el('p', { class: 'help upload-block-overlay-hint' },
+      formulaText(attached ? 'study.formula.review.overlayHint' : 'study.formula.review.noPreview')));
+  }
+
+  function renderBlockReview() {
+    if (!blockMeta.attempted && !blockState.length) {
+      blockSection.hidden = true;
+      return;
+    }
+    blockSection.hidden = false;
+    const nextSignature = blockReviewSignature();
+    if (nextSignature === blockRenderSignature) {
+      // 结构未变时只刷新统计，避免重绘打断正在编辑的输入框。
+      updateBlockSummary();
+      return;
+    }
+    blockRenderSignature = nextSignature;
+    destroyBlockEditors();
+    blockActiveId = null;
+    blockReviewMount.replaceChildren();
+
+    const katexReady = typeof window !== 'undefined' && Boolean(window.katex);
+    const mathRecognition = blockMeta.capabilities && typeof blockMeta.capabilities === 'object'
+      ? blockMeta.capabilities.math_recognition
+      : null;
+    // 引擎行：有名称才显示「引擎：…」，有版本再补版本；都没有时显示「未知引擎」。
+    const engineText = blockMeta.engine
+      ? (blockMeta.engineVersion
+        ? formulaText('study.formula.review.engineLine', { engine: blockMeta.engine, version: blockMeta.engineVersion })
+        : formulaText('study.formula.review.engineOnly', { engine: blockMeta.engine }))
+      : formulaText('study.formula.review.engineUnknown');
+    const statusBox = el('div', { class: 'upload-block-status' },
+      el('div', { class: 'row', style: 'flex-wrap:wrap;gap:8px' },
+        badge(engineText, 'blue'),
+        mathRecognition === false
+          ? badge(formulaText('study.formula.review.mathUnsupportedBadge'), 'amber')
+          : mathRecognition === true
+            ? badge(formulaText('study.formula.review.mathSupported'), 'teal')
+            : null));
+    // 默认引擎不做公式识别：常驻中文提示「公式块需人工校对；本机引擎暂不做公式识别」。
+    if (mathRecognition !== true) {
+      statusBox.append(el('p', { class: 'help' }, formulaText('study.formula.review.engineHint')));
+    }
+    if (mathRecognition === false) {
+      statusBox.append(el('p', { class: 'help' }, formulaText('study.formula.review.mathUnsupported')));
+    }
+    if (!katexReady) {
+      statusBox.append(el('p', { class: 'help' }, formulaText('study.formula.review.katexMissing')));
+    }
+    statusBox.append(el('p', { class: 'help upload-block-summary' }));
+
+    if (!blockState.length) {
+      // 纯文本/手工录入回退：OCR 不可用或本次没有 blocks 时页面行为与原来一致。
+      const degradedKey = blockMeta.ocrAvailable === false
+        ? 'study.formula.review.ocrUnavailable'
+        : 'study.formula.review.noBlocks';
+      blockReviewMount.append(statusBox,
+        el('div', { class: 'upload-block-degraded' }, formulaText(degradedKey)));
+      return;
+    }
+
+    const list = el('div', { class: 'upload-block-list' });
+    for (const block of blockState) list.append(renderBlockItem(block));
+    blockReviewMount.append(statusBox, list);
+    if (blockMeta.message) blockReviewMount.append(el('p', { class: 'help' }, blockMeta.message));
+    attachBlockOverlays();
+    updateBlockSummary();
+  }
+
+  /**
+   * 把响应里的 blocks 灌入编辑态。
+   * force=true 时以服务端数据重置本地编辑（OCR 重新识别 / 深链加载 / 确认成功回包）；
+   * force=false 时只在本地还没有块时初始化，避免刷新把用户正在改的内容覆盖掉。
+   */
+  function ingestBlocksFrom(payload, { attempted = true, force = false } = {}) {
+    const meta = extractBlockMeta(payload);
+    if (meta.capabilities !== undefined) blockMeta.capabilities = meta.capabilities;
+    if (meta.engine) blockMeta.engine = meta.engine;
+    if (meta.engineVersion) blockMeta.engineVersion = meta.engineVersion;
+    if (meta.message) blockMeta.message = meta.message;
+    if (meta.ocrAvailable !== undefined) blockMeta.ocrAvailable = meta.ocrAvailable;
+    if (attempted) blockMeta.attempted = true;
+    const blocks = extractResponseBlocks(payload);
+    if (Array.isArray(blocks) && blocks.length) {
+      const first = blocks.find(item => item && typeof item === 'object');
+      if (first && !blockMeta.engine && typeof first.engine === 'string') blockMeta.engine = first.engine;
+      if (first && !blockMeta.engineVersion && typeof first.engine_version === 'string') {
+        blockMeta.engineVersion = first.engine_version;
+      }
+    }
+    const shouldReset = force || (!blockState.length && Array.isArray(blocks) && blocks.length > 0);
+    if (shouldReset) {
+      blockState = parseBlocksWithFormulas(Array.isArray(blocks) ? blocks : []);
+      blockGeneration += 1;
+      blockRenderSignature = '';
+      blockActiveId = null;
+    }
+    renderBlockReview();
+  }
+
+  /** 提交前收集识别块：以组件实时值为准，再还原成契约 block 数组。 */
+  function currentBlocksPayload() {
+    if (!blockState.length) return null;
+    for (const [block, editor] of blockEditors) {
+      block.latexInput = editor.getValue();
+    }
+    return buildConfirmBlocks(blockState);
+  }
+
   async function refreshIntake({ fill = false } = {}) {
     const id = uploadId();
     if (!id) return null;
     try {
       const data = await api(`/uploads/${id}/intake`);
       setIntake(data);
+      // 新契约 GET /intake 的 draft/confirmed 也可能带 blocks；已有本地编辑时不重置。
+      ingestBlocksFrom(data, { attempted: blockMeta.attempted, force: !blockState.length });
       renderIntakePanels();
       if (fill) {
         const record = data.confirmed || data.draft;
@@ -547,7 +1021,11 @@ export async function renderUpload(container, version, params = null) {
     ocrStatusMount.replaceChildren(notice(t('upload.intake.ocrRunning')));
     try {
       const result = await api(`/uploads/${uploadId()}/ocr-draft`, { method: 'POST' });
-      setIntake(result.intake || null);
+      // 兼容新旧响应：旧后端返回 intake；新契约在顶层/草稿里带 blocks 与引擎能力。
+      setIntake(result.intake || (result.draft
+        ? { ...(intake || {}), upload_id: uploadId(), revision: result.revision, draft: result.draft }
+        : null));
+      ingestBlocksFrom(result, { attempted: true, force: true });
       if (result.ocr_available === false) {
         ocrStatusMount.replaceChildren(notice(
           t('upload.intake.ocrUnavailable', { message: result.ocr_notice || result.notice || '' }), 'warning'));
@@ -614,17 +1092,27 @@ export async function renderUpload(container, version, params = null) {
     if (!uploadId()) throw new Error(t('upload.confirmNeedUpload'));
     const payload = readForm();
     if (!payload.stem.trim()) throw new Error(t('upload.confirmNeedStem'));
+    // W0/W1：人工确认时把校对后的识别块一起提交（本页没收集到 blocks 时保持旧请求体）。
+    const blocks = currentBlocksPayload();
+    const data = { ...payload, expected_version: intake?.revision };
+    if (blocks) data.blocks = blocks;
     try {
-      const res = await api(`/uploads/${uploadId()}/confirm`, {
-        method: 'PATCH',
-        data: { ...payload, expected_version: intake?.revision },
-      });
+      const res = await api(`/uploads/${uploadId()}/confirm`, { method: 'PATCH', data });
       setIntake(res.intake || null);
+      // 后端回包若带 blocks（人工确认后的权威版本），以它刷新编辑态与 needs_review 展示。
+      if (extractResponseBlocks(res)) ingestBlocksFrom(res, { attempted: true, force: true });
       renderSimilarList(res.similar_questions || []);
       renderIntakePanels();
       toast(t('upload.confirmDone'));
     } catch (error) {
-      if (/版本冲突/.test(error.message || '')) {
+      const message = String(error?.message || '');
+      // 后端明确拒绝 blocks（契约 422）时保留本地编辑，只给中文提示，不刷新/清空表单。
+      const blocksRejected = Boolean(blocks) && /blocks?|识别块|非法|校验|invalid/i.test(message);
+      if (blocksRejected) {
+        toast(formulaText('study.formula.review.blocksRejected', { message }), true);
+        return;
+      }
+      if (/版本冲突/.test(message)) {
         await refreshIntake({ fill: true });
         toast(t('upload.intake.conflict'), true);
       }
@@ -653,6 +1141,7 @@ export async function renderUpload(container, version, params = null) {
 
   confirmCard.append(
     ocrSection,
+    blockSection,
     el('div', { class: 'pg-substep' },
       el('p', { class: 'pg-substep-label' }, t('upload.substepB')),
       el('div', { class: 'form-grid' }, field(t('common.subject'), subjInput), field(t('upload.fieldType'), typeInput)),
@@ -828,6 +1317,7 @@ export async function renderUpload(container, version, params = null) {
     renderDraftMeta();
     renderPendingDraft();
     renderAiSuggestion();
+    renderBlockReview();
     versionHintMount.replaceChildren(renderVersionHint() || '');
     renderSavePanel();
   }
@@ -841,6 +1331,8 @@ export async function renderUpload(container, version, params = null) {
     state.questionUpload = result;
     state.uploadJobId = null;
     setIntake(null);
+    // 新题的识别块校对状态整体清空（旧题的 blocks/叠加框不能串到新题）。
+    clearBlockReviewState();
     setHashParams('upload', { upload: result.id }, true);
     saveUploadSession({ upload: result, intake: null });
     pendingFiles.length = 0;
@@ -968,12 +1460,24 @@ export async function renderUpload(container, version, params = null) {
       uploadedInfo.append(el('div', { class: 'question-material' }, questionText(item.extracted_text)));
       if (!stemInput.value) stemInput.value = item.extracted_text;
     }
+    // W0/W1：原图预览改为「定位容器 + 图片」，供识别块叠加框（attachBlockOverlay）使用；
+    // 多图时 pageIndex 从 0 递增，与 block.page（从 1 开始）对应。
+    destroyBlockOverlays();
+    previewShells.length = 0;
     if (item.preview_url && /\.(png|jpe?g|webp)$/i.test(item.filename || '')) {
-      const imgWrap = el('div', { class: 'row' },
-        el('img', { class: 'uploaded-preview', src: item.preview_url, alt: t('upload.uploadedAlt'), style: 'max-height:220px' }));
-      for (const ex of item.extra_previews || []) {
-        imgWrap.append(el('img', { class: 'uploaded-preview', src: ex.preview_url, alt: ex.filename, style: 'max-height:220px' }));
-      }
+      const imgWrap = el('div', { class: 'pg-uploaded-images' });
+      const addPreview = (src, alt, pageIndex) => {
+        const img = el('img', {
+          class: 'uploaded-preview', src, alt, loading: 'lazy', style: 'max-height:220px',
+        });
+        const shell = el('div', { class: 'pg-block-preview' }, img);
+        imgWrap.append(shell);
+        previewShells.push({ shell, img, pageIndex });
+      };
+      addPreview(item.preview_url, t('upload.uploadedAlt'), 0);
+      (item.extra_previews || []).forEach((extra, index) => {
+        addPreview(extra.preview_url, extra.filename || t('upload.uploadedAlt'), index + 1);
+      });
       uploadedInfo.append(imgWrap);
     }
   }
@@ -999,6 +1503,8 @@ export async function renderUpload(container, version, params = null) {
     pendingMount.replaceChildren();
     aiSuggestionMount.replaceChildren();
     savePanelMount.replaceChildren();
+    // 识别块校对区（组件实例/叠加框/编辑态）一并清空。
+    clearBlockReviewState();
     clearForm();
   }
 
@@ -1024,6 +1530,10 @@ export async function renderUpload(container, version, params = null) {
       setIntake(data);
       setHashParams('upload', { upload: data.upload_id }, true);
       renderUploaded(state.questionUpload);
+      // 新契约：GET /intake 的 draft/confirmed 里也可能带 blocks（深链/刷新恢复校对区）。
+      if (extractResponseBlocks(data) !== null) {
+        ingestBlocksFrom(data, { attempted: true, force: true });
+      }
       const record = data.confirmed || data.draft;
       if (record) fillForm(record, { force: true });
       renderIntakePanels();
@@ -1066,6 +1576,10 @@ export async function renderUpload(container, version, params = null) {
     if (intake) {
       const record = intake.confirmed || intake.draft;
       if (record) fillForm(record, { force: true });
+      // 会话恢复：若快照里已有 blocks，恢复识别块校对区（没有则保持隐藏）。
+      if (extractResponseBlocks(intake)?.length) {
+        ingestBlocksFrom(intake, { attempted: true, force: true });
+      }
       renderIntakePanels();
     } else if (state.questionUpload.id) {
       await loadIntakeFromServer(state.questionUpload.id);

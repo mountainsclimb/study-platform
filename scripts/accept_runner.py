@@ -79,6 +79,7 @@ STAGE_LABELS = {
     "editor-typecheck": "编辑器类型检查（tsc --noEmit）",
     "editor-build": "编辑器构建产物一致性（-EditorBuild）",
     "ui-static": "前端静态契约与 ESM 解析",
+    "round5": "第五轮共用学习数据层端到端（临时数据目录）",
     "pytest": "pytest（全量）",
     "ui-server": "UI 服务器可达性",
     "ui-plaza": "广场端到端（投稿→评审→发布→撤回）",
@@ -415,6 +416,14 @@ def build_stages(
         command=[python, "scripts/integration/ui_static_accept.py"],
         cwd=root, needs=("node",),
         description="前端静态契约（任务深链/来源/Anki/locale）与 ESM 解析",
+    )
+    candidates["round5"] = Stage(
+        key="round5", name=STAGE_LABELS["round5"],
+        # 第五轮（方案 §4/§8）：在临时数据目录内跑通「拍题块→作答证据→错题→四档评分→
+        # 学习附件→跨页读取」并做两账号隔离；不读写题库与生产数据，不需要 Node/浏览器。
+        command=[python, "scripts/integration/round5_accept.py"],
+        cwd=root,
+        description="第五轮端到端：证据/附件/四档复习/OCR 块（隔离数据目录，TestClient）",
     )
     candidates["pytest"] = Stage(
         key="pytest", name=STAGE_LABELS["pytest"],

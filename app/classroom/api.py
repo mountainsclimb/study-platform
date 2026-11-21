@@ -6,6 +6,7 @@
 from __future__ import annotations
 
 import json
+import logging
 from typing import Any
 
 from fastapi import APIRouter, Depends, File, Form, HTTPException, Query, Request, UploadFile
@@ -13,7 +14,7 @@ from fastapi.responses import HTMLResponse, Response
 from pydantic import BaseModel, Field
 
 from ..auth import current_user
-from .. import storage
+from .. import question_ref, storage, study_evidence
 from . import db as cdb
 from . import generate, grading, prompts, schema, tts
 from . import interactive
@@ -21,6 +22,7 @@ from . import images as image_slots
 from . import multiagent
 
 router = APIRouter()
+_log = logging.getLogger("zhixu.classroom")
 
 #: 交互场景 HTML 响应的独立 CSP（与 ``interactive.py`` 单点维护；沙箱路由据此覆盖主应用默认 CSP）。
 SCENE_HTML_CSP = interactive.INTERACTIVE_CSP
@@ -1173,6 +1175,115 @@ class QuizSubmitInput(BaseModel):
     answers: list[QuizAnswerInput] = Field(default_factory=list, max_length=schema.MAX_QUESTIONS)
 
 
+# ---------------------------------------------------------------------------
+# 课堂测验 → 学习证据（整合方案 §4「作答与学习证据」/ §8 工单 C）
+#
+# 课堂小测题目尚未正式入库，因此**不伪造** bank / app / official 引用：题目内容自带
+# ``question_ref``（形如 bank:... / app:... / official:...）时原样使用，否则
+# ``question_ref=None``，改用 ``record_id=quiz_attempt_id``、
+# ``item_key=<course_id>:<scene_id>:<题目键>`` 标识，并在 meta 里记录
+# course_id / scene_id / question_key。同一 quiz attempt 的同一题事件键固定为
+# ``quiz:<quiz_attempt_id>:<item_key>``，重复写入由 study_evidence 的幂等键去重。
+# 证据写入失败只记日志，绝不影响测验提交主流程与既有响应字段。
+# ---------------------------------------------------------------------------
+
+#: 学习证据表就绪缓存键：(数据目录, 是否 PostgreSQL)。换库/测试临时目录后自动重新幂等建表。
+_evidence_ready_key: tuple[str, bool] | None = None
+
+
+def _ensure_study_evidence_ready() -> None:
+    """幂等确保学习证据表已建好。
+
+    ``study_evidence.record_event(con=...)`` 约定由启动钩子建表；课堂测验这里再按进程
+    幂等兜底一次，避免启动顺序不同导致证据静默丢失。调用方负责捕获异常（证据失败不影响提交）。
+    """
+    global _evidence_ready_key
+    app_db = _db()
+    key = (str(app_db.DATA_DIR), app_db.postgres_enabled())
+    if _evidence_ready_key == key:
+        return
+    study_evidence.init_study_evidence()
+    _evidence_ready_key = key
+
+
+def _quiz_question_ref(question) -> str | None:
+    """取测验题目自带的统一题目引用；没有显式 bank/app/official 前缀时返回 None（不伪造）。"""
+    raw = question.get("question_ref") if isinstance(question, dict) else None
+    text = str(raw or "").strip()
+    if not text:
+        return None
+    source, separator, key = text.partition(":")
+    if not separator or source.strip().lower() not in question_ref.SOURCES or not key.strip():
+        return None
+    try:
+        return question_ref.parse(text).ref
+    except question_ref.QuestionRefError:
+        return None
+
+
+def _quiz_verdict(detail: dict) -> tuple[str, str]:
+    """课堂判分明细 → (verdict, grade_source)；主观题只标待核验，不猜对错。"""
+    if detail.get("needs_review") or detail.get("correct") is None:
+        return "pending", "pending"
+    return ("correct", "reference") if detail.get("correct") else ("incorrect", "reference")
+
+
+def _record_quiz_evidence(*, con, user_id: int, course_id: int, scene_id: int,
+                          attempt_id: int, content: dict, result: dict) -> None:
+    """按判分结果逐题写学习证据（同事务执行，异常只记日志）。"""
+    try:
+        questions = content.get("questions") if isinstance(content, dict) else []
+        questions = questions if isinstance(questions, list) else []
+        by_id: dict[str, dict] = {}
+        for question in questions:
+            if not isinstance(question, dict):
+                continue
+            key = str(question.get("id") or "").strip()
+            if key:
+                by_id.setdefault(key, question)
+        detail = result.get("detail") if isinstance(result, dict) else None
+        detail = detail if isinstance(detail, list) else []
+        if not detail:
+            # 判分只有总分、没有逐题明细时只记一条汇总证据，不编造逐题对错。
+            study_evidence.record_event(
+                user_id, kind="classroom_quiz", record_kind="cls_quiz_attempts",
+                record_id=int(attempt_id), item_key="summary",
+                event_key=f"quiz:{int(attempt_id)}:summary",
+                question_ref=None, verdict="pending", grade_source="pending",
+                prompt_state="unknown", reveal_state="after", con=con,
+                meta={
+                    "course_id": int(course_id), "scene_id": int(scene_id),
+                    "score": result.get("score"), "max_score": result.get("max_score"),
+                    "note": "课堂测验仅总分，无逐题核验",
+                },
+            )
+            return
+        for index, item in enumerate(detail):
+            if not isinstance(item, dict):
+                continue
+            question_key = str(item.get("question_id") or "").strip() or "q%d" % (index + 1)
+            item_key = "%d:%d:%s" % (int(course_id), int(scene_id), question_key)
+            verdict, grade_source = _quiz_verdict(item)
+            study_evidence.record_event(
+                user_id, kind="classroom_quiz", record_kind="cls_quiz_attempts",
+                record_id=int(attempt_id), item_key=item_key,
+                event_key=f"quiz:{int(attempt_id)}:{item_key}",
+                question_ref=_quiz_question_ref(by_id.get(question_key)),
+                verdict=verdict, grade_source=grade_source,
+                prompt_state="unknown", reveal_state="after", con=con,
+                meta={
+                    "course_id": int(course_id), "scene_id": int(scene_id),
+                    "question_key": question_key,
+                    "question_type": item.get("type"),
+                    "score": result.get("score"), "max_score": result.get("max_score"),
+                    "points": item.get("points"), "earned": item.get("earned"),
+                    "needs_review": bool(item.get("needs_review")),
+                },
+            )
+    except Exception:
+        _log.exception("课堂测验学习证据写入失败：attempt=%s scene=%s", attempt_id, scene_id)
+
+
 @router.post("/sessions/{session_id}/quiz")
 def submit_quiz(session_id: int, data: QuizSubmitInput, user=Depends(current_user)):
     row = cdb.owned_session(session_id, user["id"])
@@ -1184,6 +1295,13 @@ def submit_quiz(session_id: int, data: QuizSubmitInput, user=Depends(current_use
     content = _scene_content(scene)
     answers = [item.model_dump() for item in data.answers]
     result = grading.grade_quiz(content, answers)
+    evidence_ready = True
+    try:
+        _ensure_study_evidence_ready()
+    except Exception:
+        # 证据表不可用只在日志里提示，不阻断测验提交。
+        evidence_ready = False
+        _log.exception("学习证据表初始化失败，本次课堂测验跳过证据写入")
     now = _db().utcnow()
     with _db().connection() as con:
         attempt_id = con.execute(
@@ -1195,6 +1313,12 @@ def submit_quiz(session_id: int, data: QuizSubmitInput, user=Depends(current_use
             ),
         ).lastrowid
         con.execute("UPDATE cls_sessions SET updated_at=? WHERE id=? AND user_id=?", (now, session_id, user["id"]))
+        if evidence_ready:
+            _record_quiz_evidence(
+                con=con, user_id=user["id"], course_id=int(row["course_id"]),
+                scene_id=int(scene["id"]), attempt_id=int(attempt_id),
+                content=content, result=result,
+            )
     return {
         "attempt_id": int(attempt_id),
         "scene_id": int(scene["id"]),

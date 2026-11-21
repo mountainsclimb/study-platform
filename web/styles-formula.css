@@ -1,0 +1,582 @@
+/* 公式输入组件 + 拍题识别块校对样式（知序 W0/W1）。
+ *
+ * 前缀约定：组件用 `.formula-*`，原图叠加框用 `.block-overlay-*`，拍题页专用容器用
+ * `.upload-block-*` / `.pg-block-preview`。颜色全部走 styles.css 的设计令牌
+ * （--paper / --surface / --ink / --soft / --muted / --line / --tint / --accent /
+ * --accent-deep / --focus / --wrong / --wrong-bg），深浅色主题自动跟随；叠加框画在原图
+ * （通常是浅色扫描件/照片）之上，故使用固定半透明强调色保证两种主题下都可辨认。
+ *
+ * 由 Lead 在 web/index.html 的样式表列表末尾追加：
+ *   <link rel="stylesheet" href="/static/styles-formula.css">
+ * （本文件不自行改 index.html。）
+ */
+
+/* ---------------------------------------------------------------------------
+ * 公式输入组件
+ * ------------------------------------------------------------------------- */
+
+.formula-input {
+  display: grid;
+  gap: 8px;
+  min-width: 0;
+  padding: 10px 12px 8px;
+  border: 1px solid var(--line);
+  border-radius: 10px;
+  background: var(--surface);
+}
+
+.formula-toolbar {
+  display: flex;
+  flex-wrap: nowrap;
+  align-items: center;
+  gap: 4px;
+  padding-bottom: 6px;
+  border-bottom: 1px dashed var(--line);
+  overflow-x: auto;
+  overscroll-behavior-x: contain;
+  scrollbar-width: thin;
+  -webkit-overflow-scrolling: touch;
+}
+
+.formula-tool {
+  flex: none;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  min-width: 34px;
+  min-height: 32px;
+  padding: 4px 7px;
+  border: 1px solid var(--line);
+  border-radius: 6px;
+  background: var(--paper);
+  color: var(--ink);
+  font-family: ui-monospace, SFMono-Regular, Consolas, "Liberation Mono", monospace;
+  font-size: 13px;
+  line-height: 1.2;
+  white-space: nowrap;
+}
+
+.formula-tool.is-wide {
+  min-width: 52px;
+}
+
+.formula-tool:hover {
+  border-color: var(--focus);
+  background: var(--tint);
+  color: var(--accent-deep);
+}
+
+.formula-tool:active {
+  transform: translateY(1px);
+}
+
+.formula-tool:focus-visible {
+  outline: 3px solid var(--focus);
+  outline-offset: 2px;
+}
+
+.formula-input-editor-wrap {
+  min-width: 0;
+}
+
+.formula-input-editor {
+  display: block;
+  width: 100%;
+  min-height: 64px;
+  padding: 8px 10px;
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  background: var(--paper);
+  color: var(--ink);
+  font-family: ui-monospace, SFMono-Regular, Consolas, "Liberation Mono", monospace;
+  font-size: 13px;
+  line-height: 1.65;
+  tab-size: 2;
+  resize: vertical;
+}
+
+.formula-input-editor::placeholder {
+  color: var(--muted);
+  opacity: 0.85;
+}
+
+.formula-input-editor:focus-visible {
+  outline: 3px solid var(--focus);
+  outline-offset: 2px;
+}
+
+.formula-preview {
+  display: grid;
+  gap: 4px;
+  min-height: 46px;
+  max-width: 100%;
+  padding: 8px 10px;
+  border: 1px dashed var(--line);
+  border-radius: 8px;
+  background: var(--paper);
+  color: var(--ink);
+  /* 长公式不能撑破容器：横向滚动查看。 */
+  overflow-x: auto;
+  overscroll-behavior-x: contain;
+  scrollbar-width: thin;
+}
+
+.formula-preview-title {
+  color: var(--muted);
+  font-size: 11px;
+  letter-spacing: 0.04em;
+}
+
+.formula-preview-body {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 4px 10px;
+  min-width: 0;
+  max-width: 100%;
+  overflow-wrap: anywhere;
+}
+
+.formula-preview-body .katex {
+  font-size: 1.05em;
+}
+
+.formula-preview.is-empty .formula-preview-placeholder {
+  color: var(--muted);
+  font-size: 12.5px;
+}
+
+.formula-preview.is-error {
+  border-color: var(--wrong);
+  border-style: solid;
+  background: var(--wrong-bg);
+}
+
+.formula-preview-error {
+  margin: 0;
+  color: var(--wrong);
+  font-size: 12.5px;
+  line-height: 1.6;
+}
+
+.formula-preview-note,
+.formula-preview-plain {
+  margin: 0;
+  color: var(--soft);
+  font-size: 12px;
+  line-height: 1.6;
+}
+
+.formula-preview-plain {
+  font-family: ui-monospace, SFMono-Regular, Consolas, "Liberation Mono", monospace;
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+}
+
+.formula-preview-placeholder {
+  font-size: 12.5px;
+}
+
+.formula-hint {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 4px 12px;
+  color: var(--muted);
+  font-size: 11.5px;
+  line-height: 1.6;
+}
+
+.formula-hint-item {
+  white-space: nowrap;
+}
+
+.formula-hint-counter {
+  font-variant-numeric: tabular-nums;
+}
+
+.formula-hint-warning {
+  color: var(--wrong);
+  font-weight: 550;
+}
+
+.formula-hint-warning[hidden] {
+  display: none;
+}
+
+/* ---------------------------------------------------------------------------
+ * 拍题页：原图预览容器（叠加框定位基准）
+ * ------------------------------------------------------------------------- */
+
+.pg-uploaded-images {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 12px;
+  align-items: flex-start;
+  margin: 12px 0;
+}
+
+.pg-block-preview {
+  position: relative;
+  display: inline-block;
+  max-width: 100%;
+  border: 1px solid var(--line);
+  border-radius: 9px;
+  overflow: hidden;
+  background: var(--surface);
+}
+
+.pg-block-preview .uploaded-preview {
+  display: block;
+  max-width: 100%;
+  margin: 0;
+  border: 0;
+  border-radius: 0;
+}
+
+/* ---------------------------------------------------------------------------
+ * 原图识别块叠加框
+ * ------------------------------------------------------------------------- */
+
+.block-overlay {
+  position: absolute;
+  inset: 0;
+  pointer-events: none;
+  z-index: 2;
+}
+
+.block-overlay[hidden] {
+  display: none;
+}
+
+.block-overlay-box {
+  position: absolute;
+  box-sizing: border-box;
+  min-width: 10px;
+  min-height: 10px;
+  padding: 0;
+  border: 2px solid rgba(20, 125, 112, 0.8);
+  border-radius: 3px;
+  background: rgba(20, 125, 112, 0.12);
+  cursor: pointer;
+  pointer-events: auto;
+  touch-action: manipulation;
+  transition: background 0.12s ease, box-shadow 0.12s ease;
+}
+
+.block-overlay-box:hover {
+  background: rgba(20, 125, 112, 0.24);
+  box-shadow: 0 0 0 2px rgba(20, 125, 112, 0.28);
+}
+
+.block-overlay-box:focus-visible {
+  outline: 3px solid #1f9d86;
+  outline-offset: 2px;
+}
+
+/* 公式块用琥珀色区分：提示「需要人工校对公式」。 */
+.block-overlay-box.is-formula {
+  border-color: rgba(180, 83, 9, 0.78);
+  background: rgba(180, 83, 9, 0.14);
+}
+
+.block-overlay-box.is-formula:hover {
+  background: rgba(180, 83, 9, 0.24);
+  box-shadow: 0 0 0 2px rgba(180, 83, 9, 0.28);
+}
+
+.block-overlay-box.kind-image {
+  border-color: rgba(74, 123, 181, 0.78);
+  background: rgba(74, 123, 181, 0.14);
+}
+
+.block-overlay-box.kind-image:hover {
+  background: rgba(74, 123, 181, 0.24);
+  box-shadow: 0 0 0 2px rgba(74, 123, 181, 0.28);
+}
+
+.block-overlay-box.kind-table {
+  border-color: rgba(122, 81, 149, 0.78);
+  background: rgba(122, 81, 149, 0.14);
+}
+
+.block-overlay-box.kind-table:hover {
+  background: rgba(122, 81, 149, 0.24);
+  box-shadow: 0 0 0 2px rgba(122, 81, 149, 0.28);
+}
+
+.block-overlay-box.needs-review {
+  border-style: dashed;
+}
+
+.block-overlay-box.is-active {
+  border-color: #d97706;
+  border-style: solid;
+  background: rgba(217, 119, 6, 0.2);
+  box-shadow: 0 0 0 3px rgba(217, 119, 6, 0.32);
+  z-index: 3;
+}
+
+.block-overlay-label {
+  position: absolute;
+  top: 0;
+  left: 0;
+  padding: 0 4px;
+  border-radius: 2px 0 5px 0;
+  background: rgba(16, 43, 53, 0.86);
+  color: #eaf6f2;
+  font-size: 10px;
+  line-height: 1.5;
+  pointer-events: none;
+  white-space: nowrap;
+}
+
+.block-overlay-box.is-formula .block-overlay-label {
+  background: rgba(146, 64, 14, 0.9);
+}
+
+.block-overlay-box.is-active .block-overlay-label {
+  background: #b45309;
+}
+
+/* ---------------------------------------------------------------------------
+ * 拍题页：识别块校对列表
+ * ------------------------------------------------------------------------- */
+
+.upload-block-section {
+  min-width: 0;
+}
+
+.upload-block-section[hidden] {
+  display: none;
+}
+
+.upload-block-review {
+  display: grid;
+  gap: 10px;
+  min-width: 0;
+}
+
+.upload-block-status {
+  display: grid;
+  gap: 4px;
+  padding: 10px 12px;
+  border: 1px solid var(--line);
+  border-radius: 9px;
+  background: var(--rail);
+}
+
+.upload-block-status .help {
+  margin: 0;
+}
+
+.upload-block-summary {
+  color: var(--soft);
+}
+
+.upload-block-degraded {
+  padding: 10px 12px;
+  border: 1px solid var(--line);
+  border-left: 3px solid var(--muted);
+  border-radius: 8px;
+  background: var(--surface);
+  color: var(--soft);
+  font-size: 12.5px;
+  line-height: 1.7;
+}
+
+.upload-block-list {
+  display: grid;
+  gap: 10px;
+  min-width: 0;
+}
+
+.upload-block-item {
+  display: grid;
+  gap: 8px;
+  min-width: 0;
+  padding: 10px 12px;
+  border: 1px solid var(--line);
+  border-left: 3px solid var(--line);
+  border-radius: 9px;
+  background: var(--surface);
+  scroll-margin-top: 90px;
+}
+
+.upload-block-item.needs-review {
+  border-left-color: #c98a2e;
+}
+
+.upload-block-item.is-active {
+  border-color: var(--focus);
+  border-left-color: var(--focus);
+  background: var(--tint);
+  box-shadow: 0 0 0 2px var(--tint);
+}
+
+.upload-block-head {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 6px 10px;
+  min-width: 0;
+}
+
+.upload-block-location {
+  margin: 0;
+  padding: 0;
+  border: 0;
+  background: transparent;
+  color: var(--soft);
+  font-size: 12px;
+  line-height: 1.6;
+  text-align: left;
+  text-decoration: underline dotted;
+  text-underline-offset: 3px;
+  overflow-wrap: anywhere;
+}
+
+.upload-block-location:hover {
+  color: var(--accent-deep);
+}
+
+.upload-block-location:focus-visible {
+  outline: 3px solid var(--focus);
+  outline-offset: 2px;
+  border-radius: 4px;
+}
+
+.upload-block-confidence {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  color: var(--muted);
+  font-size: 11.5px;
+  font-variant-numeric: tabular-nums;
+}
+
+.upload-block-text,
+.upload-block-item .formula-input-editor {
+  min-height: 58px;
+}
+
+.upload-block-text {
+  display: block;
+  width: 100%;
+  padding: 8px 10px;
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  background: var(--paper);
+  color: var(--ink);
+  font-size: 13px;
+  line-height: 1.7;
+  resize: vertical;
+}
+
+.upload-block-text:focus-visible {
+  outline: 3px solid var(--focus);
+  outline-offset: 2px;
+}
+
+.upload-block-readonly {
+  margin: 0;
+  color: var(--muted);
+  font-size: 11.5px;
+  line-height: 1.6;
+}
+
+.upload-block-readonly-text {
+  margin: 0;
+  padding: 8px 10px;
+  border: 1px dashed var(--line);
+  border-radius: 8px;
+  background: var(--paper);
+  color: var(--soft);
+  font-family: ui-monospace, SFMono-Regular, Consolas, "Liberation Mono", monospace;
+  font-size: 12.5px;
+  line-height: 1.65;
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+  max-height: 200px;
+  overflow-y: auto;
+}
+
+.upload-block-actions {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 6px;
+}
+
+.upload-block-actions .button {
+  min-height: 34px;
+  padding: 6px 10px;
+  font-size: 12px;
+}
+
+.upload-block-overlay-hint {
+  margin: 0;
+}
+
+/* ---------------------------------------------------------------------------
+ * 响应式与无障碍
+ * ------------------------------------------------------------------------- */
+
+@media (max-width: 700px) {
+  .formula-input {
+    padding: 8px 9px 6px;
+  }
+
+  .formula-toolbar {
+    gap: 3px;
+  }
+
+  .formula-tool {
+    min-width: 36px;
+    min-height: 34px;
+    font-size: 12.5px;
+  }
+
+  .formula-tool.is-wide {
+    min-width: 50px;
+  }
+
+  .upload-block-item {
+    padding: 9px 10px;
+  }
+
+  .upload-block-actions .button {
+    min-height: 38px;
+    padding: 7px 10px;
+  }
+
+  .pg-block-preview {
+    max-width: 100%;
+  }
+}
+
+@media (pointer: coarse) {
+  .formula-tool {
+    min-width: 40px;
+    min-height: 40px;
+  }
+
+  .formula-tool.is-wide {
+    min-width: 56px;
+  }
+
+  .upload-block-location {
+    min-height: 32px;
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .block-overlay-box,
+  .formula-tool {
+    transition: none;
+  }
+
+  .formula-tool:active {
+    transform: none;
+  }
+}

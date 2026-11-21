@@ -1,0 +1,566 @@
+{
+  "generated_at": "2026-11-21T14:56:57.608797+00:00",
+  "bank_version": "bank-20261121-r5",
+  "head": "4dfb457278d3a47aa37dffe4daea60519263a5e8",
+  "status": "pending_human_review",
+  "note": "本文件为只读脚本生成的抽检候选：知识点映射与 OCR 分层标注均待人工审核，不得当作已审核结论",
+  "samples": [
+    {
+      "kp_id": 3,
+      "subject": "数学",
+      "parent_id": 2,
+      "parent_path": [
+        "集合与常用逻辑用语",
+        "集合"
+      ],
+      "name": "集合的含义与表示",
+      "level": "3",
+      "description": "",
+      "search_terms": [
+        "集合的含义与表示",
+        "集合",
+        "含义",
+        "表示"
+      ],
+      "mapping_status": "pending_human_review",
+      "quiz_candidate": "待按该知识点生成课堂测验题并人工审核（本轮无测验数据，不伪造）",
+      "review_note": "候选题为只读题库关键词召回，尚未人工确认知识点映射；不得当作正式标签",
+      "candidate_questions": [
+        {
+          "question_ref": "bank:dxathing:dxathing-06b28ed5c92574:23",
+          "qid": "dxathing:dxathing-06b28ed5c92574:23",
+          "type": "single_choice",
+          "practice_status": "practice",
+          "intended_use": "诊断题候选",
+          "matched_terms": [
+            "集合"
+          ],
+          "stem_excerpt": "满足条件 $|z|=1$ 及 $\\left|z+\\frac{1}{2}\\right|=\\left|z-\\frac{3}{2}\\right|$ 的复数 $z$ 的集合是（ ）",
+          "ocr_layers": {
+            "text": {
+              "expected": true,
+              "renderer": "stem_plain",
+              "annotation_status": "pending_human_review",
+              "note": "文字层：人工确认阅读顺序与换行是否与原件一致"
+            },
+            "math": {
+              "expected": false,
+              "renderer": "stem_blocks_json / fallback_asset",
+              "annotation_status": "not_applicable",
+              "note": "公式层：本轮本机引擎不做公式识别，需人工校对 LaTeX（MathLive 校对入口）"
+            },
+            "table": {
+              "expected": true,
+              "renderer": "blocks.table",
+              "annotation_status": "pending_human_review",
+              "note": "表格层：按单元格阅读顺序标注；无表格题为 not_applicable"
+            },
+            "figure": {
+              "expected": false,
+              "renderer": "images_json / 原图裁切",
+              "annotation_status": "not_applicable",
+              "note": "图形层：保留原图定位（bbox/页码），禁止重绘当作原件"
+            }
+          }
+        },
+        {
+          "question_ref": "bank:dxathing:dxathing-06b28ed5c92574:9",
+          "qid": "dxathing:dxathing-06b28ed5c92574:9",
+          "type": "single_choice",
+          "practice_status": "practice",
+          "intended_use": "诊断题候选",
+          "matched_terms": [
+            "集合"
+          ],
+          "stem_excerpt": "设 $A$ 是直角坐标平面上所有的点组成的集合，如果由 $A$ 到 $A$ 的一一对应映射 $f$，使象集合的元素 $(y-1,x+2)$ 和原象集合的元素 $(x,y)$ 对应，那么，象点 $(3,-4)$ 的原象是（ ）",
+          "ocr_layers": {
+            "text": {
+              "expected": true,
+              "renderer": "stem_plain",
+              "annotation_status": "pending_human_review",
+              "note": "文字层：人工确认阅读顺序与换行是否与原件一致"
+            },
+            "math": {
+              "expected": false,
+              "renderer": "stem_blocks_json / fallback_asset",
+              "annotation_status": "not_applicable",
+              "note": "公式层：本轮本机引擎不做公式识别，需人工校对 LaTeX（MathLive 校对入口）"
+            },
+            "table": {
+              "expected": false,
+              "renderer": "blocks.table",
+              "annotation_status": "pending_human_review",
+              "note": "表格层：按单元格阅读顺序标注；无表格题为 not_applicable"
+            },
+            "figure": {
+              "expected": false,
+              "renderer": "images_json / 原图裁切",
+              "annotation_status": "not_applicable",
+              "note": "图形层：保留原图定位（bbox/页码），禁止重绘当作原件"
+            }
+          }
+        },
+        {
+          "question_ref": "bank:dxathing:dxathing-0bc657946e40a0:6",
+          "qid": "dxathing:dxathing-0bc657946e40a0:6",
+          "type": "short_answer",
+          "practice_status": "practice",
+          "intended_use": "巩固题候选",
+          "matched_terms": [
+            "表示"
+          ],
+          "stem_excerpt": "在 $\\triangle ABC$ 中，用 $a$、$b$、$c$ 依次表示 $\\angle A$、$\\angle B$、$\\angle C$ 的对边，已知 $\\angle B=45^\\circ$、$b=10$、$c=5\\sqrt6$，不…",
+          "ocr_layers": {
+            "text": {
+              "expected": true,
+              "renderer": "stem_plain",
+              "annotation_status": "pending_human_review",
+              "note": "文字层：人工确认阅读顺序与换行是否与原件一致"
+            },
+            "math": {
+              "expected": false,
+              "renderer": "stem_blocks_json / fallback_asset",
+              "annotation_status": "not_applicable",
+              "note": "公式层：本轮本机引擎不做公式识别，需人工校对 LaTeX（MathLive 校对入口）"
+            },
+            "table": {
+              "expected": false,
+              "renderer": "blocks.table",
+              "annotation_status": "pending_human_review",
+              "note": "表格层：按单元格阅读顺序标注；无表格题为 not_applicable"
+            },
+            "figure": {
+              "expected": false,
+              "renderer": "images_json / 原图裁切",
+              "annotation_status": "not_applicable",
+              "note": "图形层：保留原图定位（bbox/页码），禁止重绘当作原件"
+            }
+          }
+        }
+      ]
+    },
+    {
+      "kp_id": 6,
+      "subject": "数学",
+      "parent_id": 5,
+      "parent_path": [
+        "集合与常用逻辑用语",
+        "常用逻辑用语"
+      ],
+      "name": "充分条件与必要条件",
+      "level": "3",
+      "description": "",
+      "search_terms": [
+        "充分条件与必要条件",
+        "充分条件",
+        "必要条件"
+      ],
+      "mapping_status": "pending_human_review",
+      "quiz_candidate": "待按该知识点生成课堂测验题并人工审核（本轮无测验数据，不伪造）",
+      "review_note": "候选题为只读题库关键词召回，尚未人工确认知识点映射；不得当作正式标签",
+      "candidate_questions": [
+        {
+          "question_ref": "bank:dxathing:dxathing-22de5c90c990f6:3",
+          "qid": "dxathing:dxathing-22de5c90c990f6:3",
+          "type": "short_answer",
+          "practice_status": "practice",
+          "intended_use": "巩固题候选",
+          "matched_terms": [
+            "充分条件",
+            "必要条件"
+          ],
+          "stem_excerpt": "下表所列各小题中，指出 $A$ 是 $B$ 的充分条件，还是必要条件，还是充要条件，或者都不是. 1.25 $A$ | $B$ | $A$ 是 $B$ 的什么条件 四边形 $ABCD$ 为平行四边形 | 四边形 $ABCD$ 为矩形 | …",
+          "ocr_layers": {
+            "text": {
+              "expected": true,
+              "renderer": "stem_plain",
+              "annotation_status": "pending_human_review",
+              "note": "文字层：人工确认阅读顺序与换行是否与原件一致"
+            },
+            "math": {
+              "expected": false,
+              "renderer": "stem_blocks_json / fallback_asset",
+              "annotation_status": "not_applicable",
+              "note": "公式层：本轮本机引擎不做公式识别，需人工校对 LaTeX（MathLive 校对入口）"
+            },
+            "table": {
+              "expected": true,
+              "renderer": "blocks.table",
+              "annotation_status": "pending_human_review",
+              "note": "表格层：按单元格阅读顺序标注；无表格题为 not_applicable"
+            },
+            "figure": {
+              "expected": false,
+              "renderer": "images_json / 原图裁切",
+              "annotation_status": "not_applicable",
+              "note": "图形层：保留原图定位（bbox/页码），禁止重绘当作原件"
+            }
+          }
+        },
+        {
+          "question_ref": "bank:dxathing:dxathing-313835ee222c14:2",
+          "qid": "dxathing:dxathing-313835ee222c14:2",
+          "type": "single_choice",
+          "practice_status": "practice",
+          "intended_use": "诊断题候选",
+          "matched_terms": [
+            "充分条件",
+            "必要条件"
+          ],
+          "stem_excerpt": "对任意实数 $a$，$b$，$c$ 给出下列命题： ① “$a = b$”是“$ac = bc$”充要条件； ② “$a + 5$ 是无理数”是“$a$ 是无理数”的充要条件； ③ “$a > b$”是“$a^{2} > b^{2}$”的…",
+          "ocr_layers": {
+            "text": {
+              "expected": true,
+              "renderer": "stem_plain",
+              "annotation_status": "pending_human_review",
+              "note": "文字层：人工确认阅读顺序与换行是否与原件一致"
+            },
+            "math": {
+              "expected": false,
+              "renderer": "stem_blocks_json / fallback_asset",
+              "annotation_status": "not_applicable",
+              "note": "公式层：本轮本机引擎不做公式识别，需人工校对 LaTeX（MathLive 校对入口）"
+            },
+            "table": {
+              "expected": false,
+              "renderer": "blocks.table",
+              "annotation_status": "pending_human_review",
+              "note": "表格层：按单元格阅读顺序标注；无表格题为 not_applicable"
+            },
+            "figure": {
+              "expected": false,
+              "renderer": "images_json / 原图裁切",
+              "annotation_status": "not_applicable",
+              "note": "图形层：保留原图定位（bbox/页码），禁止重绘当作原件"
+            }
+          }
+        },
+        {
+          "question_ref": "bank:dxathing:dxathing-371dd5da274e14:11",
+          "qid": "dxathing:dxathing-371dd5da274e14:11",
+          "type": "single_choice",
+          "practice_status": "practice",
+          "intended_use": "诊断题候选",
+          "matched_terms": [
+            "充分条件",
+            "必要条件"
+          ],
+          "stem_excerpt": "设甲，乙，丙是三个命题. 如果甲是乙的必要条件；丙是乙的充分条件但不是乙的必要条件，那么（$\\quad$）",
+          "ocr_layers": {
+            "text": {
+              "expected": true,
+              "renderer": "stem_plain",
+              "annotation_status": "pending_human_review",
+              "note": "文字层：人工确认阅读顺序与换行是否与原件一致"
+            },
+            "math": {
+              "expected": false,
+              "renderer": "stem_blocks_json / fallback_asset",
+              "annotation_status": "not_applicable",
+              "note": "公式层：本轮本机引擎不做公式识别，需人工校对 LaTeX（MathLive 校对入口）"
+            },
+            "table": {
+              "expected": false,
+              "renderer": "blocks.table",
+              "annotation_status": "pending_human_review",
+              "note": "表格层：按单元格阅读顺序标注；无表格题为 not_applicable"
+            },
+            "figure": {
+              "expected": false,
+              "renderer": "images_json / 原图裁切",
+              "annotation_status": "not_applicable",
+              "note": "图形层：保留原图定位（bbox/页码），禁止重绘当作原件"
+            }
+          }
+        }
+      ]
+    },
+    {
+      "kp_id": 10,
+      "subject": "数学",
+      "parent_id": 9,
+      "parent_path": [
+        "函数与导数",
+        "函数概念与性质"
+      ],
+      "name": "函数定义域与值域",
+      "level": "3",
+      "description": "",
+      "search_terms": [
+        "函数定义域与值域",
+        "函数定义域",
+        "值域"
+      ],
+      "mapping_status": "pending_human_review",
+      "quiz_candidate": "待按该知识点生成课堂测验题并人工审核（本轮无测验数据，不伪造）",
+      "review_note": "候选题为只读题库关键词召回，尚未人工确认知识点映射；不得当作正式标签",
+      "candidate_questions": [
+        {
+          "question_ref": "bank:dxathing:dxathing-0271477fffa1ac:18",
+          "qid": "dxathing:dxathing-0271477fffa1ac:18",
+          "type": "single_choice",
+          "practice_status": "practice",
+          "intended_use": "诊断题候选",
+          "matched_terms": [
+            "值域"
+          ],
+          "stem_excerpt": "函数 $y = \\arccos \\frac{1}{\\sqrt{x}}$ 的值域是（ ）",
+          "ocr_layers": {
+            "text": {
+              "expected": true,
+              "renderer": "stem_plain",
+              "annotation_status": "pending_human_review",
+              "note": "文字层：人工确认阅读顺序与换行是否与原件一致"
+            },
+            "math": {
+              "expected": false,
+              "renderer": "stem_blocks_json / fallback_asset",
+              "annotation_status": "not_applicable",
+              "note": "公式层：本轮本机引擎不做公式识别，需人工校对 LaTeX（MathLive 校对入口）"
+            },
+            "table": {
+              "expected": false,
+              "renderer": "blocks.table",
+              "annotation_status": "pending_human_review",
+              "note": "表格层：按单元格阅读顺序标注；无表格题为 not_applicable"
+            },
+            "figure": {
+              "expected": false,
+              "renderer": "images_json / 原图裁切",
+              "annotation_status": "not_applicable",
+              "note": "图形层：保留原图定位（bbox/页码），禁止重绘当作原件"
+            }
+          }
+        },
+        {
+          "question_ref": "bank:dxathing:dxathing-044c367a25ffc2:22",
+          "qid": "dxathing:dxathing-044c367a25ffc2:22",
+          "type": "short_answer",
+          "practice_status": "practice",
+          "intended_use": "巩固题候选",
+          "matched_terms": [
+            "值域"
+          ],
+          "stem_excerpt": "已知函数 $f(x) = \\frac{4x^2 - 7}{2 - x}$，$x \\in [0,1]$. （1） 求 $f(x)$ 的单调区间和值域. （2） 设 $a \\geqslant 1$，函数 $g(x) = x^3 - 3a^2x…",
+          "ocr_layers": {
+            "text": {
+              "expected": true,
+              "renderer": "stem_plain",
+              "annotation_status": "pending_human_review",
+              "note": "文字层：人工确认阅读顺序与换行是否与原件一致"
+            },
+            "math": {
+              "expected": false,
+              "renderer": "stem_blocks_json / fallback_asset",
+              "annotation_status": "not_applicable",
+              "note": "公式层：本轮本机引擎不做公式识别，需人工校对 LaTeX（MathLive 校对入口）"
+            },
+            "table": {
+              "expected": false,
+              "renderer": "blocks.table",
+              "annotation_status": "pending_human_review",
+              "note": "表格层：按单元格阅读顺序标注；无表格题为 not_applicable"
+            },
+            "figure": {
+              "expected": false,
+              "renderer": "images_json / 原图裁切",
+              "annotation_status": "not_applicable",
+              "note": "图形层：保留原图定位（bbox/页码），禁止重绘当作原件"
+            }
+          }
+        },
+        {
+          "question_ref": "bank:dxathing:dxathing-06b28ed5c92574:2",
+          "qid": "dxathing:dxathing-06b28ed5c92574:2",
+          "type": "single_choice",
+          "practice_status": "practice",
+          "intended_use": "诊断题候选",
+          "matched_terms": [
+            "值域"
+          ],
+          "stem_excerpt": "函数 $y=\\lg x$（$x>0$）的值域是（ ）",
+          "ocr_layers": {
+            "text": {
+              "expected": true,
+              "renderer": "stem_plain",
+              "annotation_status": "pending_human_review",
+              "note": "文字层：人工确认阅读顺序与换行是否与原件一致"
+            },
+            "math": {
+              "expected": false,
+              "renderer": "stem_blocks_json / fallback_asset",
+              "annotation_status": "not_applicable",
+              "note": "公式层：本轮本机引擎不做公式识别，需人工校对 LaTeX（MathLive 校对入口）"
+            },
+            "table": {
+              "expected": false,
+              "renderer": "blocks.table",
+              "annotation_status": "pending_human_review",
+              "note": "表格层：按单元格阅读顺序标注；无表格题为 not_applicable"
+            },
+            "figure": {
+              "expected": false,
+              "renderer": "images_json / 原图裁切",
+              "annotation_status": "not_applicable",
+              "note": "图形层：保留原图定位（bbox/页码），禁止重绘当作原件"
+            }
+          }
+        }
+      ]
+    },
+    {
+      "kp_id": 16,
+      "subject": "数学",
+      "parent_id": 15,
+      "parent_path": [
+        "函数与导数",
+        "一元函数导数及其应用"
+      ],
+      "name": "导数的几何意义",
+      "level": "3",
+      "description": "",
+      "search_terms": [
+        "导数的几何意义",
+        "导数",
+        "几何意义"
+      ],
+      "mapping_status": "pending_human_review",
+      "quiz_candidate": "待按该知识点生成课堂测验题并人工审核（本轮无测验数据，不伪造）",
+      "review_note": "候选题为只读题库关键词召回，尚未人工确认知识点映射；不得当作正式标签",
+      "candidate_questions": [
+        {
+          "question_ref": "bank:dxathing:dxathing-03f07f439576d8:20",
+          "qid": "dxathing:dxathing-03f07f439576d8:20",
+          "type": "short_answer",
+          "practice_status": "practice",
+          "intended_use": "巩固题候选",
+          "matched_terms": [
+            "导数"
+          ],
+          "stem_excerpt": "设函数 $f(x)=x(x-1)(x-a)$（$a>1$）. （1） 求导数 $f'(x)$，并证明 $f(x)$ 有两个不同的极值点 $x_1$，$x_2$； （2） 若不等式 $f(x_1)+f(x_2)\\leqslant0$ 成立，…",
+          "ocr_layers": {
+            "text": {
+              "expected": true,
+              "renderer": "stem_plain",
+              "annotation_status": "pending_human_review",
+              "note": "文字层：人工确认阅读顺序与换行是否与原件一致"
+            },
+            "math": {
+              "expected": false,
+              "renderer": "stem_blocks_json / fallback_asset",
+              "annotation_status": "not_applicable",
+              "note": "公式层：本轮本机引擎不做公式识别，需人工校对 LaTeX（MathLive 校对入口）"
+            },
+            "table": {
+              "expected": false,
+              "renderer": "blocks.table",
+              "annotation_status": "pending_human_review",
+              "note": "表格层：按单元格阅读顺序标注；无表格题为 not_applicable"
+            },
+            "figure": {
+              "expected": false,
+              "renderer": "images_json / 原图裁切",
+              "annotation_status": "not_applicable",
+              "note": "图形层：保留原图定位（bbox/页码），禁止重绘当作原件"
+            }
+          }
+        },
+        {
+          "question_ref": "bank:dxathing:dxathing-065f8251be18dc:21",
+          "qid": "dxathing:dxathing-065f8251be18dc:21",
+          "type": "short_answer",
+          "practice_status": "practice",
+          "intended_use": "巩固题候选",
+          "matched_terms": [
+            "导数"
+          ],
+          "stem_excerpt": "已知函数 $f(x) = x^2 + x - 1$，$\\alpha$，$\\beta$ 是方程 $f(x) = 0$ 的两个根（$\\alpha > \\beta$），$f'(x)$ 是 $f(x)$ 的导数. 设 $a_1 = 1$，$a_{…",
+          "ocr_layers": {
+            "text": {
+              "expected": true,
+              "renderer": "stem_plain",
+              "annotation_status": "pending_human_review",
+              "note": "文字层：人工确认阅读顺序与换行是否与原件一致"
+            },
+            "math": {
+              "expected": false,
+              "renderer": "stem_blocks_json / fallback_asset",
+              "annotation_status": "not_applicable",
+              "note": "公式层：本轮本机引擎不做公式识别，需人工校对 LaTeX（MathLive 校对入口）"
+            },
+            "table": {
+              "expected": false,
+              "renderer": "blocks.table",
+              "annotation_status": "pending_human_review",
+              "note": "表格层：按单元格阅读顺序标注；无表格题为 not_applicable"
+            },
+            "figure": {
+              "expected": false,
+              "renderer": "images_json / 原图裁切",
+              "annotation_status": "not_applicable",
+              "note": "图形层：保留原图定位（bbox/页码），禁止重绘当作原件"
+            }
+          }
+        },
+        {
+          "question_ref": "bank:dxathing:dxathing-3d73797ce7580c:13",
+          "qid": "dxathing:dxathing-3d73797ce7580c:13",
+          "type": "short_answer",
+          "practice_status": "practice",
+          "intended_use": "巩固题候选",
+          "matched_terms": [
+            "导数"
+          ],
+          "stem_excerpt": "应用导数，求过曲线 $x^2+y^2-8x-2y+12=0$ 上一点 $P\\left(5,3\\right)$ 的切线方程.",
+          "ocr_layers": {
+            "text": {
+              "expected": true,
+              "renderer": "stem_plain",
+              "annotation_status": "pending_human_review",
+              "note": "文字层：人工确认阅读顺序与换行是否与原件一致"
+            },
+            "math": {
+              "expected": false,
+              "renderer": "stem_blocks_json / fallback_asset",
+              "annotation_status": "not_applicable",
+              "note": "公式层：本轮本机引擎不做公式识别，需人工校对 LaTeX（MathLive 校对入口）"
+            },
+            "table": {
+              "expected": false,
+              "renderer": "blocks.table",
+              "annotation_status": "pending_human_review",
+              "note": "表格层：按单元格阅读顺序标注；无表格题为 not_applicable"
+            },
+            "figure": {
+              "expected": false,
+              "renderer": "images_json / 原图裁切",
+              "annotation_status": "not_applicable",
+              "note": "图形层：保留原图定位（bbox/页码），禁止重绘当作原件"
+            }
+          }
+        }
+      ]
+    },
+    {
+      "kp_id": 22,
+      "subject": "数学",
+      "parent_id": 21,
+      "parent_path": [
+        "三角函数与解三角形",
+        "三角函数"
+      ],
+      "name": "同角三角函数与诱导公式",
+      "level": "3",
+      "description": "",
+      "search_terms": [
+        "同角三角函数与诱导公式",
+        "同角三角函数",
+        "诱导公式"
+      ],
+      "mapping_status": "pending_human_review",
+      "quiz_candidate": "待按该知识点生成课堂测验题并人工审核（本轮无测验数据，不伪造）",
+      "review_note": "候选题为只读题库关键词召回，尚未人工确认知识点映射；不得当作正式标签",
+      "candidate_questions": []
+    }
+  ]
+}

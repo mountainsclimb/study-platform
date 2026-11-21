@@ -62,6 +62,9 @@ _ID_TABLES = frozenset({
     "pl_cards", "pl_page_edits", "pl_paper_attempts", "pl_paper_answers",
     "asst_conversations", "asst_messages", "asst_skills",
     "focus_sessions",
+    # 第五轮共用接口：学习证据 / 学习附件 / 四档复习卡（各自模块 init_* 幂等建表）。
+    "study_evidence", "study_artifacts", "study_artifact_revisions", "study_artifact_links",
+    "review_cards", "review_ratings",
 })
 _INSERT_TABLE = re.compile(r"^\s*INSERT\s+INTO\s+([a-z_][a-z_0-9]*)\b", re.IGNORECASE)
 _QMARK = re.compile(r"""'(?:[^']|'')*'|"(?:[^"]|"")*"|--[^\n]*|/\*[\s\S]*?\*/|\?""")

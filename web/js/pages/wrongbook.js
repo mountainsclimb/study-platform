@@ -8,6 +8,10 @@ import {
 import { go, current } from '../core/router.js';
 import { openQuestion } from './question.js';
 import { openPresentationMode } from '../components/presentationMode.js';
+// 四档复习（fsrs-reference v5.0-local）：错题页只读复习卡接口，行内挂评分区；不改旧错题表语义。
+import {
+  algorithmLabel, dueCards, ensureReviewCards, formatDue, isVersionConflict, renderReviewRating,
+} from '../components/reviewRating.js';
 
 // 讲错题入口：打开全屏讲解（数据由组件按只读 /api/reveal 拉取；未解锁时组件内提示先作答）。
 function openWrongPresentation(qid) {
@@ -30,6 +34,13 @@ export async function renderWrongbook(container, version) {
   const sessionArea = el('div');
   const list = el('div');
   const uploadWrongArea = el('div');
+  // 四档复习：顶部统计条 + 到期卡索引 + 评分后行内日期覆盖（只更新本行，不整页刷新）。
+  const reviewBar = el('div', { class: 'review-due-bar', role: 'status', 'aria-live': 'polite', hidden: true });
+  const reviewCardIndex = new Map();
+  const reviewDueOverrides = new Map();
+  let reviewDueToday = 0;
+  let reviewStats = null;
+  let reviewReady = null;
 
   let page = 1;
   const pageSize = 18;
@@ -38,6 +49,204 @@ export async function renderWrongbook(container, version) {
   let listSeq = 0;
   let kpAggSeq = 0;
   let uploadSeq = 0;
+
+  /* ---------------------------------------------------------------------------
+   * 四档复习接线（fsrs-reference v5.0-local）
+   *
+   * 口径：复习卡由 POST /review-cards/sync 从错题幂等迁移；GET /review-cards/due 返回到期卡，
+   * 卡上有 question_ref（bank:/app:/official: 规范引用）与 qid（写库键：题库裸 qid、
+   * app:/official: 带前缀）。错题列表项的 ref/qid 与之同口径：先按 ref 匹配，qid 兜底。
+   * 匹配到的到期卡在行内渲染四档评分区；评分成功后只用服务端返回的 due_at 更新本行
+   * 「下次复习」并提示，不整页刷新；降级/409/弱网重试由组件与页面协作兜底。
+   * 接口不可用时只降级提示，错题本原有筛选/讲题/导出/标签/归档逻辑完全不变。
+   * ------------------------------------------------------------------------- */
+
+  // 统一引用 → 可比较别名集合：原值 + 规范引用（裸 qid 视作 bank:）+ 题库写库键。
+  function reviewAliases(values) {
+    const aliases = new Set();
+    for (const value of values) {
+      const text = String(value ?? '').trim();
+      if (!text) continue;
+      aliases.add(text);
+      const matched = text.match(/^(bank|app|official):(.*)$/i);
+      if (matched) {
+        const source = matched[1].toLowerCase();
+        const key = matched[2].trim();
+        if (!key) continue;
+        aliases.add(`${source}:${key}`);
+        // 只有题库的写库键是裸 qid；app:/official: 的写库键本身带前缀，不能去前缀
+        // 否则个人题 id 可能与题库 qid 撞车。
+        if (source === 'bank') aliases.add(key);
+      } else {
+        aliases.add(`bank:${text}`);
+      }
+    }
+    return [...aliases];
+  }
+
+  function reviewCardAliases(card) {
+    return reviewAliases([
+      card?.question_ref,
+      card?.qid,
+      String(card?.card_key || '').replace(/^q:/, ''),
+    ]);
+  }
+
+  function reviewEntryAliases(entry, question) {
+    return reviewAliases([entry?.ref, entry?.qid, question?.ref, question?.qid]);
+  }
+
+  function buildReviewCardIndex(items) {
+    const index = new Map();
+    for (const item of items || []) {
+      if (!item || item.card_id === undefined || item.card_id === null) continue;
+      for (const alias of reviewCardAliases(item)) {
+        if (!index.has(alias)) index.set(alias, item);
+      }
+    }
+    return index;
+  }
+
+  function lookupReviewCard(entry, question) {
+    for (const alias of reviewEntryAliases(entry, question)) {
+      const found = reviewCardIndex.get(alias);
+      if (found) return found;
+    }
+    return null;
+  }
+
+  // 评分成功后该卡已不在到期队列：从索引移除，后续筛选重渲染不会重复挂评分区。
+  function removeReviewCardFromIndex(card) {
+    const cardId = Number(card?.card_id);
+    for (const alias of reviewCardAliases(card)) {
+      const currentCard = reviewCardIndex.get(alias);
+      if (!currentCard || Number(currentCard.card_id) === cardId) reviewCardIndex.delete(alias);
+    }
+  }
+
+  function setReviewDueOverride(entry, question, dueAt) {
+    if (!dueAt) return;
+    for (const alias of reviewEntryAliases(entry, question)) reviewDueOverrides.set(alias, dueAt);
+  }
+
+  // 行内「下次复习」：评分后用服务端 due_at 覆盖旧错题表的 next_review_at，重渲染也保持一致。
+  function reviewNextDueValue(entry, question) {
+    for (const alias of reviewEntryAliases(entry, question)) {
+      if (reviewDueOverrides.has(alias)) return reviewDueOverrides.get(alias);
+    }
+    return entry?.next_review_at;
+  }
+
+  function reviewAlgorithmText(source) {
+    return algorithmLabel({
+      algorithm: source?.algorithm,
+      algorithm_version: source?.algorithm_version,
+    });
+  }
+
+  function renderReviewBar() {
+    const algorithm = reviewAlgorithmText(reviewStats || [...reviewCardIndex.values()][0] || null);
+    reviewBar.hidden = false;
+    reviewBar.classList.remove('is-unavailable');
+    reviewBar.replaceChildren(
+      el('span', { class: 'review-due-bar-main' },
+        badge(t('study.review.badge'), 'teal'),
+        el('strong', { class: 'review-due-bar-count' },
+          t('study.review.stats', { count: number(reviewDueToday), algorithm }))),
+      el('span', { class: 'review-due-bar-help' }, t('study.review.scaleNote')));
+  }
+
+  function renderReviewUnavailable() {
+    reviewBar.hidden = false;
+    reviewBar.classList.add('is-unavailable');
+    reviewBar.replaceChildren(
+      el('span', { class: 'review-due-bar-main' }, badge(t('study.review.badge'), 'amber')),
+      el('span', { class: 'review-due-bar-help' }, t('study.review.unavailable')));
+  }
+
+  // 409 后重新拉取 due 同步索引（其它行状态保持一致），再按单卡接口取最新版本供重新评分。
+  async function refreshReviewCard(card) {
+    const due = await dueCards(200);
+    if (!due.unavailable) {
+      reviewCardIndex.clear();
+      for (const [alias, item] of buildReviewCardIndex(due.items)) reviewCardIndex.set(alias, item);
+    }
+    try {
+      const data = await api(`/review-cards/${encodeURIComponent(card.card_id)}`);
+      return data?.card || null;
+    } catch {
+      return null;
+    }
+  }
+
+  function applyRatingSuccess(result, { entry, question, nextReviewNode }) {
+    if (!result || result.degraded) {
+      // 降级：到期时间保持原值，不更新行内日期；组件内已展示中文提示与「重试」入口。
+      if (result?.degraded) toast(t('study.review.degraded'), true);
+      return;
+    }
+    if (result.card) removeReviewCardFromIndex(result.card);
+    if (!result.due_at) return;
+    setReviewDueOverride(entry, question, result.due_at);
+    if (nextReviewNode?.isConnected) {
+      nextReviewNode.textContent = t('wrongbook.nextReview', { time: dateText(result.due_at) });
+    }
+    reviewDueToday = Math.max(0, Number(reviewDueToday || 0) - 1);
+    renderReviewBar();
+    toast(t('study.review.scheduledToast', {
+      date: formatDue(result.due_at),
+      algorithm: algorithmLabel(result),
+    }));
+  }
+
+  // 评分请求：必传 card_version 与服务端幂等键；409 重新拉取后把最新卡交回组件更换版本。
+  async function submitRating({ card, rating, idempotencyKey, entry, question, nextReviewNode }) {
+    const cardVersion = Number(card?.version ?? card?.card_version);
+    try {
+      const result = await api(`/review-cards/${encodeURIComponent(card.card_id)}/ratings`, {
+        method: 'POST',
+        data: {
+          rating,
+          card_version: Number.isInteger(cardVersion) ? cardVersion : undefined,
+          idempotency_key: idempotencyKey,
+        },
+      });
+      if (current(version)) applyRatingSuccess(result, { entry, question, nextReviewNode });
+      return result;
+    } catch (error) {
+      if (!isVersionConflict(error)) throw error;
+      toast(t('study.review.conflict'), true);
+      const latest = await refreshReviewCard(card);
+      if (latest?.due_at) setReviewDueOverride(entry, question, latest.due_at);
+      const conflict = new Error(t('study.review.conflict'));
+      conflict.conflict = true;
+      conflict.card = latest;
+      throw conflict;
+    }
+  }
+
+  // 页面加载时先触发一次幂等迁移，再并行取「到期卡 + 统计」；接口失败只降级提示。
+  async function loadReviewData() {
+    try {
+      await ensureReviewCards();
+      const [due, stats] = await Promise.all([
+        dueCards(200),
+        api('/review-cards/stats').catch(() => null),
+      ]);
+      if (!current(version)) return;
+      if (due.unavailable) {
+        renderReviewUnavailable();
+        return;
+      }
+      reviewCardIndex.clear();
+      for (const [alias, item] of buildReviewCardIndex(due.items)) reviewCardIndex.set(alias, item);
+      reviewStats = stats;
+      reviewDueToday = Number(stats?.due_today ?? due.total ?? due.items.length) || 0;
+      renderReviewBar();
+    } catch {
+      if (current(version)) renderReviewUnavailable();
+    }
+  }
 
   // 导出 Anki 牌组：按学科分牌组（正面题干+选项，背面答案+解析+我的错因）。
   async function exportAnki(trigger) {
@@ -157,6 +366,9 @@ export async function renderWrongbook(container, version) {
     const mine = ++listSeq;
     list.replaceChildren(loading());
     try {
+      // 先等四档复习索引就绪：首次渲染即可挂行内评分区；接口不可用则已降级为空索引。
+      if (reviewReady) await reviewReady;
+      if (mine !== listSeq || !current(version)) return;
       const data = await api(`/wrongbook?${query({
         subject: subject.value,
         due_only: dueOnly.checked ? 'true' : 'false',
@@ -192,7 +404,25 @@ export async function renderWrongbook(container, version) {
           sourceOf(q),
           q.number_label ? t('question.originalNumber', { label: q.number_label }) : null,
         ].filter(Boolean).join(' · ') || t('wrongbook.sourceSeeDetail');
-        const card = el('article', { class: `card pg-question-card${entry.archived ? ' pg-question-card--archived' : ''}` },
+        // 四档复习：到期卡与错题按统一引用匹配（ref 优先、qid 兜底）后，在行内挂评分区。
+        // 归档行即使残留卡片也不提供评分（到期队列只含未归档卡）。
+        const dueCard = entry.archived ? null : lookupReviewCard(entry, q);
+        const nextReviewNode = el('span', {},
+          t('wrongbook.nextReview', { time: dateText(reviewNextDueValue(entry, q)) }));
+        const ratingSlot = dueCard
+          ? renderReviewRating({
+              card: dueCard,
+              onRate: (rating, context) => submitRating({
+                card: context?.card || dueCard,
+                rating,
+                idempotencyKey: context?.idempotencyKey,
+                entry,
+                question: q,
+                nextReviewNode,
+              }),
+            }).element
+          : null;
+        const children = [
           el('div', { class: 'pg-question-head' },
             el('div', { class: 'pg-status-row' },
               isApp ? badge(sourceLabel, 'blue') : null,
@@ -205,26 +435,30 @@ export async function renderWrongbook(container, version) {
           el('div', { class: 'pg-question-stem' }, readableSummary(q, 170)),
           tags.length ? el('div', { class: 'pg-status-row' }, ...tags.map(t => badge(t, 'amber'))) : null,
           el('div', { class: 'pg-question-review' },
-            el('span', {}, t('wrongbook.nextReview', { time: dateText(entry.next_review_at) })),
+            nextReviewNode,
             el('span', {}, t('wrongbook.intervalDays', { count: Math.round(entry.interval_days || 1) })),
             entry.failures ? el('span', {}, t('wrongbook.failCount', { count: entry.failures })) : null,
             entry.streak ? el('span', {}, t('wrongbook.streakCount', { count: entry.streak })) : null),
-          el('div', { class: 'pg-question-actions' },
-            entry.archived
-              ? button(t('wrongbook.restore'), e => busy(e.currentTarget, async () => {
-                  await api('/wrongbook/restore', { method: 'POST', data: { qid: q.qid } });
-                  toast(t('wrongbook.restored'));
-                  load();
-                }), 'ghost small')
-              : button(t('common.remove'), e => busy(e.currentTarget, async () => {
-                  await api(`/wrongbook/${encodeURIComponent(q.qid)}`, { method: 'DELETE' });
-                  toast(t('wrongbook.removed'));
-                  load();
-                }), 'ghost small'),
-            button(t('wrongbook.present'), () => openWrongPresentation(q.qid || entry.qid), 'soft small', 'presentation'),
-            button(t('wrongbook.tryAgain'), () => go('practice', q.qid || entry.qid), 'soft small', 'repeat',
-              { disabled: entry.unavailable === true, title: entry.unavailable ? t('wrongbook.tryAgainUnavailable') : null })));
-        grid.append(card);
+        ];
+        if (ratingSlot) children.push(ratingSlot);
+        children.push(el('div', { class: 'pg-question-actions' },
+          entry.archived
+            ? button(t('wrongbook.restore'), e => busy(e.currentTarget, async () => {
+                await api('/wrongbook/restore', { method: 'POST', data: { qid: q.qid } });
+                toast(t('wrongbook.restored'));
+                load();
+              }), 'ghost small')
+            : button(t('common.remove'), e => busy(e.currentTarget, async () => {
+                await api(`/wrongbook/${encodeURIComponent(q.qid)}`, { method: 'DELETE' });
+                toast(t('wrongbook.removed'));
+                load();
+              }), 'ghost small'),
+          button(t('wrongbook.present'), () => openWrongPresentation(q.qid || entry.qid), 'soft small', 'presentation'),
+          button(t('wrongbook.tryAgain'), () => go('practice', q.qid || entry.qid), 'soft small', 'repeat',
+            { disabled: entry.unavailable === true, title: entry.unavailable ? t('wrongbook.tryAgainUnavailable') : null })));
+        grid.append(el('article', {
+          class: `card pg-question-card${entry.archived ? ' pg-question-card--archived' : ''}`,
+        }, ...children));
       }
       list.append(grid);
 
@@ -287,6 +521,7 @@ export async function renderWrongbook(container, version) {
           button(t('wrongbook.exportAnki'), e => exportAnki(e.currentTarget), 'secondary small', 'download'),
           button(t('common.printPdf'), () => window.print(), 'secondary small', 'download'),
           button(t('wrongbook.startContinuous'), e => startContinuousReview(e.currentTarget), '', 'repeat')))),
+    reviewBar,
     el('section', { class: 'card pg-filter-bar' },
       el('div', { class: 'pg-filter-head' },
         el('h2', {}, t('wrongbook.filterTitle')),
@@ -303,8 +538,10 @@ export async function renderWrongbook(container, version) {
     uploadWrongArea
   );
 
+  // 四档复习在目录就绪后与列表并行加载；列表渲染内部会等 reviewReady 就绪再挂评分区。
+  reviewReady = loadReviewData();
   for (const ctrl of [subject, tagFilter, dueOnly, includeArchived]) {
     ctrl.addEventListener('change', () => { page = 1; load(); loadKpAggregation(); loadUploadWrongs(); });
   }
-  await Promise.all([load(), loadKpAggregation(), loadUploadWrongs()]);
+  await Promise.all([load(), loadKpAggregation(), loadUploadWrongs(), reviewReady]);
 }

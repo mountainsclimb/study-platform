@@ -11,6 +11,7 @@ Phase 1（拍题入库主路径）:
 import asyncio
 from io import BytesIO
 import json
+import math
 import os
 from pathlib import Path
 import re
@@ -211,6 +212,16 @@ _OPTION_LINE_RE = re.compile(r"^([A-La-l])\s*[.．、:：)）]\s*(.+)$")
 _ANSWER_LINE_RE = re.compile(r"^(?:参考)?答案\s*[:：]\s*(.+)$")
 _MAX_INTAKE_TEXT = 8000
 
+# 第五轮「OCR 内容块」：块列表与 schema 版本随草稿/人工确认一起存进 draft_json / confirmed_json
+# （沿用 JSON TEXT，不改表结构）。本地引擎不做公式识别：math 块 latex=null、needs_review=true。
+INTAKE_BLOCKS_SCHEMA_VERSION = "intake-blocks-v1"
+CONFIRM_BLOCKS_MAX = 200
+BLOCK_KIND_VALUES = frozenset({"text", "math", "table", "image"})
+_BLOCK_TEXT_MAX = 4000
+_BLOCK_LATEX_MAX = 2000
+_BLOCK_ORDER_MAX = 500
+_BLOCK_PAGE_MAX = 200
+
 _INTAKE_TYPE_HINTS = {
     "MULTIPLE": ("多选", "多项选择", "不定项"),
     "SINGLE": ("单选", "单项选择", "选择题"),
@@ -307,8 +318,56 @@ def _empty_intake_draft(source: str = "local_ocr") -> dict:
     }
 
 
-def _parse_question_text(text: str, *, source: str = "local_ocr") -> dict:
-    """把 OCR/文本初稿拆成题干/选项/答案的机器草稿（启发式，可能出错，仅预填）。"""
+def _local_ocr_meta(module) -> dict:
+    """本地 OCR 引擎名/版本/能力（不加载模型），供 ocr-draft 等响应复用。
+
+    模块未提供（或导入失败时传入 None）返回空结构，避免响应缺字段。
+    """
+    meta = {
+        "engine": str(getattr(module, "ENGINE_NAME", "") or ""),
+        "engine_version": None,
+        "capabilities": dict(getattr(module, "CAPABILITIES", {}) or {}),
+    }
+    provider = getattr(module, "engine_meta", None)
+    if callable(provider):
+        try:
+            value = provider()
+        except Exception:  # 能力信息只是增强字段，读取失败不影响 OCR 主流程
+            value = None
+        if isinstance(value, dict):
+            meta.update(value)
+    return meta
+
+
+def _ocr_result_blocks(module, result, *, page: int = 1) -> list[dict]:
+    """把 ``recognize_image`` 的行结果按统一口径构造成内容块；模块不支持时返回 []。
+
+    块构造放在 ``app.ai.ocr`` 的 :func:`build_blocks`，这里只负责跨模块调用，
+    保证「原图定位/阅读顺序/kind 判定」只有一处口径。多图拍题的 ``page`` 为图片序号。
+    """
+    if not isinstance(result, dict):
+        return []
+    builder = getattr(module, "build_blocks", None)
+    if not callable(builder):
+        return []
+    try:
+        return builder(
+            result.get("lines") or [],
+            result.get("width") or 0,
+            result.get("height") or 0,
+            page=page,
+        )
+    except (TypeError, ValueError):
+        return []
+
+
+def _parse_question_text(text: str, *, source: str = "local_ocr", blocks=None) -> dict:
+    """把 OCR/文本初稿拆成题干/选项/答案的机器草稿（启发式，可能出错，仅预填）。
+
+    ``blocks`` 为本地 OCR 产出的内容块（含原图位置/阅读顺序/置信度）；只有调用方确实处理了
+    块（传入列表，含空列表 ``[]``）时才在草稿里写 ``schema_version`` 与 ``blocks``，
+    避免给旧草稿凭空加键。题干/选项/答案仍走原有行启发式，块文本不改变旧拆分口径。
+    """
     draft = _empty_intake_draft(source)
     stem_lines: list[str] = []
     option_lines: list[tuple[str, str]] = []
@@ -340,6 +399,9 @@ def _parse_question_text(text: str, *, source: str = "local_ocr") -> dict:
     draft["answers"] = answers[:8]
     if not draft["stem"] and not draft["options"] and not draft["answers"]:
         draft["uncertain"] = ["没有识别出可用文字，请重拍、裁剪或手动录入"]
+    if blocks is not None:
+        draft["schema_version"] = INTAKE_BLOCKS_SCHEMA_VERSION
+        draft["blocks"] = [dict(block) for block in blocks if isinstance(block, dict)]
     return draft
 
 
@@ -375,14 +437,22 @@ async def create_ocr_draft(upload_id: int, user=Depends(current_user)):
 
     识别不可用/超时返回 200 + ``ocr_available=false``（保留原图，前端提示重试/手录）；
     图片本身损坏返回 422。已人工确认的题目只更新草稿，不改写确认字段。
+
+    响应新增（旧字段全部保留）：
+    * ``blocks``：当前草稿的内容块（含原图位置/阅读顺序/置信度；无块时为 ``[]``）；
+    * ``engine`` / ``engine_version`` / ``capabilities``：本地引擎与能力声明（不加载模型）；
+    * 草稿 ``draft.schema_version = "intake-blocks-v1"`` + ``draft.blocks``：新页面用于
+      原图定位与公式校对；文本上传等没有块的旧路径不凭空追加这些键。
     """
     from . import ocr as local_ocr
 
+    engine_meta = _local_ocr_meta(local_ocr)
     row = _read_intake_row(upload_id, user["id"])
     status_before = str(row.get("status") or "uploaded")
     media_type = str(row.get("media_type") or "")
     text = str(row.get("text_content") or "").strip()
     notice = ""
+    blocks: list[dict] = []
 
     if text and not media_type.startswith("image/"):
         draft = _parse_question_text(text, source="text")
@@ -416,19 +486,24 @@ async def create_ocr_draft(upload_id: int, user=Depends(current_user)):
             if line_text:
                 prefix = f"【第 {index} 张图】\n" if len(images) > 1 else ""
                 parts.append(prefix + line_text)
+            # 多图拍题用图片序号作为 page（1 基），单图固定 1；块构造口径只在 ocr.build_blocks。
+            blocks.extend(_ocr_result_blocks(local_ocr, result, page=index if len(images) > 1 else 1))
         if not ocr_available:
             return {
                 "upload_id": upload_id,
                 "revision": _intake_revision(row),
                 "ocr_available": False,
                 "ocr_notice": notice,
+                "blocks": [],
+                "block_notice": str(getattr(local_ocr, "BLOCKS_NOTICE", "") or ""),
                 "draft": _json_load(row.get("draft_json")),
                 "status": status_before,
                 "intake": _intake_state(row),
                 "notice": notice + "；原图已保留，可重试或直接手动录入。",
+                **engine_meta,
             }
         ocr_text = "\n\n".join(parts)[:_MAX_INTAKE_TEXT]
-        draft = _parse_question_text(ocr_text, source="local_ocr")
+        draft = _parse_question_text(ocr_text, source="local_ocr", blocks=blocks)
         draft["ocr_text"] = ocr_text
         draft["ocr_notice"] = getattr(local_ocr, "OCR_NOTICE", "")
         if not ocr_text and not draft["uncertain"]:
@@ -451,10 +526,13 @@ async def create_ocr_draft(upload_id: int, user=Depends(current_user)):
         "revision": _intake_revision(fresh),
         "ocr_available": True,
         "ocr_notice": draft.get("ocr_notice") or "",
+        "blocks": [block for block in draft.get("blocks") or [] if isinstance(block, dict)],
+        "block_notice": str(getattr(local_ocr, "BLOCKS_NOTICE", "") or ""),
         "draft": draft,
         "status": new_status,
         "intake": _intake_state(fresh),
         "notice": notice or "本地 OCR 草稿已预填；机器识别可能有错字、漏字或公式偏差，请逐字核对后再确认。",
+        **engine_meta,
     }
 
 
@@ -770,6 +848,73 @@ class ConfirmUploadInput(BaseModel):
     answers: list[str] | None = Field(default=None, max_length=8)
     explanation: str = Field(default="", max_length=20000)
     knowledge_tags: list[str] | None = Field(default=None, max_length=30)
+    # 第五轮：人工确认的 OCR 内容块（含原图位置/阅读顺序/置信度）。可选：
+    # 旧客户端不传时沿用 draft/confirmed 里已有 blocks，不丢数据。
+    blocks: list[dict] | None = Field(default=None, max_length=CONFIRM_BLOCKS_MAX)
+
+
+def _validate_confirm_blocks(raw) -> list[dict]:
+    """校验人工确认请求里的识别块（只校验已知字段，未知字段原样保留）。
+
+    规则（非法一律 422 + 中文提示）：
+    * 每块必须是非空对象，最多 ``CONFIRM_BLOCKS_MAX`` 块；
+    * ``kind`` 若提供必须属于 ``BLOCK_KIND_VALUES``（text/math/table/image）；
+    * ``text`` ≤4000 字、``latex`` ≤2000 字（可为 null）、``order`` 0–500、``page`` 1–200；
+    * ``bbox``/``norm`` 若提供必须是对象，x/y/w/h 为有限数值或缺失。
+    """
+    if not isinstance(raw, list):
+        raise HTTPException(422, "blocks 必须是识别块列表")
+    if len(raw) > CONFIRM_BLOCKS_MAX:
+        raise HTTPException(422, f"识别块最多 {CONFIRM_BLOCKS_MAX} 个，请精简后再确认")
+    blocks: list[dict] = []
+    for position, block in enumerate(raw, 1):
+        if not isinstance(block, dict) or not block:
+            raise HTTPException(422, f"第 {position} 个识别块为空或格式无效")
+        kind = block.get("kind")
+        if kind is not None and (
+            not isinstance(kind, str) or kind.strip().lower() not in BLOCK_KIND_VALUES
+        ):
+            raise HTTPException(
+                422, f"第 {position} 个识别块 kind 无效（仅支持 text、math、table、image）"
+            )
+        text_value = block.get("text")
+        if text_value is not None:
+            if not isinstance(text_value, str):
+                raise HTTPException(422, f"第 {position} 个识别块 text 必须是字符串")
+            if len(text_value) > _BLOCK_TEXT_MAX:
+                raise HTTPException(422, f"第 {position} 个识别块 text 不能超过 {_BLOCK_TEXT_MAX} 字")
+        latex = block.get("latex")
+        if latex is not None:
+            if not isinstance(latex, str):
+                raise HTTPException(422, f"第 {position} 个识别块 latex 必须是字符串或 null")
+            if len(latex) > _BLOCK_LATEX_MAX:
+                raise HTTPException(422, f"第 {position} 个识别块 latex 不能超过 {_BLOCK_LATEX_MAX} 字")
+        order = block.get("order")
+        if order is not None:
+            if isinstance(order, bool) or not isinstance(order, int) or not 0 <= order <= _BLOCK_ORDER_MAX:
+                raise HTTPException(422, f"第 {position} 个识别块 order 必须是 0–{_BLOCK_ORDER_MAX} 的整数")
+        page = block.get("page")
+        if page is not None:
+            if isinstance(page, bool) or not isinstance(page, int) or not 1 <= page <= _BLOCK_PAGE_MAX:
+                raise HTTPException(422, f"第 {position} 个识别块 page 必须是 1–{_BLOCK_PAGE_MAX} 的整数")
+        for field in ("bbox", "norm"):
+            value = block.get(field)
+            if value is None:
+                continue
+            if not isinstance(value, dict):
+                raise HTTPException(422, f"第 {position} 个识别块 {field} 必须是对象")
+            for axis in ("x", "y", "w", "h"):
+                if axis not in value:
+                    continue
+                number = value[axis]
+                if (
+                    isinstance(number, bool)
+                    or not isinstance(number, (int, float))
+                    or not math.isfinite(float(number))
+                ):
+                    raise HTTPException(422, f"第 {position} 个识别块 {field}.{axis} 必须是数值")
+        blocks.append(dict(block))
+    return blocks
 
 
 @router.patch("/uploads/{upload_id}/confirm")
@@ -777,6 +922,8 @@ def confirm_upload(upload_id: int, data: ConfirmUploadInput, user=Depends(curren
     """人工确认题干/答案（识别草稿 -> 人工确认）。
 
     - ``expected_version`` 对应 ai_uploads.intake_revision；不一致返回 409，避免覆盖他人/他端修改；
+    - ``blocks`` 为可选内容块：传了就校验并覆盖写入 ``confirmed_json.blocks``；不传则沿用
+      draft/confirmed 里已有块（旧客户端/旧草稿没有 blocks 时不追加空键，保持旧 JSON 原样）；
     - 确认会递增 intake_revision，并清空 pending_draft_json（模型草稿已被用户看过并处理）；
     - 异步识别任务在确认后只把模型结果写入 pending_draft_json，不改 confirmed_json。
     """
@@ -786,9 +933,13 @@ def confirm_upload(upload_id: int, data: ConfirmUploadInput, user=Depends(curren
     current_revision = _intake_revision(row)
     if data.expected_version is not None and int(data.expected_version) != current_revision:
         raise HTTPException(409, "题目已被其他操作更新（版本冲突），请刷新页面后重试")
+    blocks = _validate_confirm_blocks(data.blocks) if data.blocks is not None else None
     confirmed = _json_load(row.get("confirmed_json"), {}) or {}
     draft = _json_load(row.get("draft_json"), {}) or {}
     base = {**draft, **confirmed}
+    if blocks is None:
+        inherited = base.get("blocks")
+        blocks = inherited if isinstance(inherited, list) else None
     answers = list(data.answers) if data.answers is not None else list(base.get("answers") or [])
     knowledge_tags = (
         list(data.knowledge_tags) if data.knowledge_tags is not None
@@ -804,6 +955,11 @@ def confirm_upload(upload_id: int, data: ConfirmUploadInput, user=Depends(curren
         "explanation": data.explanation if data.explanation else str(base.get("explanation") or "").strip(),
         "knowledge_tags": [str(item).strip()[:80] for item in knowledge_tags if str(item).strip()][:30],
     }
+    if blocks is not None:
+        payload["blocks"] = blocks
+        payload["schema_version"] = str(
+            base.get("schema_version") or INTAKE_BLOCKS_SCHEMA_VERSION
+        )
     now = db.utcnow()
     with db.connection() as con:
         _ensure_intake_schema(con)
@@ -844,19 +1000,22 @@ def find_similar_for_upload(upload_id: int, user=Depends(current_user)):
 LOCAL_OCR_TEXT_LIMIT = 8000  # 本地 OCR 文本注入提示/返回给用户校对的最大字符数
 
 
-async def _local_ocr_question_text(images) -> tuple[str, str | None]:
-    """拍题识别前先跑本地 OCR：文本既用于视觉提示校对，也原样带回给用户核对。
+async def _local_ocr_question_text(images) -> tuple[str, str | None, list[dict]]:
+    """拍题识别前先跑本地 OCR：文本用于视觉提示校对，同时带回可供原图定位的内容块。
 
-    本地 OCR 不可用/单张失败不阻断视觉识别（返回空文本与提示），绝不返回占位文本。
+    返回 ``(文本, 提示, blocks)``；本地 OCR 不可用/单张失败不阻断视觉识别
+    （返回空文本/空块与提示），绝不返回占位文本。多图拍题的块 ``page`` 为图片序号（1 基）。
     """
     if not images:
-        return "", None
+        return "", None, []
     try:
         from . import ocr as local_ocr
     except Exception:  # 本地 OCR 模块导入失败按未启用处理
-        return "", None
+        return "", None, []
     parts: list[str] = []
+    blocks: list[dict] = []
     notice = None
+    multi = len(images) > 1
     for index, image in enumerate(images, 1):
         data = image.get("data") if isinstance(image, dict) else None
         if not isinstance(data, str) or not data:
@@ -873,8 +1032,9 @@ async def _local_ocr_question_text(images) -> tuple[str, str | None]:
             continue
         text = str(result.get("text") or "").strip() if isinstance(result, dict) else ""
         if text:
-            parts.append(f"【第 {index} 张图】\n{text}" if len(images) > 1 else text)
-    return "\n\n".join(parts)[:LOCAL_OCR_TEXT_LIMIT], notice
+            parts.append(f"【第 {index} 张图】\n{text}" if multi else text)
+        blocks.extend(_ocr_result_blocks(local_ocr, result, page=index if multi else 1))
+    return "\n\n".join(parts)[:LOCAL_OCR_TEXT_LIMIT], notice, blocks
 
 
 async def _recognize_job(user_id: int, data, provider, verifier, *, job_id=None):
@@ -895,8 +1055,9 @@ async def _recognize_job(user_id: int, data, provider, verifier, *, job_id=None)
     if not images and not row["text_content"].strip():
         raise ValueError("上传内容为空，无法识别")
 
-    # 视觉识别前先跑本地 OCR：作为提示词里的校对参考，并在结果中带回 ocr_text 供用户核对。
-    ocr_text, ocr_error = await _local_ocr_question_text(images)
+    # 视觉识别前先跑本地 OCR：作为提示词里的校对参考，并在结果中带回 ocr_text 供用户核对；
+    # 同时拿本地 OCR 行结果构造内容块（原图定位/阅读顺序），随识别结果一起回写。
+    ocr_text, ocr_error, ocr_blocks = await _local_ocr_question_text(images)
     ocr_hint = (
         "\n\n本地 OCR 初步识别（机器初稿，可能有错字、漏字或公式偏差；仅供校对参考，"
         "请以图片内容为准逐字核对后输出题干与选项，不要照抄错误）：\n" + ocr_text
@@ -949,6 +1110,13 @@ async def _recognize_job(user_id: int, data, provider, verifier, *, job_id=None)
         }
 
     primary_rec = parse_rec(calls_raw[0]["content"])
+    # 内容块随识别结果回写：recognized_json / draft_json / pending_draft_json 必须带 blocks，
+    # 供前端做原图定位与公式校对（math 块 latex=null、needs_review=true，绝不伪造公式识别）。
+    recognized_payload = {
+        **primary_rec,
+        "blocks": list(ocr_blocks),
+        "schema_version": INTAKE_BLOCKS_SCHEMA_VERSION,
+    }
     diffs = []
     secondary_rec = None
     if len(calls_raw) == 2:
@@ -966,7 +1134,7 @@ async def _recognize_job(user_id: int, data, provider, verifier, *, job_id=None)
         "provider_name": str(calls_raw[0].get("provider_name") or ""),
     }
     vision_draft = {
-        **primary_rec,
+        **recognized_payload,
         "source": "vision",
         "ocr_text": ocr_text,
         "ocr_notice": ocr_error or "",
@@ -986,7 +1154,7 @@ async def _recognize_job(user_id: int, data, provider, verifier, *, job_id=None)
             "UPDATE ai_uploads SET recognized_json=?, draft_json=?, status='recognized' "
             "WHERE id=? AND user_id=? AND intake_revision=? "
             "AND (confirmed_json IS NULL OR confirmed_json='')",
-            (_json(primary_rec), _json(vision_draft), data.upload_id, user_id, base_revision),
+            (_json(recognized_payload), _json(vision_draft), data.upload_id, user_id, base_revision),
         ).rowcount
         if changed:
             draft_applied = True
@@ -1013,7 +1181,7 @@ async def _recognize_job(user_id: int, data, provider, verifier, *, job_id=None)
     )
     return {
         "upload_id": data.upload_id,
-        "recognized": primary_rec,
+        "recognized": recognized_payload,
         "secondary_recognized": secondary_rec,
         "differences": diffs,
         "similar_questions": similar,
@@ -1022,6 +1190,8 @@ async def _recognize_job(user_id: int, data, provider, verifier, *, job_id=None)
         # 本地 OCR 初稿：供用户在确认题干前逐字核对（不可用时为空串，并给出提示）。
         "ocr_text": ocr_text,
         "ocr_notice": ocr_error or "",
+        # 内容块（本地 OCR 行结果构造，带原图位置与阅读顺序；见 recognized.blocks）。
+        "blocks": list(ocr_blocks),
         "calls": [{"model": c["model"], "provider_name": c["provider_name"], "usage": c["usage"]} for c in calls_raw],
         # 草稿回写结果：False 表示识别期间发生人工确认，结果进入待确认模型草稿。
         "draft_applied": draft_applied,
