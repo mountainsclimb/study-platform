@@ -67,6 +67,8 @@ ARTIFACT_KINDS = (
     "factory_sim",
     # 批次五（§6.2）：3Dmol 分子模型（SMILES + 显示样式）。
     "molecule_3d",
+    # 批次五（§6.3）：Matter.js 物理自由沙盒（探索模式）。
+    "physics_sandbox",
 )
 #: 附件可关联的目标类型白名单。
 TARGET_KINDS = ("question", "note", "classroom", "review", "assistant")

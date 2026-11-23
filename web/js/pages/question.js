@@ -1080,6 +1080,37 @@ function mechDemoEntryButton(q) {
 }
 
 /* ---------------------------------------------------------------------------
+ * 批次五（§6.3）：物理题「自由沙盒」入口；Matter.js 首次打开时懒加载。
+ * ------------------------------------------------------------------------- */
+
+const SANDBOX_SUBJECTS = new Set(['物理']);
+
+async function launchPhysicsSandbox(q, trigger) {
+  const module = await import('../components/physicsSandbox.js');
+  const ref = questionRefOf(q);
+  module.openPhysicsSandbox({
+    trigger,
+    titleHint: String((q?.knowledge_tags || [])[0] || ''),
+    links: ref ? [{ target_kind: 'question', target_key: ref }] : [],
+    ref,
+    onSaved: () => toast(t('study.oss.sandbox.savedToast')),
+  });
+}
+
+function sandboxEntryButton(q) {
+  const subject = String(q?.subject || '').trim();
+  if (!SANDBOX_SUBJECTS.has(subject)) return null;
+  return button(t('study.oss.sandbox.open'), (event) => {
+    launchPhysicsSandbox(q, event?.currentTarget || null).catch(error => {
+      toast(t('study.oss.sandbox.openFailed', { reason: error?.message || '' }), true);
+    });
+  }, 'soft small', 'atom', {
+    title: t('study.oss.sandbox.openHint'),
+    'data-physics-sandbox-open': subject,
+  });
+}
+
+/* ---------------------------------------------------------------------------
  * 批次五（§6.2）：化学题「分子模型」入口；3Dmol 首次打开时懒加载。
  * ------------------------------------------------------------------------- */
 
@@ -1636,6 +1667,8 @@ export function renderQuestion(
     principleEntryButton(q),
     // M5 机械与工厂：物理/机械/技术题提供「机械演示」（懒加载 mechDemo.js，失败仅 toast）。
     mechDemoEntryButton(q),
+    // 批次五（§6.3）：物理题「自由沙盒」（懒加载 Matter.js，探索模式）。
+    sandboxEntryButton(q),
     // 批次五（§6.2）：化学题「分子模型」（懒加载 3Dmol，失败仅 toast）。
     moleculeEntryButton(q),
     // M3 数学互动：函数图像（数学/公式题）、画解题思路（所有题）、按步骤提示（所有题）。

@@ -1559,6 +1559,7 @@ const NOTE_ARTIFACT_KIND_META = Object.freeze({
   mech_3d: { key: 'study.m5.kind.mech3d', fallback: '机械 3D' },
   factory_sim: { key: 'study.m5.kind.factorySim', fallback: '工厂仿真' },
   molecule_3d: { key: 'study.oss.kind.molecule', fallback: '分子模型' },
+  physics_sandbox: { key: 'study.oss.kind.sandbox', fallback: '物理沙盒' },
 });
 
 const NOTE_ARTIFACT_DEMO_KINDS = new Set(['flow_animation', 'isometric', 'demo_3d', 'science_demo']);
@@ -1620,6 +1621,17 @@ async function mountNoteArtifactView(mount, { kind, title, data }) {
     const board = module.createSketchBoard({ scene: data, readOnly: true, ariaLabel: artTitle });
     mount.replaceChildren(board.element);
     return board;
+  }
+  if (kind === 'physics_sandbox') {
+    const module = await import('../components/physicsSandbox.js');
+    if (typeof module.normalizeSandboxScene === 'function'
+      && !module.normalizeSandboxScene(data)) {
+      throw new Error(m4t('study.m4.notes.invalidData', '附件数据不合法'));
+    }
+    const view = module.createPhysicsSandbox(mount, data, { readOnly: true });
+    if (!view || !view.element) throw new Error(m4t('study.m4.notes.invalidData', '附件数据不合法'));
+    try { await view.ready; } catch { /* ready 不应 reject；兼容异常实现 */ }
+    return view;
   }
   if (kind === 'molecule_3d') {
     const module = await import('../components/moleculeViewer.js');

@@ -38,6 +38,13 @@ ASSETS = {
             "LICENSE": "38dc3aed3def8cc4dd15ac879daa4af9b0d71af86fef82611ca1752497c6f464",
         },
     },
+    "matter": {
+        "version": "0.20.0",
+        "files": {
+            "matter.min.js": "72d30be0f579eb02ce1e0b6f9d359a4f392e6837e5a26ba8be5dbee7f88e24ae",
+            "LICENSE": "ed182087be5b26734aa6d4789743de3a97417950e8c1e3ff2e3d19c6462720d3",
+        },
+    },
 }
 
 
@@ -72,3 +79,12 @@ def test_mathlive_ships_fonts_but_not_sounds():
     assert sum(path.stat().st_size for path in fonts) == 259792
     assert not (directory / "sounds").exists(), "不引入 MathLive 按键音效资源"
     assert (directory / "LICENSE.txt").read_text(encoding="utf-8").strip()
+
+
+def test_vendor_static_assets_served(client):
+    """懒加载的同源 vendor 脚本必须能经 /static 实际访问（CSP script-src 'self'）。"""
+    for name, spec in sorted(ASSETS.items()):
+        for filename in spec["files"]:
+            response = client.get(f"/static/vendor/{name}/{filename}")
+            assert response.status_code == 200, f"/static/vendor/{name}/{filename}"
+            assert len(response.content) == (VENDOR / name / filename).stat().st_size

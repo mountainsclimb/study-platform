@@ -107,6 +107,7 @@ ARTIFACT_KIND_LABELS = {
     "mech_3d": "机械 3D",
     "factory_sim": "工厂仿真",
     "molecule_3d": "分子模型",
+    "physics_sandbox": "物理沙盒",
 }
 
 _SCHEMA = """

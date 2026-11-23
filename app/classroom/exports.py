@@ -2189,7 +2189,7 @@ _HTML_JS = r"""
   function demoKindLabel(kind) {
     return { function_graph: '函数图', whiteboard: '解题白板', flow_animation: '流程动画',
       isometric: '等距结构', science_demo: '科学演示', demo_3d: '3D 演示',
-      mech_3d: '机械 3D', factory_sim: '工厂仿真', molecule_3d: '分子模型' }[kind] || (kind || '演示');
+      mech_3d: '机械 3D', factory_sim: '工厂仿真', molecule_3d: '分子模型', physics_sandbox: '物理沙盒' }[kind] || (kind || '演示');
   }
 
   // M4 手工「原理演示」场景：只按插入时冻结的固定版本快照渲染（海报 + 说明 + 数据 JSON），

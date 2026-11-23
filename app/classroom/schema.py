@@ -14,6 +14,7 @@ from __future__ import annotations
 import base64
 import html as html_lib
 import json
+import math
 import re
 
 # ---------------------------------------------------------------------------
@@ -58,6 +59,8 @@ DEMO_ARTIFACT_KINDS = (
     "factory_sim",
     # 批次五（§6.2）：3Dmol 分子模型。
     "molecule_3d",
+    # 批次五（§6.3）：Matter.js 物理自由沙盒。
+    "physics_sandbox",
 )
 #: 演示附件类型的中文名（PPTX / 离线 HTML / 打印讲义共用）。
 DEMO_ARTIFACT_KIND_LABELS = {
@@ -70,6 +73,7 @@ DEMO_ARTIFACT_KIND_LABELS = {
     "mech_3d": "机械 3D",
     "factory_sim": "工厂仿真",
     "molecule_3d": "分子模型",
+    "physics_sandbox": "物理沙盒",
 }
 #: 演示附件快照限额（与 ``study_artifact`` 的 256KB / 64KB 存储上限兼容，课堂侧再收窄）。
 MAX_DEMO_DATA_BYTES = 200 * 1024
@@ -85,6 +89,14 @@ MAX_DEMO_REVISION = 100_000
 DEMO_PNG_DATA_PREFIX = "data:image/png;base64,"
 #: 演示快照里的公开附件 ID（比 ``study_artifact`` 的既有 ID 规则更宽，兼容导入的第三方 ID）。
 DEMO_ARTIFACT_ID_RE = re.compile(r"^[a-zA-Z0-9_-]{6,64}$")
+#: 批次五（§6.3）：物理沙盒演示数据的结构上限与形状白名单，与前端
+#: ``normalizeSandboxScene`` 对齐。附件端（``study_artifact``）只限字节，
+#: 课堂插入固定版本时做结构校验，避免不可重放的场景固化进导出。
+SANDBOX_DEMO_SHAPES = ("rect", "circle", "slope")
+SANDBOX_DEMO_MAX_BODIES = 60
+SANDBOX_DEMO_MAX_CONSTRAINTS = 40
+_SANDBOX_BODY_NUMBERS = ("x", "y", "width", "height", "radius", "angle",
+                         "restitution", "friction", "vx", "vy")
 
 MIN_SCENE_COUNT = 3
 MAX_SCENE_COUNT = 12
@@ -1114,6 +1126,74 @@ def _normalize_demo_preview(raw) -> dict | None:
     return preview
 
 
+def _sandbox_number(value: object) -> bool:
+    """可选数值字段存在时必须是有限数（bool 不算数值）。"""
+    return (not isinstance(value, bool)
+            and isinstance(value, (int, float))
+            and math.isfinite(value))
+
+
+def _validate_sandbox_bodies(data: dict) -> list:
+    """校验刚体列表：非空、≤60、形状白名单、数值字段有限；返回刚体列表。"""
+    bodies = data.get("bodies")
+    if not isinstance(bodies, list) or not bodies:
+        raise ClassroomSchemaError("物理沙盒刚体 bodies 必须是非空数组")
+    if len(bodies) > SANDBOX_DEMO_MAX_BODIES:
+        raise ClassroomSchemaError("物理沙盒刚体数量超过 %d 上限" % SANDBOX_DEMO_MAX_BODIES)
+    for index, body in enumerate(bodies):
+        if not isinstance(body, dict):
+            raise ClassroomSchemaError("第 %d 个刚体必须是 JSON 对象" % (index + 1))
+        if body.get("shape") not in SANDBOX_DEMO_SHAPES:
+            raise ClassroomSchemaError(
+                "第 %d 个刚体形状仅支持 rect/circle/slope" % (index + 1))
+        for field in _SANDBOX_BODY_NUMBERS:
+            if field in body and not _sandbox_number(body[field]):
+                raise ClassroomSchemaError(
+                    "第 %d 个刚体的 %s 必须是有限数值" % (index + 1, field))
+    return bodies
+
+
+def _validate_sandbox_demo_data(data: dict) -> None:
+    """校验物理沙盒演示快照结构（约束引用与重力数值；刚体见上一函数）。"""
+    bodies = _validate_sandbox_bodies(data)
+    constraints = data.get("constraints")
+    if constraints is None:
+        constraints = []
+    if not isinstance(constraints, list):
+        raise ClassroomSchemaError("物理沙盒约束 constraints 必须是数组")
+    if len(constraints) > SANDBOX_DEMO_MAX_CONSTRAINTS:
+        raise ClassroomSchemaError(
+            "物理沙盒约束数量超过 %d 上限" % SANDBOX_DEMO_MAX_CONSTRAINTS)
+    for index, item in enumerate(constraints):
+        if not isinstance(item, dict):
+            raise ClassroomSchemaError("第 %d 条约束必须是 JSON 对象" % (index + 1))
+        ends = {}
+        for name in ("bodyA", "bodyB"):
+            value = item.get(name)
+            if not isinstance(value, int) or isinstance(value, bool):
+                raise ClassroomSchemaError(
+                    "第 %d 条约束的 %s 必须是整数索引" % (index + 1, name))
+            if not 0 <= value < len(bodies):
+                raise ClassroomSchemaError(
+                    "第 %d 条约束的 %s 超出刚体索引范围" % (index + 1, name))
+            ends[name] = value
+        if ends["bodyA"] == ends["bodyB"]:
+            raise ClassroomSchemaError(
+                "第 %d 条约束的两端不能是同一个刚体" % (index + 1))
+        for field in ("stiffness", "length", "damping"):
+            if field in item and not _sandbox_number(item[field]):
+                raise ClassroomSchemaError(
+                    "第 %d 条约束的 %s 必须是有限数值" % (index + 1, field))
+    gravity = data.get("gravity")
+    if gravity is None:
+        gravity = {}
+    if not isinstance(gravity, dict):
+        raise ClassroomSchemaError("物理沙盒重力 gravity 必须是 JSON 对象")
+    for field in ("x", "y"):
+        if field in gravity and not _sandbox_number(gravity[field]):
+            raise ClassroomSchemaError("物理沙盒重力的 %s 必须是有限数值" % field)
+
+
 def normalize_demo_content(raw) -> tuple[dict, list[str]]:
     """归一化「原理演示」场景内容（固定版本学习附件快照），返回 ``(content, warnings)``。
 
@@ -1149,6 +1229,9 @@ def normalize_demo_content(raw) -> tuple[dict, list[str]]:
     data_payload = _demo_dump_json(data_raw)
     if len(data_payload.encode("utf-8")) > MAX_DEMO_DATA_BYTES:
         raise ClassroomSchemaError("演示附件 data 超过 200KB 上限，请精简后再插入")
+    if kind == "physics_sandbox":
+        # 结构上限（刚体/约束/形状/数值）在插入固定版本时校验，见常量区注释。
+        _validate_sandbox_demo_data(data_raw)
     preview = _normalize_demo_preview(artifact_raw.get("preview"))
     source_note = _demo_text(
         payload.get("source_note"), "演示说明", MAX_DEMO_SOURCE_NOTE_CHARS,

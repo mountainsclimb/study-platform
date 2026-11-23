@@ -175,3 +175,90 @@
     min-height: 300px;
   }
 }
+
+/* 批次五（§6.3）：Matter.js 物理自由沙盒。 */
+.oss-sandbox-dialog {
+  width: min(920px, calc(100vw - 32px));
+}
+
+.oss-sandbox-toolbar {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 12px;
+  margin: 12px 0;
+}
+
+.oss-sandbox-field {
+  display: grid;
+  gap: 6px;
+  font-size: 0.8125rem;
+  color: var(--muted, #5f7379);
+}
+
+.oss-sandbox-canvas {
+  overflow-x: auto;
+  border: 1px solid var(--line, #e2e9ec);
+  border-radius: 12px;
+  background: #fff;
+}
+
+.oss-sandbox-canvas canvas {
+  display: block;
+  max-width: 100%;
+  height: auto;
+}
+
+.oss-sandbox-controls {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 10px;
+  margin-top: 10px;
+}
+
+.oss-sandbox-controls .button {
+  min-height: 44px;
+}
+
+.oss-sandbox-readout {
+  margin: 10px 0 0;
+}
+
+.oss-sandbox-loading,
+.oss-sandbox-unavailable {
+  padding: 18px;
+  margin: 0;
+  text-align: center;
+}
+
+.pg-phys-tabs {
+  margin-bottom: 20px;
+}
+
+.pg-phys-sandbox-controls {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr)) auto auto auto;
+  gap: 12px;
+  align-items: end;
+  margin-bottom: 14px;
+}
+
+.pg-phys-sandbox-controls label {
+  display: grid;
+  gap: 6px;
+  font-size: 0.8125rem;
+  color: var(--muted);
+}
+
+.pg-phys-sandbox-host {
+  overflow-x: auto;
+  border: 1px solid var(--line);
+  border-radius: 14px;
+  background: #fff;
+}
+
+@media (max-width: 760px) {
+  .oss-sandbox-toolbar,
+  .pg-phys-sandbox-controls {
+    grid-template-columns: 1fr;
+  }
+}

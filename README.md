@@ -197,7 +197,7 @@ python -m uvicorn app.main:app --host 127.0.0.1 --port 8765
     - 许可登记：`THIRD_PARTY_NOTICES.md` 新增第 8–10 节（shigure / chinese-poetry 子集 / genanki），
       并补登记既有的 KaTeX、markdown-it、DOMPurify（第 11 节）。
 
-16. **开源组件整合（批次一 / 二 / 三 / 四 / 五·6.2，默认不改变运行时）**：
+16. **开源组件整合（批次一 / 二 / 三 / 四 / 五·6.2–6.3，默认不改变运行时）**：
     - **无障碍回归**：`scripts/ui_check_a11y.py` 用随脚本分发的 axe-core 4.14.1（MPL-2.0，仅开发期，
       不进镜像）在桌面 1440 与手机 390 视口跑 WCAG 2A/2AA，存在新增 critical/serious 即失败；
       首次可 `--update-baseline` 固化存量基线，报告落 `screenshots/a11y/`。已注册为 `-Ui` 验收的
@@ -231,6 +231,10 @@ python -m uvicorn app.main:app --host 127.0.0.1 --port 8765
       提供化学题「分子模型」入口：OpenChemLib 把 SMILES 解析为 3D 构象，3Dmol 渲染，
       支持球棍/空间填充/线框切换与 `molecule_3d` 学习附件；`POST /api/chem/balance`
       用 sympy 配平元素/括号/数字下标组成的方程式，无解返回 `ok:false`，不落库。
+    - **物理自由沙盒**：`web/vendor/matter/`（Matter.js 0.20.0，MIT）提供物理题「自由沙盒」入口与
+      物理演示页「自由沙盒」页签，支持刚体/弹簧/斜面/碰撞预设、播放暂停、速度与位置读数，
+      保存为 `physics_sandbox` 学习附件；页面固定提示「探索模式，结果可能有细微差异」，
+      需要回放对账的演示仍走 `physics-in-motion` 确定性内核。
 
 ## 验证
 
@@ -304,6 +308,8 @@ python -m pytest tests/test_speech_local.py tests/test_classroom_local_tts.py -v
 
 # 分子模型 / 化学配平（vendor 资产 + sympy，无新增 Python 依赖）
 python -m pytest tests/test_chem_balance.py tests/test_demo_kinds.py tests/test_oss_vendor_assets.py -v
+# 物理自由沙盒（Matter.js vendor 资产）
+python -m pytest tests/test_demo_kinds.py tests/test_oss_vendor_assets.py -v
 # 课堂全链路验收（本机假模型，无需真实 Key；详见 scripts/integration/README.md）
 python scripts/integration/fake_model_server.py --port 8899
 python scripts/integration/classroom_accept.py --base-url http://127.0.0.1:8813 --fake-model-base-url http://127.0.0.1:8899
