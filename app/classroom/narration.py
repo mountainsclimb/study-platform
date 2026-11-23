@@ -23,6 +23,7 @@ from fastapi import APIRouter, Depends, HTTPException
 from pydantic import BaseModel, Field
 
 from ..auth import current_user
+from ..ai import speech_local
 from . import db as cdb
 from . import tts
 
@@ -109,6 +110,11 @@ def _int(value, default: int = 0) -> int:
         return int(value)
     except (TypeError, ValueError):
         return default
+
+
+def speech_model_label() -> str:
+    """本地语音模型标签（延迟读取，避免 narration 导入期加载模型状态）。"""
+    return speech_local.model_label()
 
 
 # ---------------------------------------------------------------------------
@@ -208,6 +214,36 @@ def _resolve_tts_candidate(user_id: int, provider_id: int | None = None,
     """解析本次旁白使用的 TTS 连接；没有已配置的语音连接 → 422 中文引导。"""
     candidates = tts.tts_candidates(user_id)
     if not candidates:
+        local_label = speech_model_label() if speech_local.tts_available() else ""
+        # 本地哨兵：未指定连接，或 provider_id=0 + 本地模型标签（start_narration 内部
+        # 转交给 JobInput 的形态）；其余显式连接/模型仍保持既有 422。
+        local_selector = (
+            (provider_id is None or int(provider_id) == 0)
+            and (not model or str(model).strip() == local_label)
+        )
+        if not local_selector:
+            raise HTTPException(
+                422,
+                "还没有可用的语音合成连接：请在「模型设置」添加支持 TTS 的连接"
+                "（小米 MiMo / MiniMax / OpenAI 兼容语音）后再合成旁白",
+            )
+        if speech_local.tts_available():
+            label = speech_local.model_label()
+            return {
+                "provider": {
+                    "id": 0,
+                    "user_id": user_id,
+                    "name": "本地语音",
+                    "kind": "local",
+                    "base_url": "",
+                    "models_json": json.dumps([label]),
+                    "encrypted_key": "",
+                    "compat_json": "{}",
+                    "auth_mode": "auto",
+                },
+                "model": label,
+                "local": True,
+            }
         raise HTTPException(
             422,
             "还没有可用的语音合成连接：请在「模型设置」添加支持 TTS 的连接"

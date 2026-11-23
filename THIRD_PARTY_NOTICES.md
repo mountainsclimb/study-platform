@@ -202,6 +202,15 @@ SOFTWARE.
 
 | 项目 | 内容 |
 |---|---|
+| 名称 | sherpa-onnx（离线语音合成/识别） |
+| 版权 | Copyright (c) 2023-2025 Xiaomi Corporation |
+| 仓库 | <https://github.com/k2-fsa/sherpa-onnx> |
+| 许可证 | Apache License 2.0（基础依赖 sherpa-onnx-core 同为 Apache-2.0） |
+| 用途 | `app/ai/speech_local.py`：零厂商配置下的课堂旁白合成与语音输入识别；可选依赖 `requirements-speech.txt`，开关 `STUDY_LOCAL_SPEECH=on`（默认关闭） |
+| 模型权重 | Kokoro `kokoro-multi-lang-v1_1`（Apache-2.0）与 Paraformer-zh（ModelScope 标注 Apache-2.0）由部署方预置，本仓库与镜像不分发 |
+
+| 项目 | 内容 |
+|---|---|
 | 名称 | MathLive（可视化公式编辑） |
 | 版权 | Copyright (c) 2021 Arno Gourdol |
 | 仓库 | <https://github.com/arnog/mathlive> |
@@ -245,6 +254,7 @@ SOFTWARE.
 | 19 | RapidTable（表格结构） | `rapid-table==3.0.2`（`requirements-formula.txt`） | Apache-2.0 | 运行时 site-packages；模型随包下载，不进仓库 | `pip install -r requirements-formula.txt`；开关 `STUDY_TABLE_OCR=on` | 运行时安装（可选），不进镜像 |
 | 20 | MathLive（可视化公式编辑） | `mathlive@0.111.4` | MIT | `web/vendor/mathlive/`（版本、大小与 SHA-256 见同目录 README） | `npm pack mathlive@0.111.4`，取主脚本、样式、字体与 LICENSE | 随仓库分发 |
 | 21 | fastembed（本地向量/重排） | `fastembed==0.9.1`（`requirements-embeddings.txt`） | Apache-2.0 | 运行时 site-packages；模型由部署方预置，不进仓库 | `pip install -r requirements-embeddings.txt`；开关 `STUDY_EMBEDDING_MODE=local`、`STUDY_RERANK=on` | 运行时安装（可选），不进镜像 |
+| 22 | sherpa-onnx（离线语音） | `sherpa-onnx==2.0.3`（`requirements-speech.txt`） | Apache-2.0 | 运行时 site-packages；模型由部署方预置，不进仓库 | `pip install -r requirements-speech.txt`；开关 `STUDY_LOCAL_SPEECH=on` | 运行时安装（可选），不进镜像 |
 
 ## 15. 素材、语料与模型权重
 
@@ -258,6 +268,7 @@ SOFTWARE.
 | OCR 模型权重 | PP-OCRv4 检测/识别/方向分类 | Apache-2.0，随 RapidOCR pip 包分发 | 不进仓库 |
 | 本地向量模型权重 | bge-small-zh-v1.5（512 维） | MIT，由部署方预置 | 不进仓库与镜像；目录见 `requirements-embeddings.txt` |
 | 本地重排模型权重 | bge-reranker-base | MIT，由部署方预置 | 不进仓库与镜像 |
+| 离线语音模型权重 | Kokoro kokoro-multi-lang-v1_1 / Paraformer-zh | Apache-2.0，由部署方预置 | 不进仓库与镜像；目录见 `requirements-speech.txt` |
 | 公式识别模型权重 | LaTeX-OCR 编码器/解码器/图像缩放/tokenizer | 源自 LaTeX-OCR（MIT），随 rapid-latex-ocr pip 包下载 | 不进仓库；离线部署需预置到包内 `models/` |
 | 表格结构模型权重 | SLANet Plus | 随 rapid-table pip 包下载；许可以包内说明为准 | 不进仓库；离线部署需预置 |
 | Surya 模型权重 | 版面/文字识别/公式 | Modified AI Pubs Open Rail-M（商用门槛见 §6） | 部署方自行下载，不进仓库；商用前确认授权 |
@@ -285,6 +296,8 @@ SOFTWARE.
 | 文本型 PDF 表格（pdfplumber） | 实验 | `requirements-pdf.txt` + `STUDY_PDF_TABLES=on`；页数上限 `STUDY_PDF_TABLE_PAGES` | 默认关闭；只补有表格线的文本型 PDF，扫描件与无边框表格不生成内容；失败只跳过 |
 | 向量检索 / embedding | 实验 | HTTP：`STUDY_EMBEDDING_BASE_URL`、`STUDY_EMBEDDING_MODEL` 等；本地：`requirements-embeddings.txt` + `STUDY_EMBEDDING_MODE=local` | 默认关闭；本地模型不可用时回退本地全文检索 |
 | 本地重排（fastembed 交叉编码器） | 实验 | `STUDY_RERANK=on` + 本地重排模型目录 | 默认关闭；失败沿用原排序 |
+| 离线语音合成（sherpa-onnx Kokoro） | 实验 | `requirements-speech.txt` + `STUDY_LOCAL_SPEECH=on` + 预置 Kokoro 模型 | 默认关闭；零厂商配置下旁白可用；失败回退浏览器朗读 |
+| 离线语音识别（sherpa-onnx Paraformer） | 实验 | 同上 + 预置 Paraformer-zh 模型 | 默认关闭；只接受 16k 单声道 PCM16 WAV，前端自动转换 |
 | fsrs-lite 复习排程 | 实验 | `STUDY_REVIEW_SCHEDULER=fsrs-lite` | 默认 `rules`；先积累复习反馈再替换 |
 | 社区解析精选 | 可选服务 | `COMMUNITY_EXPLANATIONS_ENABLED=1` | 登录用户的既有题目 AI 解析分享 |
 | PostgreSQL / Redis Worker / 对象存储 | 可选服务（生产推荐） | `DATABASE_URL`、`REDIS_URL`、`S3_*`；公网部署校验见 `scripts/check_public_config.py` | SQLite 单机开发可用 |

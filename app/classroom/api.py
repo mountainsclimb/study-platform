@@ -5,6 +5,7 @@
 """
 from __future__ import annotations
 
+import asyncio
 import json
 import logging
 from typing import Any
@@ -15,6 +16,7 @@ from pydantic import BaseModel, Field
 
 from ..auth import current_user
 from .. import question_ref, storage, study_artifact, study_evidence
+from ..ai import speech_local
 from . import db as cdb
 from . import generate, grading, prompts, schema, tts
 from . import interactive
@@ -1571,10 +1573,11 @@ async def synthesize_tts(course_id: int, data: TtsInput, user=Depends(current_us
 @router.get("/voices")
 async def classroom_voices(provider_id: int | None = Query(None), user=Depends(current_user)):
     """P4 音色列表：聚合已配置 TTS 连接的可用音色（MiniMax /get_voice 缓存 10 分钟，失败回退静态）。"""
-    if provider_id is not None:
+    if provider_id is not None and int(provider_id) != 0:
         candidates = tts.tts_candidates(user["id"])
         if not any(int(item["provider"]["id"]) == int(provider_id) for item in candidates):
             raise HTTPException(404, "未找到该语音合成连接")
+    # provider_id=0 是本地语音的内部/展示哨兵；tts.list_voices 会按本地可用性返回。
     return await tts.list_voices(user["id"], provider_id=provider_id)
 
 
@@ -1707,6 +1710,16 @@ def asr_info(user=Depends(current_user)):
     """前端探测：当前账号是否有服务端语音识别能力。"""
     candidates = _asr_candidates(user["id"])
     if not candidates:
+        if speech_local.asr_available():
+            return {
+                "available": True,
+                "provider": "local",
+                "provider_id": None,
+                "model": speech_local.asr_model_label(),
+                "max_bytes": MAX_ASR_BYTES,
+                "max_seconds": speech_local.max_asr_seconds(),
+                "notice": "本地识别只接受 16k 单声道 PCM16 WAV；前端会用 WebAudio 自动转换。",
+            }
         return {"available": False, "provider": None, "model": None, "max_bytes": MAX_ASR_BYTES}
     first = candidates[0]
     return {
@@ -1722,6 +1735,12 @@ def _asr_meta(user_id: int) -> dict:
     """``GET /meta`` 用：服务端 ASR 可用性摘要（不暴露 Key）。"""
     candidates = _asr_candidates(user_id)
     if not candidates:
+        if speech_local.asr_available():
+            return {
+                "available": True,
+                "provider": "local",
+                "model": speech_local.asr_model_label(),
+            }
         return {"available": False, "provider": None, "model": None}
     return {
         "available": True,
@@ -1752,6 +1771,26 @@ async def transcribe_audio(
     mime = (file.content_type or "").split(";")[0].strip() or _ASR_MIME_FALLBACK
     if not mime.startswith("audio/") and mime not in ("video/webm", "application/octet-stream"):
         raise HTTPException(422, "请上传音频文件（webm / wav / mp3 / m4a）")
+    local_selector = (
+        (not provider_id or int(provider_id) == 0)
+        and (not model or str(model).strip() == speech_local.asr_model_label())
+    )
+    if local_selector and not _asr_candidates(user["id"]) and speech_local.asr_available():
+        try:
+            result = await asyncio.wait_for(
+                asyncio.to_thread(speech_local.transcribe, payload),
+                timeout=speech_local.TRANSCRIBE_TIMEOUT_SECONDS,
+            )
+        except ValueError as exc:
+            raise HTTPException(422, str(exc)) from exc
+        except Exception as exc:  # noqa: BLE001 - 本地引擎异常统一为可读失败
+            raise HTTPException(502, "本地语音识别失败（%s）" % type(exc).__name__) from exc
+        return {
+            "text": result.get("text") or "",
+            "model": speech_local.asr_model_label(),
+            "usage": None,
+            "filename": file.filename,
+        }
     candidate = _asr_candidate(user["id"], provider_id, model)
     try:
         result = await ai_audio.transcribe(candidate["provider"], candidate["model"], payload, mime)

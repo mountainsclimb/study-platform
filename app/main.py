@@ -624,6 +624,22 @@ def health_ready(request: Request):
             payload["embedding"] = embedding_status(None)
         except Exception:  # noqa: BLE001 - Embedding 状态是增强信息，不影响就绪
             payload["embedding"] = {"configured": False, "ready": False, "source": "unavailable"}
+        # 可选本地引擎（方案 §1.3）：缺席按未配置上报，不进入 degraded，不影响就绪。
+        try:
+            from .ai import speech_local
+            payload["speech"] = speech_local.engine_status()
+        except Exception:  # noqa: BLE001
+            payload["speech"] = {"configured": False, "available": False, "error": "unavailable"}
+        try:
+            from .ai import formula_ocr
+            payload["formula"] = formula_ocr.engine_status()
+        except Exception:  # noqa: BLE001
+            payload["formula"] = {"configured": False, "available": False, "error": "unavailable"}
+        try:
+            from .ai import table_structure
+            payload["table"] = table_structure.engine_status()
+        except Exception:  # noqa: BLE001
+            payload["table"] = {"configured": False, "available": False, "error": "unavailable"}
     else:
         # 匿名视图：只保留每个依赖的可用布尔值，不暴露宿主机目录/题量/Redis 细节。
         payload["checks"] = {

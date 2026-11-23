@@ -284,6 +284,8 @@ Worker 支持 `STUDY_WORKER_CONCURRENCY`（默认 8）和 `STUDY_WORKER_JOB_TIME
 | `STUDY_EMBEDDING_BASE_URL`、`STUDY_EMBEDDING_MODEL`、`STUDY_EMBEDDING_API_KEY` | 启用 OpenAI 兼容 Embedding 接口，例如 API base `https://api.openai.com/v1`。新上传及 OCR 校对后的资料分块文本会发送给配置的服务。未配置或接口失败时回退到本地 TF-IDF。已有资料可重新上传或校对 OCR 以建立稠密向量。 |
 | `STUDY_EMBEDDING_MODE=local`、`STUDY_LOCAL_EMBEDDING_DIR` | 可选：本地向量（fastembed，需安装 `requirements-embeddings.txt`）。模型目录默认 `<data>/models/embeddings`，需预置 `bge-small-zh-v1.5`；不可用时回退本地全文检索。 |
 | `STUDY_RERANK=on`、`STUDY_LOCAL_RERANK_DIR` | 可选：本地重排（fastembed 交叉编码器）。模型目录默认 `<data>/models/rerank`，需预置 `bge-reranker-base`；失败沿用原排序。 |
+| `STUDY_LOCAL_SPEECH`、`STUDY_LOCAL_SPEECH_DIR` | 可选：设为 `on` 后启用离线语音。模型根目录默认 `<data>/models/speech`，需预置 Kokoro `kokoro-multi-lang-v1_1/`（model.onnx、voices.bin、tokens.txt、espeak-ng-data、lexicon-*.txt）与 Paraformer `paraformer-zh/`（model.onnx、tokens.txt）。需安装 `requirements-speech.txt`；模型缺失时旁白回退浏览器、识别回退厂商接口。 |
+| `STUDY_LOCAL_TTS_MODEL`、`STUDY_LOCAL_TTS_VOICE`、`STUDY_LOCAL_ASR_MODEL`、`STUDY_LOCAL_ASR_MAX_SECONDS` | 可选：本地合成/识别模型目录名、默认音色 ID、单次识别最长秒数（默认 60）。 |
 | `COMMUNITY_EXPLANATIONS_ENABLED=1` | 开启社区讲解。满足分享条件的题库讲解由生成者主动分享，可撤回。管理员可设为平台精选。部署默认关闭社区讲解。 |
 | `STUDY_REVIEW_SCHEDULER=fsrs-lite` | 达到全站 2,000 条由原卷或 AI 交叉核验判定的题库作答后启用 FSRS-lite。默认使用掌握度规则。 |
 

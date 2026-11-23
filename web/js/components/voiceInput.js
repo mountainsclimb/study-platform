@@ -13,6 +13,7 @@
  */
 import { el } from '../core/dom.js';
 import { api } from '../core/api.js';
+import { blobToWav16k } from './wavEncode.js';
 
 const BROWSER_ERROR_MESSAGES = {
   'not-allowed': '麦克风权限被拒绝：请在浏览器地址栏允许本页使用麦克风后重试。',
@@ -28,6 +29,7 @@ const BROWSER_ERROR_MESSAGES = {
 const SUPPORTED_HINT = '支持语音输入（浏览器识别，录音不会上传到知序）';
 const SERVER_HINT = '当前浏览器不支持原生语音识别，已切换到服务端转写（录音仅上传到本机知序服务）';
 const UNSUPPORTED_HINT = '当前浏览器不支持语音输入，可继续用键盘输入。';
+const LOCAL_SERVER_HINT = '本地离线识别：录音只上传到本机知序服务，自动转为 16k 单声道 WAV，最长 60 秒。';
 const SERVER_UNAVAILABLE_HINT = '当前浏览器不支持语音识别，服务端语音识别也不可用：'
   + '请在「模型设置」添加支持语音识别的连接（如小米 MiMo 的 mimo-v2.5-asr）后重试，或继续用键盘输入。';
 
@@ -194,6 +196,7 @@ export function createVoiceInput({
     if (mode === 'server') {
       if (asrState === 'checking') return '正在检查服务端语音识别能力…';
       if (asrState === 'unavailable') return SERVER_UNAVAILABLE_HINT;
+      if (asrInfo && String(asrInfo.provider || '').toLowerCase() === 'local') return LOCAL_SERVER_HINT;
       const model = asrInfo && asrInfo.model ? `（${asrInfo.model}）` : '';
       return `服务端语音转写${model}：录音最长 60 秒，识别结果只填入输入框，不会自动发送。`;
     }
@@ -397,10 +400,25 @@ export function createVoiceInput({
     busyTranscribing = true;
     syncButton();
     setHint('正在识别语音，请稍候…', 'active');
-    const extension = extensionForMime(blob.type);
-    const form = new FormData();
-    form.append('file', blob, `voice-${Date.now()}.${extension}`);
     try {
+      let uploadBlob = blob;
+      let extension = extensionForMime(blob.type);
+      if (asrInfo && String(asrInfo.provider || '').toLowerCase() === 'local') {
+        setHint('正在把录音转换为 16k WAV…', 'active');
+        const maxSeconds = Number(asrInfo && asrInfo.max_seconds) || 60;
+        uploadBlob = await blobToWav16k(blob, { maxSeconds });
+        extension = 'wav';
+      }
+      if (!uploadBlob || !uploadBlob.size) {
+        setHint('没有录到声音，请靠近麦克风再说一次。', 'error');
+        return;
+      }
+      if (uploadBlob.size > MAX_ASR_BYTES) {
+        setHint('录音文件超过 25MB，请缩短录音后重试。', 'error');
+        return;
+      }
+      const form = new FormData();
+      form.append('file', uploadBlob, `voice-${Date.now()}.${extension}`);
       const result = await api('/classroom/asr', { method: 'POST', body: form });
       const text = String(result && result.text || '').trim();
       if (!text) {

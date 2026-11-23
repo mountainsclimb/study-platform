@@ -197,7 +197,7 @@ python -m uvicorn app.main:app --host 127.0.0.1 --port 8765
     - 许可登记：`THIRD_PARTY_NOTICES.md` 新增第 8–10 节（shigure / chinese-poetry 子集 / genanki），
       并补登记既有的 KaTeX、markdown-it、DOMPurify（第 11 节）。
 
-16. **开源组件整合（批次一 / 二 / 四，默认不改变运行时）**：
+16. **开源组件整合（批次一 / 二 / 三 / 四，默认不改变运行时）**：
     - **无障碍回归**：`scripts/ui_check_a11y.py` 用随脚本分发的 axe-core 4.14.1（MPL-2.0，仅开发期，
       不进镜像）在桌面 1440 与手机 390 视口跑 WCAG 2A/2AA，存在新增 critical/serious 即失败；
       首次可 `--update-baseline` 固化存量基线，报告落 `screenshots/a11y/`。已注册为 `-Ui` 验收的
@@ -221,6 +221,11 @@ python -m uvicorn app.main:app --host 127.0.0.1 --port 8765
       `local://...`，与任何 HTTP 模型标签隔离；设 `STUDY_RERANK=on` 且预置 `bge-reranker-base`
       后，笔记检索取混合得分前 20 条重排（0.3 混合 + 0.7 重排），相似题条目增加 `rerank_score`。
       模型目录由部署方预置，失败/未安装时回退现有 HTTP Embedding 或本地全文检索。
+    - **离线语音**：`requirements-speech.txt`（sherpa-onnx 2.0.3，Apache-2.0）；设
+      `STUDY_LOCAL_SPEECH=on` 并预置 Kokoro `kokoro-multi-lang-v1_1` 与 Paraformer-zh 后，
+      零厂商配置也能完成课堂批量旁白（`provider: "local"`）、音色列表与语音输入识别；
+      识别只接受 16k 单声道 PCM16 WAV，前端 `wavEncode.js` 用 WebAudio 自动重采样，
+      模型缺失/合成失败时旁白回退浏览器朗读，不影响其它功能。
 
 ## 验证
 
@@ -287,6 +292,10 @@ python -m pytest tests/test_oss_vendor_assets.py -v
 pip install -r requirements-embeddings.txt
 $env:STUDY_EMBEDDING_MODE="local"; python -m pytest tests/test_embeddings_local.py -v
 $env:STUDY_RERANK="on"; python -m pytest tests/test_rerank.py -v
+
+# 离线语音（可选依赖；模型由部署方预置，未安装/关闭时行为不变）
+pip install -r requirements-speech.txt
+python -m pytest tests/test_speech_local.py tests/test_classroom_local_tts.py -v
 # 课堂全链路验收（本机假模型，无需真实 Key；详见 scripts/integration/README.md）
 python scripts/integration/fake_model_server.py --port 8899
 python scripts/integration/classroom_accept.py --base-url http://127.0.0.1:8813 --fake-model-base-url http://127.0.0.1:8899

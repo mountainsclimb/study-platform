@@ -1,0 +1,15 @@
+# 可选依赖：离线语音（app/ai/speech_local.py）。
+# sherpa-onnx 为 Apache-2.0，基础依赖只有 sherpa-onnx-core（同为 Apache-2.0），
+# 无 torch，提供 Python 3.11 Windows 轮子。见 THIRD_PARTY_NOTICES.md。
+# 不进生产镜像；需要时安装：
+#   pip install -r requirements-speech.txt
+# 启用开关：STUDY_LOCAL_SPEECH=on（默认 off）。
+#
+# 模型由部署方预置，不进仓库与镜像（默认 <data>/models/speech/）：
+#   kokoro-multi-lang-v1_1/  → model.onnx、voices.bin、tokens.txt、espeak-ng-data/、
+#                              lexicon-us-en.txt、lexicon-zh.txt（合成，Apache-2.0）
+#   paraformer-zh/           → model.onnx、tokens.txt（识别，ModelScope 标注 Apache-2.0）
+# 目录可用 STUDY_LOCAL_SPEECH_DIR 覆盖，默认模型名可用 STUDY_LOCAL_TTS_MODEL /
+# STUDY_LOCAL_ASR_MODEL 覆盖。离线合成只返回 16k/24k 单声道 PCM16 WAV（以模型采样率为准）；
+# 离线识别只接受 16k 单声道 PCM16 WAV，前端 voiceInput 会用 WebAudio 自动转换。
+sherpa-onnx==2.0.3

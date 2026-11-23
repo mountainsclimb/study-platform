@@ -789,7 +789,12 @@ async def submit_job(user: dict, data: JobInput) -> dict:
     from . import _run_job as run_job
     from .. import practice
 
-    provider = _selected_provider(user["id"], data.provider_id, data.model)
+    if int(data.provider_id or 0) == 0 and data.task != "course-narration":
+        raise HTTPException(422, "本地语音连接仅用于课堂旁白任务")
+    provider = _selected_provider(
+        user["id"], data.provider_id, data.model,
+        allow_local=data.task == "course-narration",
+    )
     if data.task == "tagging" and user["role"] != "admin":
         raise HTTPException(403, "批量打标仅限管理员操作")
     if data.task == "grade" and not data.cross_verify:
@@ -1382,7 +1387,10 @@ async def _run_job(job_id, user_id, data: JobInput):
     try:
         async with _global_semaphore():
             _job_update(job_id, "running", "preparing")
-            provider = _selected_provider(user_id, data.provider_id, data.model)
+            provider = _selected_provider(
+                user_id, data.provider_id, data.model,
+                allow_local=data.task == "course-narration",
+            )
             verifier = _selected_provider(user_id, data.verify_provider_id, data.verify_model) if data.cross_verify else None
             judge = None
             judge_model = None

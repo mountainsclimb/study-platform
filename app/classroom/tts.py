@@ -10,12 +10,13 @@ MiniMax 走 ``/get_voice``（``{voice_type:"all"}``，模块级缓存 10 分钟�
 """
 from __future__ import annotations
 
+import asyncio
 import hashlib
 import logging
 import time
 
 from .. import storage
-from ..ai import netguard
+from ..ai import netguard, speech_local
 from . import db as cdb
 
 log = logging.getLogger("app.classroom.tts")
@@ -127,6 +128,12 @@ def tts_provider_info(user_id: int) -> dict | None:
     """``GET /meta`` 用：当前用户可用的 TTS 连接摘要；没有则 None。"""
     candidates = tts_candidates(user_id)
     if not candidates:
+        if speech_local.tts_available():
+            return {
+                "provider_id": None,
+                "provider": "local",
+                "model": speech_local.model_label(),
+            }
         return None
     candidate = candidates[0]
     provider = candidate["provider"]
@@ -159,7 +166,9 @@ def default_voice_for(provider: dict | None) -> str:
 
 
 def normalize_voice_for(provider: dict | None, voice: str | None) -> str:
-    """按厂商校验/回退音色：MiMo 只接受内置音色，MiniMax 接受官方 voice_id，其余透传。"""
+    """按厂商校验/回退音色：本地用音色序号，MiMo/MiniMax 用各自规则，其余透传。"""
+    if provider and str(provider.get("kind") or "") == "local":
+        return speech_local.normalize_voice(voice)
     audio = _audio_adapter()
     mimo = bool(provider and audio.is_mimo_provider(provider))
     minimax = bool(provider and audio.is_minimax_provider(provider))
@@ -297,9 +306,52 @@ async def list_voices(user_id: int, *, provider_id: int | None = None) -> dict:
     ``items`` 为空并给出中文警告（前端据此禁用旁白合成并引导去模型设置）。
     """
     candidates = tts_candidates(user_id)
-    if provider_id is not None:
+    local_filter = provider_id is None or int(provider_id) == 0
+    if provider_id is not None and int(provider_id) != 0:
         wanted = int(provider_id)
         candidates = [item for item in candidates if int(item["provider"]["id"]) == wanted]
+    if not candidates and local_filter and speech_local.tts_available():
+        try:
+            # 音色列表需要加载模型读取 num_speakers：放线程池，避免阻塞事件循环。
+            local_items = await asyncio.to_thread(speech_local.list_voices)
+        except Exception as exc:  # 本地模型加载失败：不 500，回退空列表 + 中文警告
+            return {
+                "items": [],
+                "total": 0,
+                "providers": [],
+                "tts": tts_provider_info(user_id),
+                "cached": False,
+                "warnings": [f"本地语音模型不可用：{str(exc)[:120]}"],
+                "ttl_seconds": VOICES_CACHE_TTL_SECONDS,
+            }
+        items = [
+            {
+                "provider_id": None,
+                "provider": "本地语音",
+                "model": speech_local.model_label(),
+                "voice_id": str(item["voice_id"]),
+                "name": str(item.get("name") or item["voice_id"]),
+                "lang": str(item.get("lang") or "zh-CN"),
+                "source": "local",
+                "default": bool(item.get("default")),
+            }
+            for item in local_items
+        ]
+        return {
+            "items": items,
+            "total": len(items),
+            "providers": [{
+                "provider_id": None,
+                "provider": "本地语音",
+                "model": speech_local.model_label(),
+                "source": "local",
+                "count": len(items),
+            }],
+            "tts": tts_provider_info(user_id),
+            "cached": False,
+            "warnings": [],
+            "ttl_seconds": VOICES_CACHE_TTL_SECONDS,
+        }
     items: list[dict] = []
     providers: list[dict] = []
     warnings: list[str] = []
@@ -452,6 +504,27 @@ def asset_public(row) -> dict:
     }
 
 
+async def _local_synthesize(*, user_id: int, course_id: int, text: str,
+                            voice: str | None, speed: float | None) -> dict:
+    """零厂商配置时的本地合成；失败落回浏览器朗读并保留中文原因。"""
+    effective_voice = speech_local.normalize_voice(voice)
+    try:
+        audio, mime = await asyncio.wait_for(
+            asyncio.to_thread(speech_local.synthesize, text, effective_voice, speed),
+            timeout=speech_local.SYNTH_TIMEOUT_SECONDS,
+        )
+        asset = _save_audio_asset(user_id, course_id, audio, mime, voice=effective_voice)
+    except Exception as exc:  # 本地失败与厂商失败同口径：回退浏览器，不 500
+        log.warning("Local classroom TTS failed, falling back to browser: %s", type(exc).__name__)
+        return {"fallback": "browser", "error": "本地语音合成失败：%s" % str(exc)[:160]}
+    return {
+        "asset": asset_public(asset),
+        "provider": "local",
+        "model": speech_local.model_label(),
+        "voice": effective_voice,
+    }
+
+
 async def synthesize(*, user_id: int, course_id: int, text: str, voice: str | None = None,
                      speed: float | None = None, provider_id: int | None = None,
                      model: str | None = None) -> dict:
@@ -473,6 +546,14 @@ async def synthesize(*, user_id: int, course_id: int, text: str, voice: str | No
     else:
         candidate = candidates[0] if candidates else None
     if candidate is None:
+        # 只允许「未指定模型」或「本地模型标签」走本地；任意厂商模型在无连接时保持失败。
+        if model and str(model).strip() != speech_local.model_label():
+            return {"fallback": "browser", "error": "所选语音模型未配置可用的合成连接"}
+        if speech_local.tts_available():
+            return await _local_synthesize(
+                user_id=user_id, course_id=course_id, text=normalized,
+                voice=voice, speed=speed,
+            )
         return {"fallback": "browser"}
     provider = candidate["provider"]
     target_model = str(model or candidate["model"])

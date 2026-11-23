@@ -500,7 +500,25 @@ def _provider_public(row, model_rows=None):
     }
 
 
-def _selected_provider(user_id, provider_id, model):
+def _selected_provider(user_id, provider_id, model, *, allow_local: bool = False):
+    if allow_local and int(provider_id or 0) == 0:
+        # 本地语音旁白的内部哨兵：不落 ai_providers 表，仅 course-narration 使用
+        #（submit_job 已限制任务类型）；模型标签必须与当前本地模型一致。
+        from . import speech_local
+        label = speech_local.model_label()
+        if str(model or "") == label and speech_local.tts_available():
+            return {
+                "id": 0,
+                "user_id": user_id,
+                "name": "本地语音",
+                "kind": "local",
+                "base_url": "",
+                "models_json": json.dumps([label]),
+                "encrypted_key": "",
+                "compat_json": "{}",
+                "auth_mode": "auto",
+            }
+        raise HTTPException(422, "本地语音不可用或模型标签不匹配，请刷新旁白音色列表")
     row = _owned("ai_providers", provider_id, user_id)
     if model not in json.loads(row["models_json"]):
         raise HTTPException(422, "该模型未包含在所选连接中，请先在设置中添加")
