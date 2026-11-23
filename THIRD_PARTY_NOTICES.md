@@ -245,6 +245,15 @@ SOFTWARE.
 | 用途 | `web/js/components/physicsSandbox.js`：物理题「自由沙盒」与学习附件 `physics_sandbox` 的探索模式渲染；首次打开时懒加载 |
 | 分发 | `web/vendor/matter/` 随仓库分发（matter.min.js、LICENSE、README） |
 
+| 项目 | 内容 |
+|---|---|
+| 名称 | JSXGraph（交互几何演示） |
+| 版权 | Copyright (C) 2008-2026 Matthias Ehmann, Michael Gerhaeuser, Carsten Miller, Bianca Valentin, Andreas Walter, Alfred Wassermann, Peter Wilfahrt |
+| 仓库 | <https://github.com/jsxgraph/jsxgraph> |
+| 许可证 | 双许可 MIT 或 LGPL-3.0，本仓库按 MIT 使用（全文见 `web/vendor/jsxgraph/LICENSE.MIT`） |
+| 用途 | `web/js/components/geometryDemo.js`：数学题「几何演示」与学习附件 `geometry_demo` 的交互渲染；首次打开时懒加载；预设全部用 JS 函数/数值入参，不用字符串表达式（详见 `web/vendor/jsxgraph/README.md` 的 CSP 说明） |
+| 分发 | `web/vendor/jsxgraph/` 随仓库分发（jsxgraphcore.js、jsxgraph.css、LICENSE.MIT、README）；依赖字符串求值的 JessieScript/geogebra 等独立模块不带 |
+
 ## 13. 数据边界与免责声明
 
 
@@ -285,6 +294,7 @@ SOFTWARE.
 | 23 | 3Dmol.js（分子 3D） | `3dmol@3.0.0` | BSD-3-Clause | `web/vendor/3dmol/`（版本、大小与 SHA-256 见同目录 README） | `npm pack 3dmol@3.0.0`，取 `build/3Dmol-min.js` 与 LICENSE | 随仓库分发 |
 | 24 | OpenChemLib JS（SMILES→3D） | `openchemlib@9.26.0` | BSD-3-Clause | `web/vendor/openchemlib/`（版本、大小与 SHA-256 见同目录 README） | `npm pack openchemlib@9.26.0`，取 ESM 构建、LICENSE，并由 dist/resources.json 生成 COD 子集 | 随仓库分发 |
 | 25 | Matter.js（物理沙盒） | `matter-js@0.20.0` | MIT | `web/vendor/matter/`（版本、大小与 SHA-256 见同目录 README） | `npm pack matter-js@0.20.0`，取 `build/matter.min.js` 与 LICENSE | 随仓库分发 |
+| 26 | JSXGraph（交互几何） | `jsxgraph@1.14.3` | MIT 或 LGPL-3.0（按 MIT 使用） | `web/vendor/jsxgraph/`（版本、大小与 SHA-256 见同目录 README） | `npm pack jsxgraph@1.14.3`，取 `distrib/jsxgraphcore.js`、`jsxgraph.css` 与 `LICENSE.MIT`；不带 JessieScript/geogebra 等独立模块 | 随仓库分发 |
 
 ## 15. 素材、语料与模型权重
 
@@ -331,6 +341,7 @@ SOFTWARE.
 | 分子模型查看（3Dmol.js + OpenChemLib） | 默认可用 | `web/vendor/3dmol/`、`web/vendor/openchemlib/` 随仓库分发；浏览器需 WebGL | 化学题入口；SMILES 由 OpenChemLib 转 3D 构象，3Dmol 渲染；保存为 `molecule_3d` 学习附件；WebGL 不可用时文字降级 |
 | 化学方程式配平（sympy） | 默认可用 | `app/chem_balance.py`，`POST /api/chem/balance` | 无状态、需登录；只接受元素/括号/数字下标；无解返回 `ok:false` |
 | 物理自由沙盒（Matter.js） | 默认可用 | `web/vendor/matter/` 随仓库分发；浏览器需 Canvas 2D | 探索模式，结果可能有细微差异；保存为 `physics_sandbox` 学习附件；离线仅海报 |
+| 交互几何演示（JSXGraph） | 默认可用 | `web/vendor/jsxgraph/` 随仓库分发；预设为自有代码（`web/vendor/geometry/`） | 十个高中几何预设，纯函数/数值入参，按保存参数可完全重建；保存为 `geometry_demo` 学习附件；离线仅海报 |
 | fsrs-lite 复习排程 | 实验 | `STUDY_REVIEW_SCHEDULER=fsrs-lite` | 默认 `rules`；先积累复习反馈再替换 |
 | 社区解析精选 | 可选服务 | `COMMUNITY_EXPLANATIONS_ENABLED=1` | 登录用户的既有题目 AI 解析分享 |
 | PostgreSQL / Redis Worker / 对象存储 | 可选服务（生产推荐） | `DATABASE_URL`、`REDIS_URL`、`S3_*`；公网部署校验见 `scripts/check_public_config.py` | SQLite 单机开发可用 |

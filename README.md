@@ -197,7 +197,7 @@ python -m uvicorn app.main:app --host 127.0.0.1 --port 8765
     - 许可登记：`THIRD_PARTY_NOTICES.md` 新增第 8–10 节（shigure / chinese-poetry 子集 / genanki），
       并补登记既有的 KaTeX、markdown-it、DOMPurify（第 11 节）。
 
-16. **开源组件整合（批次一 / 二 / 三 / 四 / 五·6.2–6.3，默认不改变运行时）**：
+16. **开源组件整合（批次一 / 二 / 三 / 四 / 五·6.1–6.3，默认不改变运行时）**：
     - **无障碍回归**：`scripts/ui_check_a11y.py` 用随脚本分发的 axe-core 4.14.1（MPL-2.0，仅开发期，
       不进镜像）在桌面 1440 与手机 390 视口跑 WCAG 2A/2AA，存在新增 critical/serious 即失败；
       首次可 `--update-baseline` 固化存量基线，报告落 `screenshots/a11y/`。已注册为 `-Ui` 验收的
@@ -233,8 +233,14 @@ python -m uvicorn app.main:app --host 127.0.0.1 --port 8765
       用 sympy 配平元素/括号/数字下标组成的方程式，无解返回 `ok:false`，不落库。
     - **物理自由沙盒**：`web/vendor/matter/`（Matter.js 0.20.0，MIT）提供物理题「自由沙盒」入口与
       物理演示页「自由沙盒」页签，支持刚体/弹簧/斜面/碰撞预设、播放暂停、速度与位置读数，
-      保存为 `physics_sandbox` 学习附件；页面固定提示「探索模式，结果可能有细微差异」，
-      需要回放对账的演示仍走 `physics-in-motion` 确定性内核。
+      保存为 `physics_sandbox` 学习附件；模拟固定在 640×380 设计坐标运行（视口仅渲染缩放），
+      读数与容器宽度逐位一致；需要回放对账的演示仍走 `physics-in-motion` 确定性内核。
+    - **交互几何演示**：`web/vendor/jsxgraph/`（JSXGraph 1.14.3，双许可按 MIT 使用）提供数学题
+      「几何演示」入口，十个高中几何预设（圆锥曲线统一定义、椭圆/双曲线第一定义、三角变换、
+      导数几何意义、线性规划、二次函数系数、指数对数、单位圆与正弦、直线与圆位置关系），
+      全部用 JS 函数/数值入参（无字符串表达式，兼容无 `unsafe-eval` 的 CSP），按保存的
+      预设与参数可完全重建，保存为 `geometry_demo` 学习附件；课堂播放/笔记只读打开，
+      离线导出仅海报。
 
 ## 验证
 

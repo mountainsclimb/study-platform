@@ -1,11 +1,12 @@
-"""演示附件类型验收（批次五起；覆盖 molecule_3d / physics_sandbox）。
+"""演示附件类型验收（批次五起；覆盖 molecule_3d / physics_sandbox / geometry_demo）。
 
 覆盖：
 1. `POST /api/artifacts` 接受 `molecule_3d`，data/preview 往返一致；
 2. 插入课堂固定版本演示场景后可读回附件快照；
 3. `GET /api/classroom/meta` 的 demo_artifact_kinds 包含 molecule_3d；
 4. `physics_sandbox` 附件往返、课堂固定版本与离线仅海报导出；
-5. 课堂插入端的结构校验：刚体/约束上限、形状白名单、数值与约束索引非法时 422。
+5. 课堂插入端的结构校验：刚体/约束上限、形状白名单、数值与约束索引非法时 422；
+6. `geometry_demo` 附件往返、课堂固定版本与离线仅海报导出。
 """
 from __future__ import annotations
 
@@ -26,6 +27,7 @@ PHYSICS_DATA = {
     ],
     "constraints": [{"bodyA": 0, "bodyB": 1, "stiffness": 0.02, "length": 120, "damping": 0.02}],
 }
+GEOMETRY_DATA = {"preset_id": "conic-unified", "params": {"e": 0.9}}
 
 
 def create_course(client):
@@ -93,6 +95,45 @@ def _sandbox_artifact(client, data):
     })
     assert response.status_code == 201, response.text
     return response.json()["artifact"]["artifact_id"]
+
+
+def test_geometry_demo_artifact_and_demo_scene(client):
+    response = client.post("/api/artifacts", json={
+        "kind": "geometry_demo",
+        "title": "圆锥曲线的统一定义",
+        "data": GEOMETRY_DATA,
+        "preview": {"kind": "geometry-demo", **GEOMETRY_DATA, "png": TINY_PNG},
+    })
+    assert response.status_code == 201, response.text
+    body = response.json()
+    assert body["artifact"]["kind"] == "geometry_demo"
+    assert body["revision"]["data"] == GEOMETRY_DATA
+
+    course = create_course(client)
+    attached = client.post(f"/api/classroom/courses/{course['id']}/scenes/demo", json={
+        "artifact_id": body["artifact"]["artifact_id"],
+    })
+    assert attached.status_code == 201, attached.text
+    scenes = client.get(f"/api/classroom/courses/{course['id']}").json()["scenes"]
+    demo = next(scene for scene in scenes if scene["scene_type"] == "demo")
+    assert demo["content"]["artifact"]["kind"] == "geometry_demo"
+    assert demo["content"]["artifact"]["data"] == GEOMETRY_DATA
+
+    html = client.get(
+        f"/api/classroom/courses/{course['id']}/export", params={"format": "html"},
+    )
+    assert html.status_code == 200, html.text
+    assert 'data-offline-demo="geometry_demo"' in html.text
+    assert 'data-offline-demo-mounted="1"' not in html.text
+    assert "几何演示" in html.text
+    assert "data:image/png;base64," in html.text
+
+
+def test_meta_declares_geometry_demo_kind(client):
+    meta = client.get("/api/classroom/meta").json()
+    assert "geometry_demo" in schema.DEMO_ARTIFACT_KINDS
+    assert schema.DEMO_ARTIFACT_KIND_LABELS["geometry_demo"] == "几何演示"
+    assert meta["demo_artifact_kinds"]["demo"] == list(schema.DEMO_ARTIFACT_KINDS)
 
 
 def test_physics_sandbox_demo_scene_rejects_invalid_structure(client):

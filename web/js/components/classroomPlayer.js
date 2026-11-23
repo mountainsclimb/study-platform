@@ -43,6 +43,7 @@ const DEMO_KIND_META = Object.freeze({
   // M5（§5.4 机械与工厂）：机械 3D 拆解/剖切与工厂产线仿真回放。
   mech_3d: { key: 'study.m5.kind.mech3d', fallback: '机械 3D' },
   factory_sim: { key: 'study.m5.kind.factorySim', fallback: '工厂仿真' },
+  geometry_demo: { key: 'study.oss.kind.geometry', fallback: '几何演示' },
   molecule_3d: { key: 'study.oss.kind.molecule', fallback: '分子模型' },
   physics_sandbox: { key: 'study.oss.kind.sandbox', fallback: '物理沙盒' },
 });
@@ -1103,6 +1104,36 @@ export function createPlayerView({ container, version, courseId }) {
         markDemoReady(stage, info, scene);
         return;
       }
+      // 批次五（§6.1）：JSXGraph 交互几何只读渲染（按保存参数静态重建）。
+      if (kind === 'geometry_demo') {
+        const module = await import('./geometryDemo.js');
+        if (stale()) return;
+        if (typeof module.normalizeGeometryDefinition === 'function'
+          && !module.normalizeGeometryDefinition(info.data)) {
+          throw new Error(m4Text('study.m4.demoStage.invalidData', '演示数据不合法'));
+        }
+        const view = module.createGeometryView(host, info.data, { readOnly: true });
+        if (!view || !view.element) {
+          throw new Error(m4Text('study.m4.demoStage.invalidData', '演示数据不合法'));
+        }
+        if (stale()) {
+          try { view.destroy(); } catch { /* 忽略 */ }
+          return;
+        }
+        demoController = view;
+        loadingNode.remove();
+        host.replaceChildren(view.element);
+        try {
+          const outcome = await view.ready;
+          if (!outcome || outcome.ok === false) throw new Error('geometry unavailable');
+        } catch {
+          throw new Error(m4Text('study.m4.demoStage.failed', '演示加载失败，可查看海报'));
+        }
+        if (stale()) return;
+        markDemoReady(stage, info, scene);
+        return;
+      }
+
       // 批次五（§6.3）：Matter.js 物理沙盒只读渲染（探索模式，允许播放/暂停）。
       if (kind === 'physics_sandbox') {
         const module = await import('./physicsSandbox.js');

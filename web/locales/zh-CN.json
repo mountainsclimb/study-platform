@@ -5360,5 +5360,21 @@
   "study.oss.sandbox.close": "关闭",
   "study.oss.sandbox.loading": "正在加载物理沙盒…",
   "study.oss.sandbox.unavailable": "物理沙盒不可用（Matter.js 加载失败或浏览器不支持 Canvas 2D）。",
-  "study.oss.sandbox.invalid": "场景数据不合法：请检查刚体数量、形状与约束。"
+  "study.oss.sandbox.invalid": "场景数据不合法：请检查刚体数量、形状与约束。",
+  "study.oss.kind.geometry": "几何演示",
+  "study.oss.geometry.title": "几何演示",
+  "study.oss.geometry.preset": "演示主题",
+  "study.oss.geometry.open": "几何演示",
+  "study.oss.geometry.openHint": "打开交互几何演示（圆锥曲线、三角变换、导数、线性规划等），保存为学习附件",
+  "study.oss.geometry.openFailed": "打开几何演示失败：{reason}",
+  "study.oss.geometry.savedToast": "已保存为学习附件",
+  "study.oss.geometry.reset": "重置",
+  "study.oss.geometry.save": "保存为学习附件",
+  "study.oss.geometry.saved": "已保存为学习附件：{id}",
+  "study.oss.geometry.saveFailed": "保存几何演示失败",
+  "study.oss.geometry.close": "关闭",
+  "study.oss.geometry.loading": "正在加载几何演示…",
+  "study.oss.geometry.unavailable": "几何演示不可用（JSXGraph 加载失败）。",
+  "study.oss.geometry.buildFailed": "几何演示构建失败：预设或参数无法渲染。",
+  "study.oss.geometry.invalid": "几何演示数据不合法：预设或参数无法识别。"
 }

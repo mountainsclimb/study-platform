@@ -414,6 +414,7 @@ const DEMO_KIND_META = Object.freeze({
   demo_3d: { key: 'study.m4.kind.demo3d', fallback: '3D 演示' },
   mech_3d: { key: 'study.m5.kind.mech3d', fallback: '机械 3D' },
   factory_sim: { key: 'study.m5.kind.factorySim', fallback: '工厂仿真' },
+  geometry_demo: { key: 'study.oss.kind.geometry', fallback: '几何演示' },
   molecule_3d: { key: 'study.oss.kind.molecule', fallback: '分子模型' },
   physics_sandbox: { key: 'study.oss.kind.sandbox', fallback: '物理沙盒' },
 });

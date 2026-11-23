@@ -65,6 +65,8 @@ ARTIFACT_KINDS = (
     # M5：机械/工厂演示模板库（app/demo_library.py）产出的机械 3D 与工厂仿真数据。
     "mech_3d",
     "factory_sim",
+    # 批次五（§6.1）：JSXGraph 交互几何（预设编号 + 数值参数）。
+    "geometry_demo",
     # 批次五（§6.2）：3Dmol 分子模型（SMILES + 显示样式）。
     "molecule_3d",
     # 批次五（§6.3）：Matter.js 物理自由沙盒（探索模式）。

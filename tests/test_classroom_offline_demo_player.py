@@ -369,7 +369,7 @@ def test_player_kind_support_matrix_in_inlined_source(client):
     poster_only = re.search(r"POSTER_ONLY_KINDS\s*=\s*\{(.*?)\};", html, re.S)
     assert poster_only, "缺少 POSTER_ONLY_KINDS 清单"
     body = poster_only.group(1)
-    for kind in ("function_graph", "whiteboard", "mech_3d", "molecule_3d", "physics_sandbox"):
+    for kind in ("function_graph", "whiteboard", "mech_3d", "molecule_3d", "physics_sandbox", "geometry_demo"):
         assert kind in body, kind
     for kind in ("flow_animation", "isometric", "factory_sim"):
         assert kind not in body, kind

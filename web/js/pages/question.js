@@ -1143,6 +1143,38 @@ function moleculeEntryButton(q) {
 }
 
 /* ---------------------------------------------------------------------------
+ * 批次五（§6.1）：数学题「几何演示」入口；JSXGraph 首次打开时懒加载。
+ * ------------------------------------------------------------------------- */
+
+const GEOMETRY_SUBJECTS = new Set(['数学']);
+
+async function launchGeometryDemo(q, trigger) {
+  const module = await import('../components/geometryDemo.js');
+  const ref = questionRefOf(q);
+  module.openGeometryDemo({
+    trigger,
+    titleHint: String((q?.knowledge_tags || [])[0] || ''),
+    links: ref ? [{ target_kind: 'question', target_key: ref }] : [],
+    ref,
+    onSaved: () => toast(t('study.oss.geometry.savedToast')),
+  });
+}
+
+/** 题目详情「几何演示」按钮；学科不匹配时返回 null。 */
+function geometryEntryButton(q) {
+  const subject = String(q?.subject || '').trim();
+  if (!GEOMETRY_SUBJECTS.has(subject)) return null;
+  return button(t('study.oss.geometry.open'), (event) => {
+    launchGeometryDemo(q, event?.currentTarget || null).catch(error => {
+      toast(t('study.oss.geometry.openFailed', { reason: error?.message || '' }), true);
+    });
+  }, 'soft small', 'compass', {
+    title: t('study.oss.geometry.openHint'),
+    'data-geometry-demo-open': subject,
+  });
+}
+
+/* ---------------------------------------------------------------------------
  * M3 数学互动入口（方案 §3「数学主流程」第 2 步 / §5.4「Mafs 与 Excalidraw」「逐步辅导」）
  * ---------------------------------------------------------------------------
  * - 「函数图像」：数学题或题干含公式时显示；懒加载 components/functionGraph.js
@@ -1671,6 +1703,8 @@ export function renderQuestion(
     sandboxEntryButton(q),
     // 批次五（§6.2）：化学题「分子模型」（懒加载 3Dmol，失败仅 toast）。
     moleculeEntryButton(q),
+    // 批次五（§6.1）：数学题「几何演示」（懒加载 JSXGraph，失败仅 toast）。
+    geometryEntryButton(q),
     // M3 数学互动：函数图像（数学/公式题）、画解题思路（所有题）、按步骤提示（所有题）。
     functionGraphEntryButton(q),
     sketchBoardEntryButton(q),

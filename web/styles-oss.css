@@ -176,6 +176,50 @@
   }
 }
 
+/* 批次五（§6.1）：JSXGraph 交互几何演示。 */
+.oss-geometry-dialog {
+  width: min(760px, calc(100vw - 32px));
+}
+
+.oss-geometry-toolbar {
+  margin: 12px 0;
+}
+
+.oss-geometry-field {
+  display: grid;
+  gap: 6px;
+  font-size: 0.8125rem;
+  color: var(--muted, #5f7379);
+}
+
+.oss-geometry-canvas {
+  overflow-x: auto;
+  border: 1px solid var(--line, #e2e9ec);
+  border-radius: 12px;
+  background: #fff;
+}
+
+.oss-geometry-board {
+  width: 100%;
+  touch-action: none;
+}
+
+.oss-geometry-controls {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 10px;
+  margin-top: 10px;
+}
+
+.oss-geometry-controls .button {
+  min-height: 44px;
+}
+
+.oss-geometry-loading,
+.oss-geometry-unavailable {
+  margin: 12px 0;
+}
+
 /* 批次五（§6.3）：Matter.js 物理自由沙盒。 */
 .oss-sandbox-dialog {
   width: min(920px, calc(100vw - 32px));

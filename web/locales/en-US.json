@@ -5360,5 +5360,21 @@
   "study.oss.sandbox.close": "Close",
   "study.oss.sandbox.loading": "Loading physics sandbox…",
   "study.oss.sandbox.unavailable": "Physics sandbox unavailable (Matter.js failed to load or Canvas 2D is unsupported).",
-  "study.oss.sandbox.invalid": "Invalid scene data: check body count, shapes, and constraints."
+  "study.oss.sandbox.invalid": "Invalid scene data: check body count, shapes, and constraints.",
+  "study.oss.kind.geometry": "Geometry demo",
+  "study.oss.geometry.title": "Geometry demo",
+  "study.oss.geometry.preset": "Topic",
+  "study.oss.geometry.open": "Geometry demo",
+  "study.oss.geometry.openHint": "Open an interactive geometry demo (conic sections, sine transforms, derivatives, linear programming, and more); save it as a study artifact",
+  "study.oss.geometry.openFailed": "Failed to open the geometry demo: {reason}",
+  "study.oss.geometry.savedToast": "Saved as a study artifact",
+  "study.oss.geometry.reset": "Reset",
+  "study.oss.geometry.save": "Save as study artifact",
+  "study.oss.geometry.saved": "Saved as study artifact: {id}",
+  "study.oss.geometry.saveFailed": "Failed to save the geometry demo",
+  "study.oss.geometry.close": "Close",
+  "study.oss.geometry.loading": "Loading the geometry demo…",
+  "study.oss.geometry.unavailable": "Geometry demo unavailable (JSXGraph failed to load).",
+  "study.oss.geometry.buildFailed": "Geometry demo failed to build: preset or parameters could not render.",
+  "study.oss.geometry.invalid": "Invalid geometry demo data: preset or parameters not recognized."
 }

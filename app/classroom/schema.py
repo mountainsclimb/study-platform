@@ -57,6 +57,8 @@ DEMO_ARTIFACT_KINDS = (
     # M5：机械 3D 与工厂仿真（app/demo_library.py 模板库产物）。
     "mech_3d",
     "factory_sim",
+    # 批次五（§6.1）：JSXGraph 交互几何。
+    "geometry_demo",
     # 批次五（§6.2）：3Dmol 分子模型。
     "molecule_3d",
     # 批次五（§6.3）：Matter.js 物理自由沙盒。
@@ -72,6 +74,7 @@ DEMO_ARTIFACT_KIND_LABELS = {
     "demo_3d": "3D 演示",
     "mech_3d": "机械 3D",
     "factory_sim": "工厂仿真",
+    "geometry_demo": "几何演示",
     "molecule_3d": "分子模型",
     "physics_sandbox": "物理沙盒",
 }
