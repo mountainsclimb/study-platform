@@ -197,7 +197,7 @@ python -m uvicorn app.main:app --host 127.0.0.1 --port 8765
     - 许可登记：`THIRD_PARTY_NOTICES.md` 新增第 8–10 节（shigure / chinese-poetry 子集 / genanki），
       并补登记既有的 KaTeX、markdown-it、DOMPurify（第 11 节）。
 
-16. **开源组件整合（批次一 / 二 / 三 / 四，默认不改变运行时）**：
+16. **开源组件整合（批次一 / 二 / 三 / 四 / 五·6.2，默认不改变运行时）**：
     - **无障碍回归**：`scripts/ui_check_a11y.py` 用随脚本分发的 axe-core 4.14.1（MPL-2.0，仅开发期，
       不进镜像）在桌面 1440 与手机 390 视口跑 WCAG 2A/2AA，存在新增 critical/serious 即失败；
       首次可 `--update-baseline` 固化存量基线，报告落 `screenshots/a11y/`。已注册为 `-Ui` 验收的
@@ -226,6 +226,10 @@ python -m uvicorn app.main:app --host 127.0.0.1 --port 8765
       零厂商配置也能完成课堂批量旁白（`provider: "local"`）、音色列表与语音输入识别；
       识别只接受 16k 单声道 PCM16 WAV，前端 `wavEncode.js` 用 WebAudio 自动重采样，
       模型缺失/合成失败时旁白回退浏览器朗读，不影响其它功能。
+    - **分子模型与配平**：`web/vendor/3dmol/`（3Dmol.js 3.0.0，BSD-3-Clause，版本与 SHA-256 见目录
+      README）提供化学题「分子模型」入口，支持 SMILES、球棍/空间填充/线框切换与 `molecule_3d`
+      学习附件；`POST /api/chem/balance` 用 sympy 配平元素/括号/数字下标组成的方程式，
+      无解返回 `ok:false`，不落库。
 
 ## 验证
 
@@ -296,6 +300,9 @@ $env:STUDY_RERANK="on"; python -m pytest tests/test_rerank.py -v
 # 离线语音（可选依赖；模型由部署方预置，未安装/关闭时行为不变）
 pip install -r requirements-speech.txt
 python -m pytest tests/test_speech_local.py tests/test_classroom_local_tts.py -v
+
+# 分子模型 / 化学配平（vendor 资产 + sympy，无新增 Python 依赖）
+python -m pytest tests/test_chem_balance.py tests/test_demo_kinds.py tests/test_oss_vendor_assets.py -v
 # 课堂全链路验收（本机假模型，无需真实 Key；详见 scripts/integration/README.md）
 python scripts/integration/fake_model_server.py --port 8899
 python scripts/integration/classroom_accept.py --base-url http://127.0.0.1:8813 --fake-model-base-url http://127.0.0.1:8899

@@ -65,6 +65,8 @@ ARTIFACT_KINDS = (
     # M5：机械/工厂演示模板库（app/demo_library.py）产出的机械 3D 与工厂仿真数据。
     "mech_3d",
     "factory_sim",
+    # 批次五（§6.2）：3Dmol 分子模型（SMILES + 显示样式）。
+    "molecule_3d",
 )
 #: 附件可关联的目标类型白名单。
 TARGET_KINDS = ("question", "note", "classroom", "review", "assistant")

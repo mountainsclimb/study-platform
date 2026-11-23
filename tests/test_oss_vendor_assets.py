@@ -23,6 +23,13 @@ ASSETS = {
             "LICENSE.txt": "3caebd18611959ca725ab976a004d408017eb1d7093d6c9b9b09c5a4790eaff8",
         },
     },
+    "3dmol": {
+        "version": "3.0.0",
+        "files": {
+            "3Dmol-min.js": "a886e24944310cea8111915209efb2c1246e327858a898ad56ac90fccc314053",
+            "LICENSE": "4c6eaaed856f3f28a3b1a98e74f4a8a71618de7d51ea4155c29f6f793bcef861",
+        },
+    },
 }
 
 

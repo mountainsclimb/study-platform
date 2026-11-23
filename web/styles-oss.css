@@ -111,3 +111,67 @@
   padding: 8px 10px;
   text-align: left;
 }
+
+/* 批次五（§6.2）：3Dmol 分子模型弹层。 */
+.oss-molecule-dialog {
+  width: min(860px, calc(100vw - 32px));
+}
+
+.oss-molecule-toolbar {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 12px;
+  margin: 12px 0;
+}
+
+.oss-molecule-field {
+  display: grid;
+  gap: 6px;
+  font-size: 0.8125rem;
+  color: var(--muted, #5f7379);
+}
+
+.oss-molecule-field .input {
+  min-height: 44px;
+}
+
+.oss-molecule-view {
+  width: 100%;
+  height: 100%;
+  min-height: 380px;
+  position: relative;
+}
+
+.oss-molecule-view canvas {
+  display: block;
+}
+
+.oss-molecule-canvas {
+  min-height: 380px;
+  border: 1px solid var(--line, #e2e9ec);
+  border-radius: 12px;
+  overflow: hidden;
+  background: #fff;
+  position: relative;
+}
+
+.oss-molecule-canvas canvas {
+  max-width: 100%;
+}
+
+.oss-molecule-loading,
+.oss-molecule-unavailable {
+  padding: 18px;
+  margin: 0;
+  text-align: center;
+}
+
+@media (max-width: 640px) {
+  .oss-molecule-toolbar {
+    grid-template-columns: 1fr;
+  }
+
+  .oss-molecule-canvas {
+    min-height: 300px;
+  }
+}

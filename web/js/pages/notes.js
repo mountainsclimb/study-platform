@@ -1558,6 +1558,7 @@ const NOTE_ARTIFACT_KIND_META = Object.freeze({
   // M5（§5.4 机械与工厂）：机械 3D 与工厂仿真学习附件，只读打开复用 mechDemo 组件。
   mech_3d: { key: 'study.m5.kind.mech3d', fallback: '机械 3D' },
   factory_sim: { key: 'study.m5.kind.factorySim', fallback: '工厂仿真' },
+  molecule_3d: { key: 'study.oss.kind.molecule', fallback: '分子模型' },
 });
 
 const NOTE_ARTIFACT_DEMO_KINDS = new Set(['flow_animation', 'isometric', 'demo_3d', 'science_demo']);
@@ -1619,6 +1620,17 @@ async function mountNoteArtifactView(mount, { kind, title, data }) {
     const board = module.createSketchBoard({ scene: data, readOnly: true, ariaLabel: artTitle });
     mount.replaceChildren(board.element);
     return board;
+  }
+  if (kind === 'molecule_3d') {
+    const module = await import('../components/moleculeViewer.js');
+    if (typeof module.normalizeMoleculeDefinition === 'function'
+      && !module.normalizeMoleculeDefinition(data)) {
+      throw new Error(m4t('study.m4.notes.invalidData', '附件数据不合法'));
+    }
+    const view = module.createMoleculeView(mount, data, { readOnly: true });
+    if (!view || !view.element) throw new Error(m4t('study.m4.notes.invalidData', '附件数据不合法'));
+    try { await view.ready; } catch { /* ready 不应 reject；兼容异常实现 */ }
+    return view;
   }
   // M5（§5.4 机械与工厂）：机械 3D / 工厂仿真学习附件只读打开，复用 mechDemo 组件；
   // 数据不合法时组件内部给中文降级，不伪造演示内容。

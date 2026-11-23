@@ -1080,6 +1080,38 @@ function mechDemoEntryButton(q) {
 }
 
 /* ---------------------------------------------------------------------------
+ * 批次五（§6.2）：化学题「分子模型」入口；3Dmol 首次打开时懒加载。
+ * ------------------------------------------------------------------------- */
+
+const MOLECULE_SUBJECTS = new Set(['化学']);
+
+async function launchMoleculeViewer(q, trigger) {
+  const module = await import('../components/moleculeViewer.js');
+  const ref = questionRefOf(q);
+  module.openMoleculeViewer({
+    trigger,
+    titleHint: String((q?.knowledge_tags || [])[0] || t('study.oss.molecule.title')),
+    links: ref ? [{ target_kind: 'question', target_key: ref }] : [],
+    ref,
+    onSaved: () => toast(t('study.oss.molecule.savedToast')),
+  });
+}
+
+/** 题目详情「分子模型」按钮；学科不匹配时返回 null。 */
+function moleculeEntryButton(q) {
+  const subject = String(q?.subject || '').trim();
+  if (!MOLECULE_SUBJECTS.has(subject)) return null;
+  return button(t('study.oss.molecule.open'), (event) => {
+    launchMoleculeViewer(q, event?.currentTarget || null).catch(error => {
+      toast(t('study.oss.molecule.openFailed', { reason: error?.message || '' }), true);
+    });
+  }, 'soft small', 'atom', {
+    title: t('study.oss.molecule.openHint'),
+    'data-molecule-viewer-open': subject,
+  });
+}
+
+/* ---------------------------------------------------------------------------
  * M3 数学互动入口（方案 §3「数学主流程」第 2 步 / §5.4「Mafs 与 Excalidraw」「逐步辅导」）
  * ---------------------------------------------------------------------------
  * - 「函数图像」：数学题或题干含公式时显示；懒加载 components/functionGraph.js
@@ -1604,6 +1636,8 @@ export function renderQuestion(
     principleEntryButton(q),
     // M5 机械与工厂：物理/机械/技术题提供「机械演示」（懒加载 mechDemo.js，失败仅 toast）。
     mechDemoEntryButton(q),
+    // 批次五（§6.2）：化学题「分子模型」（懒加载 3Dmol，失败仅 toast）。
+    moleculeEntryButton(q),
     // M3 数学互动：函数图像（数学/公式题）、画解题思路（所有题）、按步骤提示（所有题）。
     functionGraphEntryButton(q),
     sketchBoardEntryButton(q),

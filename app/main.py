@@ -755,7 +755,11 @@ app.include_router(guided_hint.router)
 app.include_router(demo_library.router)
 # M6：专题报告与互动讲义。
 app.include_router(topic_report.router)
+from . import chem_balance
+
 app.include_router(handout.router)
+# 批次五（§6.2）：化学方程式配平（无状态，需登录）。
+app.include_router(chem_balance.router)
 
 app.mount("/static", StaticFiles(directory=str(WEB_DIR)), name="static")
 

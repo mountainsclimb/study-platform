@@ -45,6 +45,7 @@
     demo_3d: "3D 演示",
     mech_3d: "机械 3D",
     factory_sim: "工厂仿真",
+    molecule_3d: "分子模型",
   };
 
   /**
@@ -55,6 +56,7 @@
     function_graph: true,
     whiteboard: true,
     mech_3d: true,
+    molecule_3d: true,
   };
 
   /** 工厂仿真事件类型分组（与 web/js/components/mechDemo.js 的回放口径一致）。 */
