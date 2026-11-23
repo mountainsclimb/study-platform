@@ -253,6 +253,19 @@ def test_dockerignore_excludes_local_state_and_acceptance_artifacts():
     assert any(pattern in ("accept-*.json", "pytest-*.log", "*.log") for pattern in lines)
 
 
+def test_dockerignore_excludes_dev_only_script_vendor():
+    """axe-core 等开发期脚本资产只用于本机验收，必须留在镜像上下文之外。"""
+    lines = _read_dockerignore()
+    assert "scripts/vendor/" in lines
+    for relative in (
+        "scripts/vendor/axe.min.js",
+        "scripts/vendor/README.md",
+    ):
+        assert any(
+            _matches(relative, pattern) for pattern in lines if not pattern.startswith("!")
+        ), f".dockerignore 未排除开发资产 {relative}"
+
+
 def test_dockerignore_keeps_distribution_assets():
     lines = _read_dockerignore()
     samples = (

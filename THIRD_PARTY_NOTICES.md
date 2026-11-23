@@ -164,6 +164,51 @@ SOFTWARE.
 - 部署注意：`onnxruntime` 在 slim 镜像需要 `libgomp1`；课堂视频导出需要系统 `ffmpeg`（LGPL/GPL 取决于构建，
   本项目仅以子进程调用，不链接其库，也不分发其二进制）。二者已写入 `deploy/Dockerfile`。
 
+| 项目 | 内容 |
+|---|---|
+| 名称 | pdfplumber（文本型 PDF 表格抽取） |
+| 版权 | Copyright (c) 2015-2025 Jeremy Singer-Vine |
+| 仓库 | <https://github.com/jsvine/pdfplumber> |
+| 许可证 | MIT License |
+| 用途 | `app/ai/pdf_tables.py`：知识清单上传文本型 PDF 时把表格行追加到对应页；可选依赖 `requirements-pdf.txt`，开关 `STUDY_PDF_TABLES=on`（默认关闭） |
+| 基础依赖 | pdfminer.six（MIT）、Pillow（MIT-CMU）、pypdfium2（Apache-2.0 / BSD-3-Clause，已在 `requirements.txt`） |
+
+| 项目 | 内容 |
+|---|---|
+| 名称 | RapidLaTeXOCR（公式图片转 LaTeX） |
+| 作者 | SWHL（RapidAI 项目） |
+| 仓库 | <https://github.com/RapidAI/RapidLaTeXOCR> |
+| 许可证 | 仓库 LICENSE 为 MIT；PyPI 元数据标 Apache-2.0；模型源自 LaTeX-OCR（MIT） |
+| 用途 | `app/ai/formula_ocr.py`：拍题/扫描页 math 块的可选 LaTeX 识别；默认关闭（`STUDY_FORMULA_OCR=off`） |
+| 模型权重 | 由 pip 包在首次初始化时下载，本仓库不分发；离线部署需预置到包内 `models/` |
+
+| 项目 | 内容 |
+|---|---|
+| 名称 | RapidTable（表格结构识别） |
+| 作者 | SWHL（RapidAI 项目） |
+| 仓库 | <https://github.com/RapidAI/RapidTable> |
+| 许可证 | Apache License 2.0 |
+| 用途 | `app/ai/table_structure.py`：连续表格块的单元格结构与 HTML 生成；服务端只保留白名单标签/属性 |
+| 模型权重 | 由 pip 包在首次初始化时下载，本仓库不分发 |
+
+| 项目 | 内容 |
+|---|---|
+| 名称 | fastembed（本地向量与重排） |
+| 版权 | Copyright (c) 2024 Qdrant |
+| 仓库 | <https://github.com/qdrant/fastembed> |
+| 许可证 | Apache License 2.0 |
+| 用途 | `app/ai/embeddings_local.py`、`app/ai/rerank.py`：本地文本向量与交叉编码器重排；可选依赖 `requirements-embeddings.txt`，开关 `STUDY_EMBEDDING_MODE=local` / `STUDY_RERANK=on`（默认关闭） |
+| 模型权重 | `bge-small-zh-v1.5`（MIT）与 `bge-reranker-base`（MIT）由部署方预置到本地模型目录，本仓库与镜像不分发 |
+
+| 项目 | 内容 |
+|---|---|
+| 名称 | MathLive（可视化公式编辑） |
+| 版权 | Copyright (c) 2021 Arno Gourdol |
+| 仓库 | <https://github.com/arnog/mathlive> |
+| 许可证 | MIT License（全文见 `web/vendor/mathlive/LICENSE.txt`） |
+| 用途 | `web/js/components/formulaEditor.js`：拍题校对、题目表单与笔记编辑器的可视化公式编辑 |
+| 分发 | `web/vendor/mathlive/` 随仓库分发（主脚本、样式、20 个 KaTeX 字体、LICENSE、README）；不引入按键音效 |
+
 ## 13. 数据边界与免责声明
 
 
@@ -193,6 +238,13 @@ SOFTWARE.
 | 12 | Playwright / Chromium（可选） | playwright 及其下载的浏览器 | Apache-2.0 | 本机/CI 浏览器的独立安装，不进仓库 | `pip install playwright && playwright install chromium` | 运行时安装（可选服务） |
 | 13 | Surya OCR（可选） | `surya-ocr`（`requirements-surya.txt`） | 代码 Apache-2.0；权重 Modified AI Pubs Open Rail-M（见 §6） | 运行时 site-packages；权重由部署方按上游下载 | `pip install -r requirements-surya.txt` | 运行时安装（可选，权重不进仓库） |
 | 14 | 题库发布包（只读） | `高考题库_按学科/releases/`，当前 `CURRENT` → `bank-20261121-r5`（26,374 题 / 538 组 / 1,873 卷） | 各来源不同，逐来源见 §17；题目版权归原命题机构 | `../../高考题库_按学科/releases/`，应用只读挂载 | `tools/ingest/build_release.py`（题库仓库内） | 不进仓库（只读挂载） |
+| 15 | axe-core（开发期无障碍扫描） | `axe-core@4.14.1` | MPL-2.0 | `scripts/vendor/axe.min.js`（来源、大小与 SHA-256 见同目录 README） | `npm pack axe-core@4.14.1`，取包内 `axe.min.js` 与 `LICENSE` | 随仓库分发（仅开发脚本）；`.dockerignore` 已排除 `scripts/vendor/`，不进镜像 |
+| 16 | RapidFuzz（开发期题库去重） | `rapidfuzz==3.14.6`（`requirements-dev.txt`） | MIT | 运行时 site-packages，不进仓库 | `pip install -r requirements-dev.txt` | 运行时安装（开发依赖），不进生产镜像 |
+| 17 | pdfplumber（文本型 PDF 表格） | `pdfplumber==0.11.10`（`requirements-pdf.txt`；0.11.11 要求 Pillow≥13，与工程锁定版本不兼容） | MIT | 运行时 site-packages，不进仓库 | `pip install -r requirements-pdf.txt`；开关 `STUDY_PDF_TABLES=on` | 运行时安装（可选），不进镜像 |
+| 18 | RapidLaTeXOCR（公式识别） | `rapid-latex-ocr==0.0.9`（`requirements-formula.txt`） | MIT / PyPI 元数据 Apache-2.0；模型源自 LaTeX-OCR（MIT） | 运行时 site-packages；模型随包下载，不进仓库 | `pip install -r requirements-formula.txt`；开关 `STUDY_FORMULA_OCR=on` | 运行时安装（可选），不进镜像 |
+| 19 | RapidTable（表格结构） | `rapid-table==3.0.2`（`requirements-formula.txt`） | Apache-2.0 | 运行时 site-packages；模型随包下载，不进仓库 | `pip install -r requirements-formula.txt`；开关 `STUDY_TABLE_OCR=on` | 运行时安装（可选），不进镜像 |
+| 20 | MathLive（可视化公式编辑） | `mathlive@0.111.4` | MIT | `web/vendor/mathlive/`（版本、大小与 SHA-256 见同目录 README） | `npm pack mathlive@0.111.4`，取主脚本、样式、字体与 LICENSE | 随仓库分发 |
+| 21 | fastembed（本地向量/重排） | `fastembed==0.9.1`（`requirements-embeddings.txt`） | Apache-2.0 | 运行时 site-packages；模型由部署方预置，不进仓库 | `pip install -r requirements-embeddings.txt`；开关 `STUDY_EMBEDDING_MODE=local`、`STUDY_RERANK=on` | 运行时安装（可选），不进镜像 |
 
 ## 15. 素材、语料与模型权重
 
@@ -204,6 +256,10 @@ SOFTWARE.
 | 官方批次线 | 2020–2026 省年批次线 | 教育在线公开页面（§4），保留来源 URL 与页面 SHA-256 | 只保留事实字段 |
 | 每日一句语料 | 365 条唐宋/先秦原文 | chinese-poetry（MIT）+ 公有领域原文；构建期抽样与去重 | 生成物入库，保留上游 LICENSE |
 | OCR 模型权重 | PP-OCRv4 检测/识别/方向分类 | Apache-2.0，随 RapidOCR pip 包分发 | 不进仓库 |
+| 本地向量模型权重 | bge-small-zh-v1.5（512 维） | MIT，由部署方预置 | 不进仓库与镜像；目录见 `requirements-embeddings.txt` |
+| 本地重排模型权重 | bge-reranker-base | MIT，由部署方预置 | 不进仓库与镜像 |
+| 公式识别模型权重 | LaTeX-OCR 编码器/解码器/图像缩放/tokenizer | 源自 LaTeX-OCR（MIT），随 rapid-latex-ocr pip 包下载 | 不进仓库；离线部署需预置到包内 `models/` |
+| 表格结构模型权重 | SLANet Plus | 随 rapid-table pip 包下载；许可以包内说明为准 | 不进仓库；离线部署需预置 |
 | Surya 模型权重 | 版面/文字识别/公式 | Modified AI Pubs Open Rail-M（商用门槛见 §6） | 部署方自行下载，不进仓库；商用前确认授权 |
 | 字体 | KaTeX 数学字体 | SIL OFL 1.1 | 随构建产物分发；不引用外部字体 CDN |
 | 图标 | lucide-react 图标 | ISC | 随编辑器构建产物分发 |
@@ -222,8 +278,13 @@ SOFTWARE.
 | 本地 OCR（RapidOCR，CPU） | 默认可用 | `requirements.txt` 已锁定 | 缺依赖时按代码降级，不影响练习 |
 | AI 讲解/助手/课堂生成 | 可选服务 | 模型提供方配置（`app/ai/providers.py`）；出站受 `netguard.py` 策略约束 | 读题与扣费动作需用户确认 |
 | AI 课堂视频/PPTX/PDF 导出 | 可选服务 | ffmpeg（镜像已装）+ Playwright/Chromium | Chromium 未安装时能力探针降级，见方案 §3 P1 |
-| Surya 公式转 LaTeX | 实验 | `requirements-surya.txt` + 推理后端 + 权重许可确认 | 见 §6；先在难例集证明收益再转正 |
-| 向量检索 / embedding | 实验 | `STUDY_EMBEDDING_BASE_URL`、`STUDY_EMBEDDING_MODEL` 等 | 默认关闭 |
+| Surya 公式转 LaTeX | 实验（待移除） | `requirements-surya.txt` + 推理后端 + 权重许可确认 | 已由拍题的公式识别后处理取代；保留一个版本周期后删除 |
+| 公式图片识别（RapidLaTeXOCR） | 实验 | `requirements-formula.txt` + `STUDY_FORMULA_OCR=on`；超时/上限见 `STUDY_FORMULA_TIMEOUT`、`STUDY_FORMULA_MAX_BLOCKS` | 默认关闭；只填 math 块的 `latex`，`needs_review` 保持 true；失败/超时块原样 |
+| 表格结构（RapidTable） | 实验 | `requirements-formula.txt` + `STUDY_TABLE_OCR=on`；超时 `STUDY_TABLE_TIMEOUT` | 默认关闭；只写连续表格块的第一块，HTML 经服务端白名单清洗 |
+| 可视化公式编辑（MathLive） | 默认可用 | `web/vendor/mathlive/` 随仓库分发；首次打开懒加载 | 加载失败回退现有文本公式输入 |
+| 文本型 PDF 表格（pdfplumber） | 实验 | `requirements-pdf.txt` + `STUDY_PDF_TABLES=on`；页数上限 `STUDY_PDF_TABLE_PAGES` | 默认关闭；只补有表格线的文本型 PDF，扫描件与无边框表格不生成内容；失败只跳过 |
+| 向量检索 / embedding | 实验 | HTTP：`STUDY_EMBEDDING_BASE_URL`、`STUDY_EMBEDDING_MODEL` 等；本地：`requirements-embeddings.txt` + `STUDY_EMBEDDING_MODE=local` | 默认关闭；本地模型不可用时回退本地全文检索 |
+| 本地重排（fastembed 交叉编码器） | 实验 | `STUDY_RERANK=on` + 本地重排模型目录 | 默认关闭；失败沿用原排序 |
 | fsrs-lite 复习排程 | 实验 | `STUDY_REVIEW_SCHEDULER=fsrs-lite` | 默认 `rules`；先积累复习反馈再替换 |
 | 社区解析精选 | 可选服务 | `COMMUNITY_EXPLANATIONS_ENABLED=1` | 登录用户的既有题目 AI 解析分享 |
 | PostgreSQL / Redis Worker / 对象存储 | 可选服务（生产推荐） | `DATABASE_URL`、`REDIS_URL`、`S3_*`；公网部署校验见 `scripts/check_public_config.py` | SQLite 单机开发可用 |

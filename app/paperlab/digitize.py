@@ -367,8 +367,60 @@ def _ocr_line_bbox(box, width: float, height: float) -> dict | None:
             "w": round(width_norm, 4), "h": round(height_norm, 4)}
 
 
+MAX_OCR_BLOCKS = 200
+BLOCK_KINDS = frozenset({"text", "math", "table", "image"})
+_BLOCK_TEXT_MAX = 4000
+_BLOCK_LATEX_MAX = 2000
+
+
+def _normalize_ocr_blocks(raw) -> list[dict]:
+    """规整 OCR 内容块：只保留可定位/可展示字段，公式与表格结构走白名单。"""
+    blocks: list[dict] = []
+    for index, item in enumerate(raw if isinstance(raw, list) else []):
+        if len(blocks) >= MAX_OCR_BLOCKS:
+            break
+        if not isinstance(item, dict):
+            continue
+        kind = str(item.get("kind") or "text").strip().lower()
+        if kind not in BLOCK_KINDS:
+            kind = "text"
+        text = str(item.get("text") or "")[:_BLOCK_TEXT_MAX]
+        if not text.strip() and kind != "image":
+            continue
+        latex = item.get("latex")
+        block = {
+            "id": str(item.get("id") or f"b{index + 1}")[:32],
+            "kind": kind,
+            "text": text,
+            "latex": (str(latex).strip()[:_BLOCK_LATEX_MAX] or None) if latex else None,
+            "needs_review": bool(item.get("needs_review")),
+            "order": schema.safe_int(item.get("order")) or 0,
+            "page": schema.safe_int(item.get("page")) or 0,
+            "confidence": schema.safe_float(item.get("confidence")),
+            "bbox": item.get("bbox") if isinstance(item.get("bbox"), dict) else None,
+            "norm": item.get("norm") if isinstance(item.get("norm"), dict) else None,
+            "source": str(item.get("source") or "local_ocr")[:32],
+        }
+        table_html = item.get("table_html")
+        if isinstance(table_html, str) and table_html.strip():
+            try:
+                from ..ai.table_structure import sanitize_table_html
+
+                cleaned = sanitize_table_html(table_html)
+            except (ValueError, TypeError):
+                cleaned = ""
+            if cleaned:
+                block["table_html"] = cleaned
+                for field in ("row_count", "col_count"):
+                    value = schema.safe_int(item.get(field))
+                    if value is not None and 1 <= value <= 100:
+                        block[field] = value
+        blocks.append(block)
+    return blocks
+
+
 def _normalize_ocr_result(result) -> dict:
-    """规整 ``app.ai.ocr`` 的返回：文本 + 归一化行框（像素 → 0~1）。"""
+    """规整 ``app.ai.ocr`` 的返回：文本 + 归一化行框（像素 → 0~1）+ 内容块。"""
     result = result if isinstance(result, dict) else {}
     text = str(result.get("text") or "").strip()[:MAX_OCR_TEXT_CHARS]
     width = schema.safe_float(result.get("width")) or 0.0
@@ -397,6 +449,7 @@ def _normalize_ocr_result(result) -> dict:
         "width": int(width),
         "height": int(height),
         "elapsed_ms": schema.safe_int(result.get("elapsed_ms")),
+        "blocks": _normalize_ocr_blocks(result.get("blocks")),
     }
 
 
@@ -409,18 +462,26 @@ async def _ocr_page(module, page: dict) -> dict:
         text = str(page.get("text_content") or "").strip()[:MAX_OCR_TEXT_CHARS]
         if not text:
             raise ValueError(f"第 {page_no} 页没有可 OCR 的内容")
-        return {"text": text, "lines": [], "width": int(page.get("width") or 0),
+        return {"text": text, "lines": [], "blocks": [],
+                "width": int(page.get("width") or 0),
                 "height": int(page.get("height") or 0), "elapsed_ms": None,
                 "engine": "text_page"}
     raw = await asyncio.to_thread(storage.read_file, PAGE_FOLDER, storage_name)
     recognize = getattr(module, "recognize_image", None)
     if not callable(recognize):
         raise _ocr_unavailable("OCR 模块缺少 recognize_image 接口")
+    # 新引擎支持 include_blocks；旧签名/测试替身不接受该参数时回退为纯文本调用。
+    kwargs: dict = {}
+    try:
+        if "include_blocks" in inspect.signature(recognize).parameters:
+            kwargs["include_blocks"] = True
+    except (TypeError, ValueError):
+        pass
     # app.ai.ocr 的接口是 async（CPU 推理在其内部丢线程池）；兼容同步实现的假模块。
     if inspect.iscoroutinefunction(recognize):
-        result = await recognize(raw)
+        result = await recognize(raw, **kwargs)
     else:
-        result = await asyncio.to_thread(recognize, raw)
+        result = await asyncio.to_thread(recognize, raw, **kwargs)
     normalized = _normalize_ocr_result(result)
     normalized["engine"] = engine
     return normalized
@@ -430,11 +491,13 @@ def _save_page_ocr(import_id: int, user_id: int, page_no: int, normalized: dict)
     with connection() as con:
         write_lock(con, "paperlab-ocr")
         con.execute(
-            "UPDATE pl_pages SET ocr_text=?, ocr_lines_json=?, ocr_engine=?, ocr_at=?, "
-            "updated_at=? WHERE import_id=? AND page_no=? AND user_id=?",
+            "UPDATE pl_pages SET ocr_text=?, ocr_lines_json=?, ocr_blocks_json=?, "
+            "ocr_engine=?, ocr_at=?, updated_at=? "
+            "WHERE import_id=? AND page_no=? AND user_id=?",
             (
                 str(normalized.get("text") or ""),
                 json_dump(normalized.get("lines") or []),
+                json_dump(normalized.get("blocks") or []),
                 str(normalized.get("engine") or ""),
                 utcnow(), utcnow(),
                 import_id, page_no, user_id,
@@ -1160,6 +1223,7 @@ async def create_ocr_drafts(
                 **page,
                 "ocr_text": normalized.get("text") or "",
                 "ocr_lines_json": json_dump(normalized.get("lines") or []),
+                "ocr_blocks_json": json_dump(normalized.get("blocks") or []),
                 "ocr_engine": normalized.get("engine") or "",
             }
     engines = sorted({

@@ -22,13 +22,13 @@ import httpx
 
 from .. import db
 from ..search_vector import load_chunk_vectors, rank_chunks_hybrid, valid_embedding
-from . import netguard
+from . import embeddings_local, netguard
 from .providers import _cipher, provider_compat, resolve_auth_mode
 
 _logger = logging.getLogger(__name__)
 _BATCH_SIZE = 8
 MAX_RESPONSE_BYTES = 8 * 1024 * 1024
-EMBEDDING_MODES = ("off", "inherit", "custom")
+EMBEDDING_MODES = ("off", "inherit", "custom", "local")
 _EMBEDDING_KINDS = ("openai", "gemini", "azure_openai")
 
 _embedding_user_var: contextvars.ContextVar[int | None] = contextvars.ContextVar(
@@ -224,26 +224,49 @@ def _inherit_from_row(row: dict, user_id: int) -> EmbeddingConfig | None:
     )
 
 
+def _local_config() -> EmbeddingConfig | None:
+    """本地 fastembed 配置；模型目录/依赖不可用时返回 None（不伪造向量）。"""
+    if not embeddings_local.local_available():
+        return None
+    model = embeddings_local.model_name()
+    return EmbeddingConfig(
+        endpoint="local://" + model,
+        model=model,
+        api_key="",
+        base_url="",
+        source="local",
+    )
+
+
+def _fallback_config() -> EmbeddingConfig | None:
+    """账号配置无效时的回退：显式 local 模式优先，否则沿用环境变量 HTTP 配置。"""
+    if os.environ.get("STUDY_EMBEDDING_MODE", "").strip().lower() == "local":
+        return _local_config()
+    return env_embedding_config()
+
+
 def embedding_config(user_id: int | None = None) -> EmbeddingConfig | None:
     """解析当前生效的 Embedding 配置（账号配置优先，环境变量回退）。"""
     uid = user_id if user_id is not None else current_embedding_user()
     row = read_embedding_config(uid) if uid else None
     if row:
         mode = str(row.get("mode") or "off")
+        if mode == "local":
+            return _local_config()
         if mode == "custom":
             config = _custom_from_row(row)
             if config is not None:
                 return config
             _logger.warning("账号自定义 Embedding 配置无效，回退到环境变量/本地检索")
-            return env_embedding_config()
+            return _fallback_config()
         if mode == "inherit":
             config = _inherit_from_row(row, uid or 0)
             if config is not None:
                 return config
             _logger.warning("复用的 Embedding 连接不可用，回退到环境变量/本地检索")
-            return env_embedding_config()
+            return _fallback_config()
         return None
-    return env_embedding_config()
+    return _fallback_config()
 
 
 def _transient_config(
@@ -260,6 +283,8 @@ def _transient_config(
     resolved_mode = mode or str(row.get("mode") or "")
     if resolved_mode == "off":
         return None
+    if resolved_mode == "local":
+        return _local_config()
     if resolved_mode == "inherit" or (not resolved_mode and row.get("mode") == "inherit"):
         effective_row = dict(row)
         effective_row["provider_id"] = provider_id or row.get("provider_id")
@@ -359,6 +384,20 @@ async def _request_embeddings(config: EmbeddingConfig, texts: list[str]) -> list
 
 
 async def _embed(config: EmbeddingConfig, texts: list[str]) -> list[list[float]]:
+    if config.source == "local":
+        try:
+            vectors = await asyncio.wait_for(
+                asyncio.to_thread(embeddings_local.embed, texts),
+                timeout=embeddings_local.EMBEDDING_TIMEOUT_SECONDS,
+            )
+            if len(vectors) != len(texts):
+                raise ValueError("本地向量返回数量与输入不一致")
+            _clear_last_error()
+            return vectors
+        except (embeddings_local.LocalEmbeddingError, ValueError, TimeoutError, OSError) as exc:
+            _set_last_error(f"{type(exc).__name__}: {exc}")
+            _logger.warning("本地向量计算失败（%s），使用本地检索", type(exc).__name__)
+            return []
     try:
         vectors = await asyncio.wait_for(_request_embeddings(config, texts), timeout=30)
         _clear_last_error()
@@ -395,20 +434,44 @@ def store_document_vectors(con, document_id: int, vectors: list[tuple[str, str, 
             )
 
 
+def _rerank_callable():
+    """返回启用的重排可调用对象；未启用/初始化失败返回 None。"""
+    try:
+        from . import rerank as rerank_module
+
+        return rerank_module.score_texts if rerank_module.available() else None
+    except Exception:
+        return None
+
+
 async def retrieve_document_chunks(
     chunks: list[dict], query_text: str, top_k: int, *, user_id: int | None = None,
 ) -> list[dict]:
     config = embedding_config(user_id)
+    rerank = _rerank_callable()
     if config and len(chunks) > top_k and query_text.strip():
         dense_vectors = load_chunk_vectors(chunks, config.storage_model)
         if dense_vectors:
             query_vectors = await _embed(config, [query_text])
             if query_vectors:
-                return rank_chunks_hybrid(
-                    chunks, query_text, top_k=top_k,
-                    query_vector=query_vectors[0], dense_vectors=dense_vectors,
+                # 重排是 CPU 推理：连同 TF-IDF 打分一起放线程池，避免阻塞事件循环。
+                return await asyncio.to_thread(
+                    rank_chunks_hybrid,
+                    chunks, query_text,
+                    top_k=top_k,
+                    query_vector=query_vectors[0],
+                    dense_vectors=dense_vectors,
+                    rerank=rerank,
                 )
-    return rank_chunks_hybrid(chunks, query_text, top_k=top_k)
+    return await asyncio.to_thread(
+        rank_chunks_hybrid, chunks, query_text, top_k=top_k, rerank=rerank,
+    )
+
+
+def _display_endpoint(config: EmbeddingConfig) -> str:
+    if config.source == "local":
+        return "local://" + config.model
+    return config.masked_endpoint
 
 
 def embedding_status(user_id: int | None = None) -> dict:
@@ -416,20 +479,30 @@ def embedding_status(user_id: int | None = None) -> dict:
     config = embedding_config(user_id)
     row = read_embedding_config(user_id) if user_id else None
     env_config = env_embedding_config()
+    local_available = embeddings_local.local_available()
     if config is not None:
         return {
             "configured": True,
             "ready": True,
             "source": config.source,
             "model": config.model,
-            "endpoint": config.masked_endpoint,
+            "endpoint": _display_endpoint(config),
             "env_configured": env_config is not None,
-            "detail": "语义检索已配置",
+            "local_available": local_available,
+            "rerank": embeddings_local.rerank_available(),
+            "detail": "本地语义检索已配置" if config.source == "local" else "语义检索已配置",
             "recent_error": dict(_last_error) if _last_error else None,
         }
-    if row and str(row.get("mode") or "") == "off":
+    mode = str((row or {}).get("mode") or "")
+    if mode == "off":
         detail = "已关闭语义检索，使用本地全文检索"
         source = "off"
+    elif mode == "local" or os.environ.get("STUDY_EMBEDDING_MODE", "").strip().lower() == "local":
+        detail = (
+            "本地向量模型可用，但当前配置未生效"
+            if local_available else "本地向量模型不可用（依赖未安装或模型目录缺失），使用本地全文检索"
+        )
+        source = "local"
     elif env_config is not None:
         detail = "环境变量配置不可用，使用本地全文检索"
         source = "env"
@@ -443,6 +516,8 @@ def embedding_status(user_id: int | None = None) -> dict:
         "model": "",
         "endpoint": "",
         "env_configured": env_config is not None,
+        "local_available": local_available,
+        "rerank": embeddings_local.rerank_available(),
         "detail": detail,
         "recent_error": dict(_last_error) if _last_error else None,
     }
@@ -471,6 +546,22 @@ async def test_embedding_config(
         }
     sample = (str(text or "").strip() or "知序语义检索连接测试")
     started = time.monotonic()
+    if config.source == "local":
+        vectors = await _embed(config, [sample])
+        dimension = len(vectors[0]) if vectors else None
+        error = dict(_last_error).get("message") if _last_error else ""
+        return {
+            "ok": bool(vectors),
+            "dimension": dimension,
+            "latency_ms": max(0, int((time.monotonic() - started) * 1000)),
+            "model": config.model,
+            "endpoint": _display_endpoint(config),
+            "source": "local",
+            "diagnosis": (
+                "本地向量模型正常" if vectors
+                else ("本地向量模型不可用：" + (error or "未返回向量"))
+            ),
+        }
     try:
         vectors = await asyncio.wait_for(_request_embeddings(config, [sample]), timeout=30)
     except (httpx.HTTPError, httpx.InvalidURL, HTTPException, ValueError, TimeoutError, OSError) as exc:
@@ -479,7 +570,7 @@ async def test_embedding_config(
         return {
             "ok": False, "dimension": None,
             "latency_ms": max(0, int((time.monotonic() - started) * 1000)),
-            "model": config.model, "endpoint": config.masked_endpoint,
+            "model": config.model, "endpoint": _display_endpoint(config),
             "source": config.source, "diagnosis": f"向量接口不可用：{message}",
         }
     _clear_last_error()
@@ -489,7 +580,7 @@ async def test_embedding_config(
         "dimension": dimension,
         "latency_ms": max(0, int((time.monotonic() - started) * 1000)),
         "model": config.model,
-        "endpoint": config.masked_endpoint,
+        "endpoint": _display_endpoint(config),
         "source": config.source,
         "diagnosis": "向量接口正常" if vectors else "向量接口返回空结果",
     }

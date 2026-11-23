@@ -1032,7 +1032,7 @@ class AllowedHostInput(BaseModel):
 
 
 class EmbeddingConfigInput(BaseModel):
-    mode: str = Field(pattern="^(off|inherit|custom)$")
+    mode: str = Field(pattern="^(off|inherit|custom|local)$")
     provider_id: int | None = None
     base_url: str | None = Field(default=None, max_length=1000)
     model: str | None = Field(default=None, max_length=200)
@@ -1040,7 +1040,7 @@ class EmbeddingConfigInput(BaseModel):
 
 
 class EmbeddingTestInput(BaseModel):
-    mode: str | None = Field(default=None, pattern="^(off|inherit|custom)$")
+    mode: str | None = Field(default=None, pattern="^(off|inherit|custom|local)$")
     provider_id: int | None = None
     base_url: str | None = Field(default=None, max_length=1000)
     model: str | None = Field(default=None, max_length=200)
@@ -1324,11 +1324,13 @@ def set_task_default(data: TaskDefaultInput, user=Depends(current_user)):
 # ---------------------------------------------------------------------------
 
 def _embedding_public(user_id: int) -> dict:
+    from . import embeddings_local
     from .embeddings import embedding_config, env_embedding_config, read_embedding_config
 
     row = read_embedding_config(user_id) or {}
     mode = str(row.get("mode") or "off")
     env_configured = env_embedding_config() is not None
+    local_available = embeddings_local.local_available()
     config = embedding_config(user_id)
     compatible = []
     try:
@@ -1357,10 +1359,18 @@ def _embedding_public(user_id: int) -> dict:
         "updated_at": row.get("updated_at"),
         "env_configured": env_configured,
         "effective_source": config.source if config else ("off" if mode == "off" and row else "none"),
+        # 本地向量（§5）：可用性、模型名与已加载维度；不可用时前端置灰并说明原因。
+        "local_available": local_available,
+        "local_model": embeddings_local.model_name(),
+        "local_dimension": embeddings_local.dimension(),
+        "rerank_available": embeddings_local.rerank_available(),
         "effective": {
             "base_url": netguard.mask_url(config.base_url) if config else "",
             "model": config.model if config else "",
-            "endpoint": netguard.mask_url(config.endpoint) if config else "",
+            "endpoint": (
+                "local://" + config.model if config and config.source == "local"
+                else (netguard.mask_url(config.endpoint) if config else "")
+            ),
             "ready": config is not None,
         },
         "compatible_providers": compatible,
@@ -1383,7 +1393,18 @@ def put_embeddings_config(data: EmbeddingConfigInput, user=Depends(current_user)
     base_url = ""
     model = ""
     api_key_enc = existing.get("api_key_enc") or ""
-    if mode == "inherit":
+    if mode == "local":
+        from . import embeddings_local
+
+        if not embeddings_local.local_available():
+            raise HTTPException(
+                422,
+                "本地向量模型不可用：请先安装 requirements-embeddings.txt，"
+                "并把 bge-small-zh-v1.5 预置到本地模型目录",
+            )
+        model = embeddings_local.model_name()
+        api_key_enc = ""
+    elif mode == "inherit":
         if not data.provider_id:
             raise HTTPException(422, "复用已有连接时请选择 provider_id")
         provider = _owned("ai_providers", data.provider_id, user["id"])

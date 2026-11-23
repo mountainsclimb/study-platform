@@ -128,6 +128,15 @@ export function sanitizeMarkdown(html) {
   return sanitizeOrThrow(String(html ?? ''), MARKDOWN_SANITIZE_OPTIONS, 'Markdown');
 }
 
+/** 表格结构 HTML 的安全化：仅保留表格标签与 rowspan/colspan（OCR 后处理预览用）。 */
+export function sanitizeTableHtml(html) {
+  return sanitizeOrThrow(String(html ?? ''), {
+    ALLOWED_TAGS: ['table', 'thead', 'tbody', 'tr', 'td', 'th'],
+    ALLOWED_ATTR: ['rowspan', 'colspan'],
+    ALLOW_DATA_ATTR: false,
+  }, '表格结构');
+}
+
 /** 调试/验收用：当前页面是否具备可用的 HTML 净化器。 */
 export function sanitizerAvailable() {
   return purifierReady();

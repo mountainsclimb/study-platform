@@ -1,0 +1,21 @@
+# 可选依赖：公式图片识别（app/ai/formula_ocr.py）与表格结构（app/ai/table_structure.py）。
+# 代码许可：rapid-latex-ocr 仓库 LICENSE 为 MIT、PyPI 元数据标 Apache-2.0；模型源自
+# LaTeX-OCR（MIT）。rapid-table 为 Apache-2.0。两者均无 torch（torch 只在 rapid-table
+# 的可选 extras 里）。见 THIRD_PARTY_NOTICES.md。
+# 不进生产镜像；需要时安装：
+#   pip install -r requirements-formula.txt
+# 启用开关：STUDY_FORMULA_OCR=on / STUDY_TABLE_OCR=on（默认均 off）。
+#
+# 版本与运行时约束：
+# * rapid-latex-ocr 0.0.9 声明 numpy<2.0.0；本工程 requirements.txt 未直接锁定 numpy，
+#   安装本清单会得到 numpy 1.26.x。若部署环境必须使用 numpy 2（例如其它组件要求），
+#   请把公式识别放到独立虚拟环境/进程，不要直接升级本清单里的 numpy。
+# * tokenizers 锁定首次集成验证的 0.21 主版本；升级前先跑 tests/test_formula_ocr.py。
+# * 模型权重由 pip 包在首次初始化时下载（不在仓库与镜像内）；离线部署需预置到包内
+#   models/ 目录，见 deploy/README.md §6。
+# * rapid-table 的依赖含 opencv-python（完整包）；若环境已装 opencv-python-headless，
+#   两者可共存但会增大体积，安装前请确认镜像/虚拟环境策略。
+rapid-latex-ocr==0.0.9
+rapid-table==3.0.2
+numpy==1.26.4
+tokenizers==0.21.4

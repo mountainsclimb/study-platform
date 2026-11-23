@@ -339,11 +339,12 @@ def _local_ocr_meta(module) -> dict:
     return meta
 
 
-def _ocr_result_blocks(module, result, *, page: int = 1) -> list[dict]:
-    """把 ``recognize_image`` 的行结果按统一口径构造成内容块；模块不支持时返回 []。
+async def _ocr_result_blocks(module, result, *, page: int = 1, image=None) -> list[dict]:
+    """把 ``recognize_image`` 的行结果按统一口径构造成内容块，并按开关做后处理。
 
     块构造放在 ``app.ai.ocr`` 的 :func:`build_blocks`，这里只负责跨模块调用，
-    保证「原图定位/阅读顺序/kind 判定」只有一处口径。多图拍题的 ``page`` 为图片序号。
+    保证「原图定位/阅读顺序/kind 判定」只有一处口径。多图拍题的 ``page`` 为图片序号；
+    ``image`` 为当次上传的原始图片，传入后由 ``ocr.enrich_blocks`` 按开关补公式/表格结构。
     """
     if not isinstance(result, dict):
         return []
@@ -351,7 +352,7 @@ def _ocr_result_blocks(module, result, *, page: int = 1) -> list[dict]:
     if not callable(builder):
         return []
     try:
-        return builder(
+        blocks = builder(
             result.get("lines") or [],
             result.get("width") or 0,
             result.get("height") or 0,
@@ -359,6 +360,21 @@ def _ocr_result_blocks(module, result, *, page: int = 1) -> list[dict]:
         )
     except (TypeError, ValueError):
         return []
+    enricher = getattr(module, "enrich_blocks", None)
+    if image is not None and blocks and callable(enricher):
+        try:
+            outcome = await enricher(
+                blocks,
+                image,
+                page=page,
+                width=result.get("width") or 0,
+                height=result.get("height") or 0,
+            )
+        except Exception:  # 后处理只是增强：失败时保留基础块
+            return blocks
+        if isinstance(outcome, dict) and isinstance(outcome.get("blocks"), list):
+            return outcome["blocks"]
+    return blocks
 
 
 def _parse_question_text(text: str, *, source: str = "local_ocr", blocks=None) -> dict:
@@ -487,7 +503,9 @@ async def create_ocr_draft(upload_id: int, user=Depends(current_user)):
                 prefix = f"【第 {index} 张图】\n" if len(images) > 1 else ""
                 parts.append(prefix + line_text)
             # 多图拍题用图片序号作为 page（1 基），单图固定 1；块构造口径只在 ocr.build_blocks。
-            blocks.extend(_ocr_result_blocks(local_ocr, result, page=index if len(images) > 1 else 1))
+            blocks.extend(await _ocr_result_blocks(
+                local_ocr, result, page=index if len(images) > 1 else 1, image=raw,
+            ))
         if not ocr_available:
             return {
                 "upload_id": upload_id,
@@ -853,14 +871,17 @@ class ConfirmUploadInput(BaseModel):
     blocks: list[dict] | None = Field(default=None, max_length=CONFIRM_BLOCKS_MAX)
 
 
-def _validate_confirm_blocks(raw) -> list[dict]:
+def _validate_confirm_blocks(raw, notices: list[str] | None = None) -> list[dict]:
     """校验人工确认请求里的识别块（只校验已知字段，未知字段原样保留）。
 
     规则（非法一律 422 + 中文提示）：
     * 每块必须是非空对象，最多 ``CONFIRM_BLOCKS_MAX`` 块；
     * ``kind`` 若提供必须属于 ``BLOCK_KIND_VALUES``（text/math/table/image）；
     * ``text`` ≤4000 字、``latex`` ≤2000 字（可为 null）、``order`` 0–500、``page`` 1–200；
-    * ``bbox``/``norm`` 若提供必须是对象，x/y/w/h 为有限数值或缺失。
+    * ``bbox``/``norm`` 若提供必须是对象，x/y/w/h 为有限数值或缺失；
+    * ``table_html`` 必须能通过服务端白名单清洗且 ≤20000 字；不通过时**丢弃该字段**
+      并在 ``notices`` 里说明（不整单 422，文字仍可确认）；
+    * ``row_count``/``col_count`` 若提供必须是 1–100 的整数，否则丢弃。
     """
     if not isinstance(raw, list):
         raise HTTPException(422, "blocks 必须是识别块列表")
@@ -913,6 +934,31 @@ def _validate_confirm_blocks(raw) -> list[dict]:
                     or not math.isfinite(float(number))
                 ):
                     raise HTTPException(422, f"第 {position} 个识别块 {field}.{axis} 必须是数值")
+        table_html = block.get("table_html")
+        if table_html is not None:
+            cleaned = None
+            if isinstance(table_html, str):
+                try:
+                    from . import table_structure
+                    cleaned = table_structure.sanitize_table_html(table_html)
+                except (ValueError, TypeError):
+                    cleaned = None
+            if cleaned:
+                block["table_html"] = cleaned
+            else:
+                block.pop("table_html", None)
+                if notices is not None:
+                    notices.append(
+                        f"第 {position} 个识别块的表格结构无效或超长（上限 20000 字），已丢弃，文字内容仍保留"
+                    )
+        for field in ("row_count", "col_count"):
+            value = block.get(field)
+            if value is None:
+                continue
+            if isinstance(value, bool) or not isinstance(value, int) or not 1 <= value <= 100:
+                block.pop(field, None)
+                if notices is not None:
+                    notices.append(f"第 {position} 个识别块的 {field} 无效，已丢弃")
         blocks.append(dict(block))
     return blocks
 
@@ -933,7 +979,11 @@ def confirm_upload(upload_id: int, data: ConfirmUploadInput, user=Depends(curren
     current_revision = _intake_revision(row)
     if data.expected_version is not None and int(data.expected_version) != current_revision:
         raise HTTPException(409, "题目已被其他操作更新（版本冲突），请刷新页面后重试")
-    blocks = _validate_confirm_blocks(data.blocks) if data.blocks is not None else None
+    block_notices: list[str] = []
+    blocks = (
+        _validate_confirm_blocks(data.blocks, block_notices)
+        if data.blocks is not None else None
+    )
     confirmed = _json_load(row.get("confirmed_json"), {}) or {}
     draft = _json_load(row.get("draft_json"), {}) or {}
     base = {**draft, **confirmed}
@@ -975,7 +1025,7 @@ def confirm_upload(upload_id: int, data: ConfirmUploadInput, user=Depends(curren
     revision = current_revision + 1
     similar = practice.search_similar_questions(data.stem, subject=data.subject or None, limit=5)
     fresh = _read_intake_row(upload_id, user["id"])
-    return {
+    response = {
         "id": upload_id,
         "status": "confirmed",
         "confirmed": payload,
@@ -983,6 +1033,9 @@ def confirm_upload(upload_id: int, data: ConfirmUploadInput, user=Depends(curren
         "revision": revision,
         "intake": _intake_state(fresh),
     }
+    if block_notices:
+        response["block_notices"] = block_notices
+    return response
 
 
 @router.post("/uploads/{upload_id}/similar")
@@ -1033,7 +1086,9 @@ async def _local_ocr_question_text(images) -> tuple[str, str | None, list[dict]]
         text = str(result.get("text") or "").strip() if isinstance(result, dict) else ""
         if text:
             parts.append(f"【第 {index} 张图】\n{text}" if multi else text)
-        blocks.extend(_ocr_result_blocks(local_ocr, result, page=index if multi else 1))
+        blocks.extend(await _ocr_result_blocks(
+            local_ocr, result, page=index if multi else 1, image=image,
+        ))
     return "\n\n".join(parts)[:LOCAL_OCR_TEXT_LIMIT], notice, blocks
 
 
@@ -1174,7 +1229,12 @@ async def _recognize_job(user_id: int, data, provider, verifier, *, job_id=None)
                 (_json(pending), data.upload_id, user_id),
             )
 
-    similar = practice.search_similar_questions(primary_rec.get("stem", ""), subject=primary_rec.get("subject") or None, limit=5)
+    similar = await asyncio.to_thread(
+        practice.search_similar_questions,
+        primary_rec.get("stem", ""),
+        primary_rec.get("subject") or None,
+        limit=5,
+    )
     notice = (
         "该题已人工确认，本次识别结果已保存为「模型草稿」，需你再次确认才会生效。"
         if not draft_applied else ""

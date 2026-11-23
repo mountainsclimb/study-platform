@@ -15,6 +15,11 @@
 
 边界：识别结果未经人工核对不得直接作为标准答案或入库题干，与拍题「先核对确认」
 门禁一致；手写、复杂表格、拍照反光等场景仍需人工校对。
+
+维护状态（2026-11-23）：本适配层已由拍题链路的公式识别后处理
+（``app.ai.formula_ocr`` + ``ocr.enrich_blocks``）取代，仓库内不再被业务路由引用；
+按《开源组件整合实施方案》§3.1 保留一个版本周期，下个版本周期删除本模块、
+``tests/test_surya_latex.py`` 与 ``requirements-surya.txt``。
 """
 from __future__ import annotations
 

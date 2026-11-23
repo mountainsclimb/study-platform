@@ -51,7 +51,7 @@ python -m uvicorn app.main:app --host 127.0.0.1 --port 8765
 4. **拍题双步流水线**：
    - 支持多图、相机调起、`Ctrl+V` 粘贴截图、90° 旋转与交互式 Canvas **框选裁剪**。
    - 先由视觉模型识别题干（支持双模型差异提示）→ 用户核对确认 → FTS5 + 向量混合检索题库相似真题 → 多模式求解，并支持将自传拍题加入错题本。
-   - **图片试题转 LaTeX（Surya 预置适配层）**：`app/ai/surya_latex.py` 整合开源 [Surya](https://github.com/datalab-to/surya) OCR，把题目图片识别为内容块（text/math/image/table）与整题 LaTeX（公式 KaTeX 兼容），供后续「上传图片题目转 LaTeX」功能调用；本轮只整合能力不接业务接口。可选依赖 `pip install -r requirements-surya.txt`（`surya-ocr`，推理后端 vllm/llama-server 或 `SURYA_INFERENCE_URL`），未安装时自动降级不影响现有功能。
+   - **图片试题转 LaTeX（公式识别后处理）**：拍题/扫描页的 math 块可经 `STUDY_FORMULA_OCR=on` 用 RapidLaTeXOCR 填 `latex`（默认关闭，失败/超时保持为空并标「需校对」），前端可用 MathLive 可视化修正后再确认；旧 `app/ai/surya_latex.py` 适配层已不接业务路由，按方案保留一个版本周期后删除。可选依赖见 `requirements-formula.txt` 与 `requirements-surya.txt`。
 5. **知识清单受控工作流 Agent 与方格提示词**：
    - 标题层级感知结构化分块（保留 `heading_path` 与 DOCX 表格顺序）；扫描 PDF 支持 `pypdfium2` 渲染 + 用户确认页数后视觉 OCR 与人工校对。
    - L0–L5 分层提示词与 6 维度「方格选择」组合器、最终要求预览、「我的模板」存取与公开分享。管理员可推荐已公开模板。
@@ -197,6 +197,31 @@ python -m uvicorn app.main:app --host 127.0.0.1 --port 8765
     - 许可登记：`THIRD_PARTY_NOTICES.md` 新增第 8–10 节（shigure / chinese-poetry 子集 / genanki），
       并补登记既有的 KaTeX、markdown-it、DOMPurify（第 11 节）。
 
+16. **开源组件整合（批次一 / 二 / 四，默认不改变运行时）**：
+    - **无障碍回归**：`scripts/ui_check_a11y.py` 用随脚本分发的 axe-core 4.14.1（MPL-2.0，仅开发期，
+      不进镜像）在桌面 1440 与手机 390 视口跑 WCAG 2A/2AA，存在新增 critical/serious 即失败；
+      首次可 `--update-baseline` 固化存量基线，报告落 `screenshots/a11y/`。已注册为 `-Ui` 验收的
+      `ui-a11y` 阶段。
+    - **题库近似去重**：`scripts/dedup_questions.py` 以只读方式打开题库，按学科与题干长度分桶后
+      用 RapidFuzz 计算相似度，输出 JSON/Markdown 人工复核清单，不写任何库。
+    - **文本 PDF 表格**：可选依赖 `requirements-pdf.txt`（pdfplumber 0.11.10，MIT；0.11.11 要求 Pillow≥13，与工程锁定版本不兼容）；设置
+      `STUDY_PDF_TABLES=on` 后，知识清单上传文本型 PDF 时表格行按 `" | ".join(单元格)` 追加到对应页，
+      与 DOCX 口径一致；关闭/未安装/抽取失败时结果与现状逐字节一致。页数上限
+      `STUDY_PDF_TABLE_PAGES`（默认 50）。
+    - **公式与表格结构后处理**：`ocr.enrich_blocks()` 作为拍题、扫描页、`POST /api/ai/ocr` 与试卷工坊
+      的共享入口；`STUDY_FORMULA_OCR=on` 时用 RapidLaTeXOCR 给 math 块填 `latex`（仍标「需校对」），
+      `STUDY_TABLE_OCR=on` 时用 RapidTable 给连续表格块生成经白名单清洗的 `table_html`/行列数。
+      两者默认关闭，未安装/超时/失败时块原样；可选依赖见 `requirements-formula.txt`
+      （该清单按 rapid-latex-ocr 的声明固定 numpy 1.26.x；需要 numpy 2 的部署请放到独立虚拟环境）。
+    - **可视化公式编辑**：`web/vendor/mathlive/`（0.111.4，MIT，版本与 SHA-256 见目录 README）
+      提供 `formulaEditor.js`；拍题校对、题目表单（题干/解析/评分标准/子题）与笔记编辑器可打开
+      原生 `<dialog>` 编辑公式，首次打开懒加载，加载失败回退现有文本公式输入。
+    - **本地向量与重排**：`requirements-embeddings.txt`（fastembed 0.9.1，Apache-2.0）；设
+      `STUDY_EMBEDDING_MODE=local` 后，资料向量由本机 `bge-small-zh-v1.5` 计算，存储标签为
+      `local://...`，与任何 HTTP 模型标签隔离；设 `STUDY_RERANK=on` 且预置 `bge-reranker-base`
+      后，笔记检索取混合得分前 20 条重排（0.3 混合 + 0.7 重排），相似题条目增加 `rerank_score`。
+      模型目录由部署方预置，失败/未安装时回退现有 HTTP Embedding 或本地全文检索。
+
 ## 验证
 
 ```powershell
@@ -242,6 +267,26 @@ $env:PYTEST_DISABLE_PLUGIN_AUTOLOAD="1"; python -m pytest -q
 python scripts/ui_check_integration.py --base-url http://127.0.0.1:8813 --routes home,classroom,mybank,paperlab,insight,assistant,tasks
 # 拍题入库页（#/upload）桌面/手机视口核对（本轮新增，需隔离实例与 Playwright）
 python scripts/ui_check_upload.py --base-url http://127.0.0.1:8813
+# 无障碍回归（axe-core WCAG 2A/2AA；首次先固化基线，之后只对新增 critical/serious 判失败）
+python scripts/ui_check_a11y.py --base-url http://127.0.0.1:8813 --update-baseline
+python scripts/ui_check_a11y.py --base-url http://127.0.0.1:8813
+# 题库近似去重（只读；输出人工复核清单，不改库）
+python scripts/dedup_questions.py
+# 文本型 PDF 表格（可选依赖；关闭时行为不变）
+pip install -r requirements-pdf.txt
+$env:STUDY_PDF_TABLES="on"; python -m pytest tests/test_pdf_tables.py -v
+
+# 公式识别 / 表格结构（可选依赖；未安装或关闭时块保持原样）
+pip install -r requirements-formula.txt
+$env:STUDY_FORMULA_OCR="on"; $env:STUDY_TABLE_OCR="on"; python -m pytest tests/test_formula_ocr.py tests/test_table_structure.py -v
+
+# vendor 资产自检（版本 / 大小 / SHA-256 与磁盘一致）
+python -m pytest tests/test_oss_vendor_assets.py -v
+
+# 本地向量与重排（可选依赖；模型由部署方预置，未安装/关闭时行为不变）
+pip install -r requirements-embeddings.txt
+$env:STUDY_EMBEDDING_MODE="local"; python -m pytest tests/test_embeddings_local.py -v
+$env:STUDY_RERANK="on"; python -m pytest tests/test_rerank.py -v
 # 课堂全链路验收（本机假模型，无需真实 Key；详见 scripts/integration/README.md）
 python scripts/integration/fake_model_server.py --port 8899
 python scripts/integration/classroom_accept.py --base-url http://127.0.0.1:8813 --fake-model-base-url http://127.0.0.1:8899

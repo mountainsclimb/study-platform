@@ -7,6 +7,7 @@
 import { el, field, input, select, badge, button, toast } from '../core/dom.js';
 import { markdown } from '../core/markdown.js';
 import { t } from '../core/i18n.js';
+import { openFormulaEditor, insertFormulaAtCursor } from './formulaEditor.js';
 
 // 模块级常量不能直接 t()（语言切换后模块不重载），标签一律用 getter 惰性求值。
 const TYPE_OPTIONS = [
@@ -38,6 +39,26 @@ function splitTags(text) {
     .split(/[,，、;；\n]+/)
     .map(item => item.trim())
     .filter(Boolean))];
+}
+
+/** 文本输入框旁的「插入公式」：打开 MathLive，把 `$latex$` 插到光标处。 */
+function formulaAction(control) {
+  return button(t('study.oss.formula.insert'), async () => {
+    try {
+      const latex = await openFormulaEditor({ title: t('study.oss.formula.dialogTitle') });
+      if (!latex) return;
+      if (!insertFormulaAtCursor(control, latex)) return;
+      toast(t('study.oss.formula.inserted'));
+    } catch {
+      toast(t('study.oss.formula.loadFailed'), true);
+    }
+  }, 'secondary');
+}
+
+function fieldWithFormula(label, control) {
+  const node = field(label, control);
+  node.append(el('div', { class: 'oss-formula-actions' }, formulaAction(control)));
+  return node;
 }
 
 function clone(value) {
@@ -269,8 +290,8 @@ export function questionForm({ meta = {}, initial = {} }) {
         el('div', { class: 'mb-part-body' },
           el('p', { class: 'help' }, t('paper.question.subQuestionTypesAndOptionsComeFrom')),
           answerArea,
-          field(t('paper.question.subQuestionSolution'), partExplanation),
-          field(t('paper.question.subQuestionScoringRubric'), partRubric),
+          fieldWithFormula(t('paper.question.subQuestionSolution'), partExplanation),
+          fieldWithFormula(t('paper.question.subQuestionScoringRubric'), partRubric),
           field(t('paper.question.subQuestionKnowledgePoints'), partTags))));
     });
   }
@@ -318,11 +339,11 @@ export function questionForm({ meta = {}, initial = {} }) {
       field(t('mybank.grade'), gradeSelect),
       field(t('practice.difficulty'), difficultySelect),
       field(t('practice.knowledgePoint'), tagsInput, t('paper.question.separateWithCommasAiFillInMerges'))),
-    field(t('question.stem'), stemInput),
+    fieldWithFormula(t('question.stem'), stemInput),
     optionsBox,
     answersBox,
-    field(t('question.solution'), explanationInput),
-    field(t('paper.question.scoringRubric'), rubricInput),
+    fieldWithFormula(t('question.solution'), explanationInput),
+    fieldWithFormula(t('paper.question.scoringRubric'), rubricInput),
     partsBox,
     imagesBox);
 

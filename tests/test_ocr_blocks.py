@@ -250,10 +250,9 @@ def test_recognize_image_include_blocks_adds_fields_and_keeps_legacy_default(mon
     assert legacy["text"] == "\n".join(line["text"] for line in sample_lines())
 
     result = run(ocr.recognize_image(png_bytes(400, 300), include_blocks=True))
-    assert {"blocks", "engine", "engine_version", "capabilities"} <= set(result)
-    assert result["capabilities"] == {
-        "blocks": True, "math_recognition": False, "pix2text_adapter": "reserved",
-    }
+    assert {"blocks", "engine", "engine_version", "capabilities", "enrichment"} <= set(result)
+    assert result["capabilities"] == {"blocks": True, "math_recognition": False}
+    assert result["enrichment"] == {"formula": "off", "table": "off"}
     assert result["engine"] == ocr.ENGINE_NAME
     assert (result["width"], result["height"]) == (400, 300)
     assert len(result["blocks"]) == 5
@@ -302,10 +301,10 @@ def test_engine_status_and_info_expose_blocks_capability(client, monkeypatch):
     monkeypatch.setattr(ocr, "_module_available", lambda: True)
     status = ocr.engine_status()
     assert status["engine_version"] == status["version"]
-    assert status["capabilities"] == {
-        "blocks": True, "math_recognition": False, "pix2text_adapter": "reserved",
-    }
-    assert "文字块" in status["notice"] and "Pix2Text" in status["notice"]
+    assert status["capabilities"] == {"blocks": True, "math_recognition": False}
+    assert "文字块" in status["notice"] and "STUDY_FORMULA_OCR" in status["notice"]
+    assert status["enrichment"] == {"formula": "off", "table": "off"}
+    assert status["formula"]["mode"] == "off" and status["table"]["mode"] == "off"
     assert ocr.BLOCK_KINDS == ("text", "math", "table", "image")
     assert {"BLOCK_KINDS", "BLOCKS_NOTICE", "CAPABILITIES", "build_blocks", "engine_meta"} <= set(ocr.__all__)
 
@@ -315,7 +314,7 @@ def test_engine_status_and_info_expose_blocks_capability(client, monkeypatch):
         assert key in payload
     assert payload["engine_version"] == payload["version"]
     assert payload["capabilities"]["math_recognition"] is False
-    assert "公式识别尚未启用" in payload["notice"]
+    assert "STUDY_FORMULA_OCR" in payload["notice"]
 
 
 # ---------------------------------------------------------------------------

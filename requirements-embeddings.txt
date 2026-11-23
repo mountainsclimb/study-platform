@@ -1,0 +1,15 @@
+# 可选依赖：本地向量与重排（app/ai/embeddings_local.py、app/ai/rerank.py）。
+# fastembed 为 Apache-2.0，基础依赖 numpy / onnxruntime / tokenizers / huggingface-hub /
+# loguru / pillow / mmh3 / py-rust-stemmers，无 torch。见 THIRD_PARTY_NOTICES.md。
+# 不进生产镜像；需要时安装：
+#   pip install -r requirements-embeddings.txt
+# 启用开关：STUDY_EMBEDDING_MODE=local；重排加 STUDY_RERANK=on（默认均关闭）。
+#
+# 模型由部署方预置，不进仓库与镜像：
+#   <data>/models/embeddings  → BAAI/bge-small-zh-v1.5（MIT，512 维）
+#   <data>/models/rerank      → BAAI/bge-reranker-base（MIT）
+# 目录可用 STUDY_LOCAL_EMBEDDING_DIR / STUDY_LOCAL_RERANK_DIR 覆盖。
+# fastembed 以 cache_dir 指向上述目录并设置 local_files_only=True；目录首选
+# huggingface_hub 缓存结构（models--BAAI--bge-small-zh-v1.5/...），与上游 snapshot_download
+# 生成的布局一致。离线目录加载的具体调用方式需在验收环境实测（方案 §5 第一个验证点）。
+fastembed==0.9.1

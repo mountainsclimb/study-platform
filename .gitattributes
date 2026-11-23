@@ -1,0 +1,8 @@
+# 第三方 vendored 资产按原始字节提交/检出：README 与 tests/test_oss_vendor_assets.py
+# 记录的 SHA-256 依赖字节不变，Windows core.autocrlf=true 时尤其重要。
+web/vendor/** -text
+scripts/vendor/** -text
+
+# 字体/压缩产物按二进制处理，避免 diff 与换行转换。
+*.woff2 binary
+*.woff binary

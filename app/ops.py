@@ -75,6 +75,9 @@ _BACKUP_EXCLUDED_ENTRIES = (
     "backups",
     "app.sqlite3-wal",
     "app.sqlite3-shm",
+    # 本地模型目录（公式/表格/语音/向量）：由部署方预置，可由依赖与模型重新下载，
+    # 不进入热备份，避免把数 GB 权重打进 ZIP。
+    "models",
 )
 _MANIFEST_NAME = "manifest.json"
 _DATABASE_NAME = "app.sqlite3"

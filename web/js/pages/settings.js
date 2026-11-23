@@ -1404,6 +1404,7 @@ export async function renderSettings(container, version) {
     { value: 'off', label: t('settings.embeddingMode.off') },
     { value: 'inherit', label: t('settings.embeddingMode.inherit') },
     { value: 'custom', label: t('settings.embeddingMode.custom') },
+    { value: 'local', label: t('settings.embeddingMode.local') },
   ], 'off');
   const embProviderSel = select([{ value: '', label: t('settings.embeddingProvider') },
     ...(state.providers || []).map(provider => ({ value: String(provider.id), label: provider.name }))]);
@@ -1432,11 +1433,22 @@ export async function renderSettings(container, version) {
   let embLoaded = false;
   let embConfig = null;
 
+  function refreshEmbeddingLocalOption() {
+    const option = [...embMode.options].find(item => item.value === 'local');
+    if (!option) return;
+    const available = Boolean(embConfig && embConfig.local_available);
+    option.disabled = !available;
+    option.textContent = available
+      ? t('settings.embeddingMode.local')
+      : t('settings.embeddingLocalUnavailable');
+  }
+
   function syncEmbeddingMode() {
     const mode = embMode.value;
     embReuseField.classList.toggle('hide', mode !== 'inherit');
     embCustomBox.classList.toggle('hide', mode !== 'custom');
-    embModelIn.closest('.field')?.classList?.toggle('hide', mode === 'off');
+    embModelIn.closest('.field')?.classList?.toggle('hide', mode === 'off' || mode === 'local');
+    refreshEmbeddingLocalOption();
   }
   embMode.addEventListener('change', syncEmbeddingMode);
 
@@ -1471,6 +1483,7 @@ export async function renderSettings(container, version) {
       if (!embLoaded) return statusTag(t('settings.embeddingLoadingConfig'), 'info', '…');
       if (mode === 'off' && source !== 'env') return statusTag(t('settings.embeddingStatusDisabled'), 'warn', '!');
       if (source === 'env') return statusTag(t('settings.embeddingStatusEnv'), 'info', '·');
+      if (source === 'local') return statusTag(t('settings.embeddingStatusLocal'), ready ? 'ok' : 'warn', ready ? '✓' : '!');
       if (source === 'inherit') return statusTag(t('settings.embeddingStatusInherit'), ready ? 'ok' : 'warn', ready ? '✓' : '!');
       if (source === 'custom') return statusTag(t('settings.embeddingStatusCustom'), ready ? 'ok' : 'warn', ready ? '✓' : '!');
       if (cfg.env_configured) return statusTag(t('settings.embeddingStatusEnvFallback'), 'warn', '!');
@@ -1485,6 +1498,15 @@ export async function renderSettings(container, version) {
       rows.push(el('span', { class: 'help' }, t('settings.embeddingProviderRow', { provider: provider ? provider.name : `#${cfg.provider_id}` })));
     }
     if (cfg.has_api_key || cfg.key_hint) rows.push(el('span', { class: 'help' }, t('settings.embeddingKeySaved')));
+    if (source === 'local' && cfg.local_available) {
+      rows.push(el('span', { class: 'help' }, t('settings.embeddingLocalModel', {
+        model: cfg.local_model || cfg.effective?.model || 'bge-small-zh-v1.5',
+        dimension: cfg.local_dimension || '—',
+      })));
+    }
+    if (source === 'local' && !cfg.local_available) {
+      rows.push(el('span', { class: 'help' }, t('settings.embeddingLocalMissing')));
+    }
     if (cfg.env_configured && source !== 'env') {
       rows.push(el('span', { class: 'help' }, t('settings.embeddingEnvConfigured')));
     }
@@ -1510,8 +1532,10 @@ export async function renderSettings(container, version) {
 
   function applyEmbeddingConfig(cfg) {
     embConfig = cfg || {};
+    refreshEmbeddingLocalOption();
     const mode = String(cfg?.mode || '').toLowerCase();
     if (mode === 'off' || (!mode && cfg?.effective_source === 'off')) embMode.value = 'off';
+    else if (mode === 'local') embMode.value = 'local';
     else if (mode === 'inherit' || mode === 'reuse' || mode === 'provider') embMode.value = 'inherit';
     else if (mode === 'custom') embMode.value = 'custom';
     else if (cfg?.effective_source === 'env') embMode.value = 'off';

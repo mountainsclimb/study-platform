@@ -92,6 +92,7 @@ STAGE_LABELS = {
     "ui-routes": "UI 路由核对",
     "ui-upload": "拍题入库页面核对",
     "ui-modules": "整合模块端到端",
+    "ui-a11y": "无障碍回归（axe-core）",
     # 放在最后：该阶段会配置一个只在本阶段存活的本地假模型 provider，
     # 运行结束后 provider 指向的端口已关闭，不能影响后续 UI 阶段。
     "ui-ai-usage": "AI 用量与配额（本地假模型）",
@@ -517,6 +518,12 @@ def build_stages(
                      "--base-url", base_url, "--seed"],
             cwd=root, requires=("ui-server",),
             description="整合模块端到端（课堂/工坊/学情/任务/助手；先注册演示账号）",
+        )
+        candidates["ui-a11y"] = Stage(
+            key="ui-a11y", name=STAGE_LABELS["ui-a11y"],
+            command=[python, "scripts/ui_check_a11y.py", "--base-url", base_url],
+            cwd=root, requires=("ui-server",),
+            description="axe-core WCAG 2A/2AA：主要路由桌面 1440 / 手机 390 零新增 critical+serious",
         )
 
     order = [key for key in STAGE_LABELS if key in candidates]

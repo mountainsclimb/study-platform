@@ -187,6 +187,7 @@ CREATE TABLE IF NOT EXISTS pl_pages (
     text_content TEXT NOT NULL DEFAULT '',
     ocr_text TEXT NOT NULL DEFAULT '',
     ocr_lines_json TEXT NOT NULL DEFAULT '[]',
+    ocr_blocks_json TEXT NOT NULL DEFAULT '[]',
     ocr_engine TEXT NOT NULL DEFAULT '',
     ocr_at TEXT,
     status TEXT NOT NULL DEFAULT 'pending',
@@ -281,6 +282,7 @@ CREATE INDEX IF NOT EXISTS pl_question_versions_source ON pl_question_versions(s
 _PAGE_EXTRA_COLUMNS = (
     ("ocr_text", "TEXT NOT NULL DEFAULT ''"),
     ("ocr_lines_json", "TEXT NOT NULL DEFAULT '[]'"),
+    ("ocr_blocks_json", "TEXT NOT NULL DEFAULT '[]'"),
     ("ocr_engine", "TEXT NOT NULL DEFAULT ''"),
     ("ocr_at", "TEXT"),
 )
@@ -555,6 +557,9 @@ def public_page(row, import_id: int) -> dict:
     ocr_lines = json_load(row.get("ocr_lines_json"), [])
     if not isinstance(ocr_lines, list):
         ocr_lines = []
+    ocr_blocks = json_load(row.get("ocr_blocks_json"), [])
+    if not isinstance(ocr_blocks, list):
+        ocr_blocks = []
     return {
         "page_no": page_no,
         "width": int(row.get("width") or 0),
@@ -569,6 +574,8 @@ def public_page(row, import_id: int) -> dict:
         "ocr_chars": len(ocr_text),
         "ocr_line_count": len(ocr_lines),
         "ocr_preview": (ocr_text[:120] + "…") if len(ocr_text) > 120 else ocr_text,
+        # 公式/表格后处理需要的块；没有块时不出现该键（旧页面 JSON 保持不变）。
+        **({"has_blocks": True, "ocr_block_count": len(ocr_blocks)} if ocr_blocks else {}),
     }
 
 

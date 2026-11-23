@@ -1,0 +1,10 @@
+# 可选依赖：文本型 PDF 表格抽取（app/ai/pdf_tables.py）。
+# pdfplumber 为 MIT License；基础依赖 pdfminer.six、pillow、pypdfium2 中
+# pillow 与 pypdfium2 已由 requirements.txt 提供。见 THIRD_PARTY_NOTICES.md。
+# 不进生产镜像；仅需要「知识清单上传 PDF 时保留表格行」时安装：
+#   pip install -r requirements-pdf.txt
+# 启用开关：STUDY_PDF_TABLES=on（默认 off）。页数上限 STUDY_PDF_TABLE_PAGES（默认 50）。
+# 版本说明：方案候选为 0.11.11，但该版本要求 Pillow>=13.0.0 与 pypdfium2>=5.15.2，
+# 与工程 requirements.txt 锁定的 Pillow 12.2.0 / pypdfium2 5.14.0 冲突；0.11.10 要求
+# Pillow>=12.2.0 / pypdfium2>=5.9.0，与现有锁定版本兼容。
+pdfplumber==0.11.10

@@ -2068,6 +2068,28 @@ def search_similar_questions(text: str, subject: str | None = None, limit: int =
                 "exact_match": score >= 0.65,
             })
     scored.sort(key=lambda x: x["similarity"], reverse=True)
+    reranked = False
+    try:
+        from .ai import rerank as rerank_module
+
+        if rerank_module.available() and scored:
+            # 只把相似度前 20 条送交叉编码器，控制 CPU 时延（与 rank_chunks_hybrid 一致）。
+            pool = scored[:20]
+            texts = [str(item.get("stem_plain") or "")[:512] for item in pool]
+            scores = list(rerank_module.score_texts(text, texts) or [])
+            if len(scores) == len(pool):
+                for item, score in zip(pool, scores):
+                    item["rerank_score"] = round(float(score), 4)
+                pool.sort(
+                    key=lambda x: (x.get("rerank_score", 0.0), x["similarity"]),
+                    reverse=True,
+                )
+                scored = pool + scored[len(pool):]
+                reranked = True
+    except Exception:  # 重排只是增强：失败时保持原有相似度排序
+        reranked = False
+    if not reranked:
+        scored.sort(key=lambda x: x["similarity"], reverse=True)
     return scored[:limit]
 
 

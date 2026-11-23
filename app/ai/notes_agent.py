@@ -25,6 +25,7 @@ from .. import db, storage
 from ..auth import current_user, require_admin
 from .adapters import _strip_json_fences
 from .embeddings import document_vectors, embedding_config, retrieve_document_chunks, store_document_vectors
+from . import pdf_tables, table_structure
 from .providers import _json, _owned, _selected_provider
 from .verify import MAX_FILE, PROMPTS_DIR
 
@@ -267,6 +268,19 @@ def _normalize_ocr_blocks(raw) -> list[dict]:
             "norm": item.get("norm") if isinstance(item.get("norm"), dict) else None,
             "source": str(item.get("source") or "local_ocr")[:32],
         }
+        # 表格结构（可选后处理）：只保留经服务端白名单清洗的 HTML 与行列数。
+        table_html = item.get("table_html")
+        if isinstance(table_html, str) and table_html.strip():
+            try:
+                cleaned = table_structure.sanitize_table_html(table_html)
+            except (ValueError, TypeError):
+                cleaned = ""
+            if cleaned:
+                block["table_html"] = cleaned
+                for field in ("row_count", "col_count"):
+                    value = item.get(field)
+                    if isinstance(value, int) and not isinstance(value, bool) and 1 <= value <= 100:
+                        block[field] = value
         blocks.append(block)
         if len(blocks) >= MAX_PAGE_OCR_BLOCKS:
             break
@@ -469,6 +483,50 @@ def _extract_document(name, raw):
     return chunks, pages, status
 
 
+def _append_pdf_table_rows(raw, pages_blocks, page_count: int) -> int:
+    """把文本型 PDF 的表格行追加到对应页末尾，返回新增字符数。
+
+    仅在 ``STUDY_PDF_TABLES=on`` 且依赖可用时执行；抽取失败（损坏 PDF、超时、
+    第三方库异常）只跳过追加，不改变文本层与分块结果。行口径与 DOCX 表格一致：
+    ``" | ".join(单元格)``，作为普通文本行进入 ``_structured_chunks()``。
+    """
+    if not pdf_tables.enabled():
+        return 0
+    try:
+        tables = pdf_tables.extract_tables(
+            raw, pages=list(range(1, max(1, int(page_count)) + 1))
+        )
+    except Exception:  # 可选增强：任何失败都按关闭处理，不影响资料解析
+        return 0
+    if not tables:
+        return 0
+    positions = {
+        int(index): position
+        for position, (index, _blocks) in enumerate(pages_blocks)
+        if str(index).isdigit()
+    }
+    appended_chars = 0
+    for table in tables:
+        try:
+            page_no = int(table.get("page"))
+            rows = table.get("rows") or []
+        except (TypeError, ValueError):
+            continue
+        position = positions.get(page_no)
+        if position is None:
+            continue
+        target_blocks = pages_blocks[position][1]
+        for row in rows:
+            if not isinstance(row, (list, tuple)):
+                continue
+            line = " | ".join(str(cell or "") for cell in row).strip()
+            if not line:
+                continue
+            target_blocks.append((None, line))
+            appended_chars += len(line)
+    return appended_chars
+
+
 def _extract_document_pages(name, raw):
     """解析资料，并给出逐页状态（text / pending）与页数。"""
     ext = Path(name).suffix.lower()
@@ -492,6 +550,10 @@ def _extract_document_pages(name, raw):
                 if total_chars > MAX_DOCUMENT_CHARS:
                     raise HTTPException(422, "资料文字超过 14 万字，请拆分上传")
                 pages_blocks.append((index, [(None, txt)]))
+            # 可选增强：文本层之后追加表格行；关闭/未安装/失败时与现状逐字节一致。
+            total_chars += _append_pdf_table_rows(raw, pages_blocks, len(pages_blocks))
+            if total_chars > MAX_DOCUMENT_CHARS:
+                raise HTTPException(422, "资料文字超过 14 万字，请拆分上传")
         elif ext == ".docx":
             from docx import Document
             from docx.table import Table

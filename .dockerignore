@@ -39,6 +39,8 @@ pytest-*.log
 # --- 编辑/测试用的本地产物目录 ---
 eval/runs/
 editor/dist/
+# 开发期 vendored 脚本资产（axe-core 等）：只供本机无障碍验收，不进运行时镜像。
+scripts/vendor/
 
 # 保留（显式声明，避免将来误加排除规则）：
 #   web/**            主站前端（含 web/js 脚本、样式与 index.html）

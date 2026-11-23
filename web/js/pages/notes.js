@@ -12,7 +12,22 @@ import { filePicker } from '../components/filePicker.js';
 import { createPromptGrid } from '../components/promptGrid.js';
 import { renderMindmapWidget, markdownToMindmapTree } from '../components/mindmap.js';
 import { renderTopicReportsPanel, renderHandoutsPanel, m6t } from '../components/learningDocs.js';
+import { openFormulaEditor, insertFormulaAtCursor } from '../components/formulaEditor.js';
 import { t } from '../core/i18n.js';
+
+/** 笔记内容框旁的「插入公式」：Markdown 正文以 `$latex$` 插入。 */
+function noteFormulaAction(control) {
+  return button(t('study.oss.formula.insert'), async () => {
+    try {
+      const latex = await openFormulaEditor({ title: t('study.oss.formula.dialogTitle') });
+      if (!latex) return;
+      if (!insertFormulaAtCursor(control, latex)) return;
+      toast(t('study.oss.formula.inserted'));
+    } catch {
+      toast(t('study.oss.formula.loadFailed'), true);
+    }
+  }, 'secondary');
+}
 
 // OCR 逐页状态由后端给出：text=资料自带文本层，pending=待识别，recognized=已识别，
 // reviewed=人工校对，failed=识别失败。页面按覆盖度展示，而不是只显示“需 OCR”。
@@ -541,7 +556,8 @@ export async function renderNotes(container, version, params = null) {
     el('div', { class: 'card-header' }, el('h2', {}, t('notes.newKnowledgeNote')), button(t('question.collapse'), toggleManual, 'ghost small')),
     field(t('notes.noteTitle'), manualTitle),
     el('div', { class: 'form-grid', style: 'margin-top:12px' }, field(t('common.subject'), manualSubj), field(t('practice.knowledgePoint'), manualKp)),
-    el('div', { style: 'margin-top:14px' }, field(t('notes.body'), manualContent)),
+    el('div', { style: 'margin-top:14px' }, field(t('notes.body'), manualContent),
+      el('div', { class: 'oss-formula-actions' }, noteFormulaAction(manualContent))),
     el('div', { class: 'row end', style: 'margin-top:16px' },
       button(t('notes.saveNote'), e => busy(e.currentTarget, async () => {
         if (!manualTitle.value.trim() || !manualContent.value.trim()) throw new Error(t('notes.pleaseFillInTheNoteTitleAnd'));
@@ -1909,7 +1925,8 @@ function editNote(note, container, reload, onPatched = null) {
     el('div', { class: 'card-header' }, el('h2', {}, t('notes.editKnowledgeNote')), badge('Markdown + KaTeX')),
     field(t('notes.title'), title),
     el('div', { style: 'margin-top:12px' }, field(t('notes.changeDescriptionRecordedInVersionHistory'), changeNote)),
-    el('div', { style: 'margin-top:14px' }, field(t('notes.noteContent'), content)),
+    el('div', { style: 'margin-top:14px' }, field(t('notes.noteContent'), content),
+      el('div', { class: 'oss-formula-actions' }, noteFormulaAction(content))),
     el('div', { class: 'row end', style: 'margin-top:17px' },
       button(t('common.cancel'), reload, 'secondary'),
       button(t('notes.saveNote'), e => busy(e.currentTarget, async () => {

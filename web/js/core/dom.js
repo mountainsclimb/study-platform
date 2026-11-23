@@ -1,4 +1,4 @@
-import { renderMath, sanitizeMath } from './markdown.js';
+import { renderMath, sanitizeMath, sanitizeTableHtml } from './markdown.js';
 // P8 i18n：日期/数字格式与题型/作答结果等共享语义标签跟随界面语言；
 // 页面标题、按钮等各页自有的界面文案仍由各页面用 t() 替换。
 import { t, formatNumber as intlNumber, formatDate as intlDate } from './i18n.js';
@@ -487,6 +487,21 @@ function tableBlockNode(block, keyword) {
     ? block.table.rows
     : (Array.isArray(block.rows) ? block.rows : null);
   const wrapper = el('div', { class: 'table-wrap block-table' });
+  // OCR 后处理生成的表格结构（§3.2）：服务端已白名单清洗，前端再用 DOMPurify 兜底。
+  const tableHtml = typeof block.table_html === 'string' ? block.table_html.trim() : '';
+  if (tableHtml) {
+    try {
+      const template = document.createElement('template');
+      template.innerHTML = sanitizeTableHtml(tableHtml);
+      const table = template.content.querySelector('table');
+      if (table) {
+        wrapper.append(table);
+        return wrapper;
+      }
+    } catch {
+      /* 净化器不可用/结果异常：回退到行列文本或线性文本。 */
+    }
+  }
   if (!rows || !rows.length) {
     const fallback = typeof block.text === 'string' ? block.text.trim() : '';
     if (!fallback) return null;

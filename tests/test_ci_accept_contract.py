@@ -201,7 +201,7 @@ def test_ui_and_editor_build_are_opt_in(capsys):
     assert runner.main(["--plan-json", "--build-id", "b", "--ui",
                         "--base-url", "http://127.0.0.1:8840"]) == 0
     ui_plan = json.loads(capsys.readouterr().out)
-    assert {"ui-server", "ui-routes", "ui-modules"} <= set(ui_plan["stage_keys"])
+    assert {"ui-server", "ui-routes", "ui-modules", "ui-a11y"} <= set(ui_plan["stage_keys"])
 
     assert runner.main(["--plan-json", "--build-id", "b", "--editor-build"]) == 0
     build_plan = json.loads(capsys.readouterr().out)

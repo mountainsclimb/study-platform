@@ -21,6 +21,7 @@ import {
   questionText, dateText, busy, toast, readableSummary,
 } from '../core/dom.js';
 import { go, current, setHashParams, renderRoute } from '../core/router.js';
+import { sanitizeTableHtml } from '../core/markdown.js';
 import { mountJob, taskNames, statusNames, statusBadgeVariant, closeJobStreams } from '../core/jobs.js';
 import { createModelPicker } from '../components/modelPicker.js';
 import { filePicker, attachPasteImage } from '../components/filePicker.js';
@@ -29,6 +30,7 @@ import {
   attachBlockOverlay, buildConfirmBlocks, createFormulaInput, formulaText,
   parseBlocksWithFormulas, renderBlockLocation,
 } from '../components/formulaInput.js';
+import { openFormulaEditor } from '../components/formulaEditor.js';
 
 const STORAGE_KEY = 'zhixu.uploadState';
 
@@ -840,7 +842,26 @@ export async function renderUpload(container, version, params = null) {
           updateBlockSummary();
         });
       }
-      item.append(editor.element);
+      const visualEdit = button(formulaText('study.oss.formula.visualEdit'), async () => {
+        try {
+          const value = await openFormulaEditor({
+            initialLatex: block.latexInput,
+            title: formulaText('study.oss.formula.dialogTitle'),
+          });
+          if (value === null) return;
+          block.latexInput = value;
+          block.changed = true;
+          block.needsReview = false;
+          editor.setValue?.(value);
+          syncBlockItemState(item, block);
+          updateBlockSummary();
+          toast(formulaText('study.oss.formula.inserted'));
+        } catch {
+          toast(formulaText('study.oss.formula.loadFailed'), true);
+        }
+      }, 'secondary');
+      item.append(editor.element,
+        el('div', { class: 'oss-formula-actions' }, visualEdit));
     } else if (block.kind === 'text') {
       const editor = el('textarea', {
         class: 'upload-block-text',
@@ -858,8 +879,28 @@ export async function renderUpload(container, version, params = null) {
         updateBlockSummary();
       });
       item.append(editor);
+    } else if (block.kind === 'table') {
+      // 表格块：有结构时展示经 DOMPurify 兜底的只读预览，文字仍可对照原图校对。
+      const tableHtml = String(block.original?.table_html || block.table_html || '').trim();
+      if (tableHtml) {
+        try {
+          const template = document.createElement('template');
+          template.innerHTML = sanitizeTableHtml(tableHtml);
+          const table = template.content.querySelector('table');
+          if (table) {
+            item.append(el('span', { class: 'badge teal' },
+              formulaText('study.oss.table.structure')));
+            item.append(el('div', { class: 'table-wrap upload-block-table-preview' }, table));
+          }
+        } catch {
+          /* 净化器不可用时只显示文字，不插入未净化 HTML。 */
+        }
+      }
+      if (block.text) item.append(el('pre', { class: 'upload-block-readonly-text' }, block.text));
+      item.append(el('p', { class: 'upload-block-readonly' },
+        formulaText('study.formula.review.keepOriginal')));
     } else {
-      // 表格/图片块只读：保持原图，不做重绘或转换。
+      // 图片块只读：保持原图，不做重绘或转换。
       if (block.text) item.append(el('pre', { class: 'upload-block-readonly-text' }, block.text));
       item.append(el('p', { class: 'upload-block-readonly' },
         formulaText('study.formula.review.keepOriginal')));

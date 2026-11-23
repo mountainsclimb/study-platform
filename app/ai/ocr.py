@@ -60,6 +60,7 @@ from fastapi import APIRouter, Depends, File, Form, HTTPException, UploadFile
 from PIL import Image, ImageOps, UnidentifiedImageError
 
 from ..auth import current_user
+from . import formula_ocr, table_structure
 
 __all__ = [
     "ENGINE_NAME",
@@ -73,6 +74,8 @@ __all__ = [
     "local_ocr_available",
     "engine_status",
     "engine_meta",
+    "enrichment_status",
+    "enrich_blocks",
     "build_blocks",
     "reset_engine",
     "recognize_image",
@@ -93,18 +96,18 @@ IMAGE_SUFFIXES = (".png", ".jpg", ".jpeg", ".webp", ".bmp", ".gif", ".tif", ".ti
 _EXIF_ORIENTATION = 274
 OCR_NOTICE = "本地 OCR 由本机模型生成，仅供草稿/校对参考；识别内容不会上传外网，重要内容请人工核对。"
 BLOCKS_NOTICE = (
-    "本轮提供文字块与原图定位；公式识别尚未启用（由 Pix2Text 适配层后续启用），"
-    "math 块 latex 为空、需人工校对。"
+    "本轮提供文字块与原图定位；公式识别与表格结构可通过 STUDY_FORMULA_OCR / "
+    "STUDY_TABLE_OCR 显式启用（默认关闭），未启用时 math 块 latex 为空、需人工校对。"
 )
 
-# 内容块能力声明：blocks=true 表示返回块与原图定位；math_recognition=false 表示本地引擎
-# 不做公式识别（不伪造 LaTeX）；pix2text_adapter=reserved 表示后续由 Pix2Text 适配层接入。
+# 内容块能力声明：blocks=true 表示返回块与原图定位；math_recognition=false 表示基础
+# 本地引擎不做公式识别（不伪造 LaTeX）。公式/表格后处理是可选增强，状态通过
+# engine_meta()/engine_status() 的 enrichment 字段如实上报，不改动本常量。
 BLOCK_SCHEMA_VERSION = "ocr-blocks-v1"
 BLOCK_KINDS = ("text", "math", "table", "image")
 CAPABILITIES = {
     "blocks": True,
     "math_recognition": False,
-    "pix2text_adapter": "reserved",
 }
 
 # 块 kind 启发式阈值（集中定义，便于后续调参和解释）：
@@ -294,16 +297,36 @@ def _unavailable_reason() -> str:
     return "本地 OCR 引擎不可用（未安装 rapidocr-onnxruntime 或 onnxruntime），将改用视觉模型识别"
 
 
+def _enrichment_state(module) -> str:
+    """可选后处理引擎状态：``on`` / ``off`` / ``unavailable``（不加载模型）。"""
+    try:
+        if module.mode() != "on":
+            return "off"
+        return "on" if module.engine_status().get("available") else "unavailable"
+    except Exception:
+        return "unavailable"
+
+
+def enrichment_status() -> dict:
+    """公式识别与表格结构的独立开关状态（默认均为 off）。"""
+    return {
+        "formula": _enrichment_state(formula_ocr),
+        "table": _enrichment_state(table_structure),
+    }
+
+
 def engine_meta() -> dict:
     """引擎名/版本/能力三元组（不加载模型），供 HTTP 响应与拍题草稿响应复用。
 
     ``engine_version`` 取随包安装的 RapidOCR 版本（未安装时为 None）；
-    ``capabilities`` 如实声明本轮能力：有文字块与原图定位、不做公式识别。
+    ``capabilities`` 如实声明本轮能力：有文字块与原图定位、不做公式识别；
+    ``enrichment`` 为公式/表格可选后处理的开关状态（加法字段）。
     """
     return {
         "engine": ENGINE_NAME,
         "engine_version": _engine_version(),
         "capabilities": dict(CAPABILITIES),
+        "enrichment": enrichment_status(),
     }
 
 
@@ -313,12 +336,12 @@ def engine_status() -> dict:
     available = local_ocr_available()
     if mode == "off":
         notice = "本地 OCR 已关闭（STUDY_LOCAL_OCR=off）；拍题/扫描资料仅使用视觉模型。"
-        notice += "文字块与原图定位随本地 OCR 一起停用；公式识别尚未启用（由 Pix2Text 适配层后续启用）。"
+        notice += "文字块与原图定位随本地 OCR 一起停用；公式识别尚未启用（可选 STUDY_FORMULA_OCR=on）。"
     elif available:
         notice = OCR_NOTICE + BLOCKS_NOTICE
     else:
         notice = _unavailable_reason() + "；不影响其它功能。"
-        notice += "文字块与原图定位仅在本地 OCR 可用时提供；公式识别尚未启用（由 Pix2Text 适配层后续启用）。"
+        notice += "文字块与原图定位仅在本地 OCR 可用时提供；公式识别尚未启用（可选 STUDY_FORMULA_OCR=on）。"
     version = _engine_version() if available else None
     return {
         "engine": ENGINE_NAME,
@@ -329,7 +352,10 @@ def engine_status() -> dict:
         # 新增：引擎版本（与 version 同值）与内容块能力声明；旧字段保持不变。
         "engine_version": version,
         "capabilities": dict(CAPABILITIES),
+        "enrichment": enrichment_status(),
         "block_schema_version": BLOCK_SCHEMA_VERSION,
+        "formula": formula_ocr.engine_status(),
+        "table": table_structure.engine_status(),
         "models": _engine_models() if available else [],
         "limits": _limits(),
         "notice": notice,
@@ -651,6 +677,261 @@ def _blocks_extension(lines, width: int, height: int, *, page: int = 1) -> dict:
     return {"blocks": build_blocks(lines, width, height, page=page), **engine_meta()}
 
 
+# ---------------------------------------------------------------------------
+# 内容块可选后处理（公式识别 / 表格结构）：共享入口，四个调用方零复制
+# ---------------------------------------------------------------------------
+
+ENRICH_TABLE_MAX_BLOCKS = 20
+ENRICH_TABLE_MAX_AREA_RATIO = 0.85
+ENRICH_TABLE_MAX_SPAN = 30
+
+
+def _enrichment_pil(image, width=None, height=None) -> Image.Image:
+    """把调用方传入的图片统一成 RGB PIL，并缩放到与块 bbox 相同的坐标系。"""
+    if isinstance(image, Image.Image):
+        prepared = image
+    else:
+        prepared = _to_pil(image)
+    # 原始上传图可能带 EXIF 旋转；块 bbox 来自已转正的预处理图，后处理裁图必须同步转正。
+    try:
+        orientation = prepared.getexif().get(_EXIF_ORIENTATION)
+    except Exception:
+        orientation = None
+    if orientation not in (None, 1):
+        transposed = ImageOps.exif_transpose(prepared)
+        if transposed is not None:
+            prepared = transposed
+    if prepared.mode != "RGB":
+        prepared = prepared.convert("RGB")
+    try:
+        target_width = int(width) if width is not None else 0
+        target_height = int(height) if height is not None else 0
+    except (TypeError, ValueError):
+        target_width = target_height = 0
+    if target_width > 0 and target_height > 0 and prepared.size != (target_width, target_height):
+        prepared = prepared.resize((target_width, target_height), Image.LANCZOS)
+    return prepared
+
+
+def _pil_from_bgr(bgr) -> Image.Image:
+    """OCR 预处理后的 BGR ndarray → RGB PIL（只在需要后处理时转换）。"""
+    import numpy as np
+
+    array = np.asarray(bgr)
+    if array.ndim != 3 or array.shape[2] != 3:
+        raise ValueError("后处理图像通道数不支持")
+    return Image.fromarray(np.ascontiguousarray(array[:, :, ::-1]))
+
+
+def _block_crop_with_origin(image: Image.Image, block: dict, *, pad_ratio: float = 0.03):
+    """裁出块区域，返回 ``(crop, left, top)``；表格 OCR 框需按裁图原点换算。"""
+    bbox = block.get("bbox")
+    if not isinstance(bbox, dict):
+        return None
+    try:
+        x_value = float(bbox.get("x"))
+        y_value = float(bbox.get("y"))
+        w_value = float(bbox.get("w"))
+        h_value = float(bbox.get("h"))
+    except (TypeError, ValueError):
+        return None
+    if not all(math.isfinite(item) for item in (x_value, y_value, w_value, h_value)):
+        return None
+    if w_value <= 0 or h_value <= 0:
+        return None
+    padding = max(2, int(min(w_value, h_value) * pad_ratio))
+    left = max(0, int(x_value) - padding)
+    top = max(0, int(y_value) - padding)
+    right = min(image.width, int(x_value + w_value) + padding)
+    bottom = min(image.height, int(y_value + h_value) + padding)
+    if right - left < 4 or bottom - top < 4:
+        return None
+    return image.crop((left, top, right, bottom)), left, top
+
+
+def _block_crop(image: Image.Image, block: dict, *, pad_ratio: float = 0.03):
+    result = _block_crop_with_origin(image, block, pad_ratio=pad_ratio)
+    return result[0] if result is not None else None
+
+
+async def _enrich_formula_blocks(blocks: list[dict], image: Image.Image, enrichment: dict) -> None:
+    """为公式块填 ``latex``；失败/超时/空结果保持原块不变。"""
+    candidates = [
+        (index, block) for index, block in enumerate(blocks)
+        if block.get("kind") == "math" and not str(block.get("latex") or "").strip()
+    ]
+    if not candidates:
+        return
+    limit = formula_ocr.max_blocks()
+    skipped = max(0, len(candidates) - limit)
+    candidates = candidates[:limit]
+    block_timeout = formula_ocr.timeout()
+    # 关键：超时计时只在真正拿到推理槽位后开始。否则 20 个块同时提交线程池，
+    # 后排在队列里等待时也会消耗超时时间，健康引擎下后半个块会被误判 timeout。
+    gate = asyncio.Semaphore(formula_ocr.MAX_CONCURRENCY)
+
+    async def recognize_one(item):
+        index, block = item
+        crop = _block_crop(image, block)
+        if crop is None:
+            return index, None, "bbox"
+        async with gate:
+            try:
+                outcome = await asyncio.wait_for(
+                    asyncio.to_thread(formula_ocr.recognize_crop, crop),
+                    timeout=block_timeout,
+                )
+            except asyncio.TimeoutError:
+                return index, None, "timeout"
+            except Exception as error:  # 单块失败不影响其它块
+                return index, None, type(error).__name__
+        latex = str((outcome or {}).get("latex") or "").strip()
+        if not latex:
+            return index, None, "empty"
+        return index, latex, None
+
+    results = await asyncio.gather(*(recognize_one(item) for item in candidates))
+    errors: list[str] = []
+    for index, latex, error in results:
+        if latex:
+            blocks[index]["latex"] = latex[:formula_ocr.MAX_LATEX_CHARS]
+            blocks[index]["latex_engine"] = formula_ocr.ENGINE_NAME
+            # 识别结果仍属草稿：needs_review 保持 True，由用户改动后才由前端清除。
+            blocks[index]["needs_review"] = True
+        elif error:
+            errors.append(str(error))
+    if skipped:
+        enrichment["formula_skipped"] = skipped
+    if errors:
+        enrichment["formula_error"] = errors[0]
+
+
+def _table_block_groups(blocks: list[dict]) -> list[list[int]]:
+    """把同一页上连续的表格块聚成区域（组内保持阅读顺序）。"""
+    groups: list[list[int]] = []
+    current: list[int] = []
+    for index, block in enumerate(blocks):
+        if block.get("kind") == "table" and isinstance(block.get("bbox"), dict):
+            current.append(index)
+        else:
+            if current:
+                groups.append(current)
+            current = []
+    if current:
+        groups.append(current)
+    return groups
+
+
+def _group_bbox(blocks: list[dict], group: list[int]) -> dict | None:
+    boxes = [blocks[index]["bbox"] for index in group]
+    try:
+        left = min(float(box["x"]) for box in boxes)
+        top = min(float(box["y"]) for box in boxes)
+        right = max(float(box["x"]) + float(box["w"]) for box in boxes)
+        bottom = max(float(box["y"]) + float(box["h"]) for box in boxes)
+    except (KeyError, TypeError, ValueError):
+        return None
+    if right <= left or bottom <= top:
+        return None
+    return {"x": left, "y": top, "w": right - left, "h": bottom - top}
+
+
+async def _enrich_table_blocks(blocks: list[dict], image: Image.Image, enrichment: dict) -> None:
+    """为连续表格块填结构；只写组内第一块，其余块保持原样。"""
+    groups = [
+        group for group in _table_block_groups(blocks)
+        if len(group) <= ENRICH_TABLE_MAX_BLOCKS
+    ]
+    if not groups:
+        return
+    table_timeout = table_structure.timeout()
+    image_area = max(1, image.width * image.height)
+    errors: list[str] = []
+
+    for group in groups:
+        if len(group) > ENRICH_TABLE_MAX_SPAN:
+            errors.append("span")
+            continue
+        bbox = _group_bbox(blocks, group)
+        if bbox is None:
+            continue
+        if (bbox["w"] * bbox["h"]) / image_area > ENRICH_TABLE_MAX_AREA_RATIO:
+            errors.append("area")
+            continue
+        crop_result = _block_crop_with_origin(image, {"bbox": bbox})
+        if crop_result is None:
+            continue
+        crop, left, top = crop_result
+        boxes, texts, scores = [], [], []
+        for index in group:
+            block_bbox = blocks[index]["bbox"]
+            x_value = float(block_bbox.get("x") or 0)
+            y_value = float(block_bbox.get("y") or 0)
+            w_value = float(block_bbox.get("w") or 0)
+            h_value = float(block_bbox.get("h") or 0)
+            boxes.append([
+                [x_value - left, y_value - top],
+                [x_value + w_value - left, y_value - top],
+                [x_value + w_value - left, y_value + h_value - top],
+                [x_value - left, y_value + h_value - top],
+            ])
+            texts.append(str(blocks[index].get("text") or "")[:500])
+            scores.append(float(blocks[index].get("confidence") or 0))
+        try:
+            outcome = await asyncio.wait_for(
+                asyncio.to_thread(
+                    table_structure.recognize_table,
+                    crop,
+                    ocr_results=(boxes, texts, scores),
+                ),
+                timeout=table_timeout,
+            )
+        except asyncio.TimeoutError:
+            errors.append("timeout")
+            continue
+        except Exception as error:
+            errors.append(type(error).__name__)
+            continue
+        html = str((outcome or {}).get("html") or "")
+        if not html:
+            errors.append("empty")
+            continue
+        first = blocks[group[0]]
+        first["table_html"] = html[:table_structure.MAX_TABLE_HTML_CHARS]
+        first["row_count"] = int((outcome or {}).get("row_count") or 0)
+        first["col_count"] = int((outcome or {}).get("col_count") or 0)
+        first["table_engine"] = table_structure.ENGINE_NAME
+        first["table_span"] = len(group)
+    if errors:
+        enrichment["table_error"] = errors[0]
+
+
+async def enrich_blocks(blocks, image=None, *, page: int = 1,
+                        width=None, height=None) -> dict:
+    """内容块共享后处理：公式块填 LaTeX、连续表格块填结构。
+
+    返回 ``{"blocks": [...], "enrichment": {"formula": ..., "table": ...}}``；
+    不改任何块的 ``kind``/``order``/``text``/``bbox``/``norm``，只在识别成功时
+    写入加法字段。开关关闭、引擎不可用、单块失败或超时都保持原块不变。
+    """
+    result_blocks = [dict(block) for block in (blocks or []) if isinstance(block, dict)]
+    enrichment = enrichment_status()
+    if image is None or not result_blocks:
+        return {"blocks": result_blocks, "enrichment": enrichment}
+    if enrichment["formula"] != "on" and enrichment["table"] != "on":
+        return {"blocks": result_blocks, "enrichment": enrichment}
+    try:
+        prepared = await asyncio.to_thread(_enrichment_pil, image, width, height)
+    except Exception as error:
+        enrichment["error"] = f"{type(error).__name__}: 图片无法用于后处理"
+        return {"blocks": result_blocks, "enrichment": enrichment}
+    if enrichment["formula"] == "on":
+        await _enrich_formula_blocks(result_blocks, prepared, enrichment)
+    if enrichment["table"] == "on":
+        await _enrich_table_blocks(result_blocks, prepared, enrichment)
+    return {"blocks": result_blocks, "enrichment": enrichment}
+
+
 def _infer_guarded(bgr):
     with _infer_slots:
         engine = _get_engine()
@@ -691,7 +972,24 @@ async def _recognize_prepared(
         "elapsed_ms": int((time.monotonic() - started) * 1000),
     }
     if include_blocks:
-        result.update(_blocks_extension(lines, width, height, page=page))
+        extension = _blocks_extension(lines, width, height, page=page)
+        if extension.get("blocks") and any(
+            state == "on" for state in extension.get("enrichment", {}).values()
+        ):
+            try:
+                prepared = await asyncio.to_thread(_pil_from_bgr, bgr)
+                enriched = await enrich_blocks(
+                    extension["blocks"], prepared, page=page,
+                    width=width, height=height,
+                )
+                extension["blocks"] = enriched["blocks"]
+                extension["enrichment"] = enriched["enrichment"]
+            except Exception as error:  # 后处理只是增强：失败时保留原块与状态
+                extension["enrichment"] = {
+                    **enrichment_status(),
+                    "error": f"{type(error).__name__}: 后处理失败",
+                }
+        result.update(extension)
     return result
 
 

@@ -273,12 +273,17 @@ Worker 支持 `STUDY_WORKER_CONCURRENCY`（默认 8）和 `STUDY_WORKER_JOB_TIME
 | `STUDY_AI_GLOBAL_CONCURRENCY` | 全站同时执行 AI 任务数上限（默认 8）。 |
 | `STUDY_OCR_SCALE` | PDF 渲染清晰度倍率（默认 2.0，范围 0.5–4.0；越高识别率越好、越慢）。 |
 | `STUDY_OCR_PAGE_TIMEOUT` | 单页 OCR 模型调用超时秒数（默认 120）。 |
+| `STUDY_PDF_TABLES`、`STUDY_PDF_TABLE_PAGES` | 可选：设为 `on` 后，知识清单上传文本型 PDF 时用 pdfplumber 抽取表格行并追加到对应页（默认 50 页上限）。需在镜像/环境额外安装 `requirements-pdf.txt`；未安装或关闭时与现状一致。 |
+| `STUDY_FORMULA_OCR`、`STUDY_FORMULA_TIMEOUT`、`STUDY_FORMULA_MAX_BLOCKS` | 可选：设为 `on` 后用 RapidLaTeXOCR 给拍题/扫描页的 math 块填 LaTeX（默认关闭；单块超时 5 秒、最多 20 块）。需安装 `requirements-formula.txt`；模型由 pip 包下载，离线部署需预置到 site-packages 内 `rapid_latex_ocr/models/`。 |
+| `STUDY_TABLE_OCR`、`STUDY_TABLE_TIMEOUT` | 可选：设为 `on` 后用 RapidTable 给连续表格块生成单元格结构（默认关闭；单区域超时 8 秒）。与公式识别共用一个依赖清单；模型需预置到 `rapid_table/models/`。 |
 | `STUDY_SYMPY_POOL` | 是否启用 SymPy 常驻子进程池（默认启用；`0` 关闭）。 |
 | `STUDY_SYMPY_POOL_SIZE` | 常驻 SymPy 进程数（1–2，默认 1；并发评测可设 2）。 |
 | `STUDY_SYMPY_POOL_MAX_REQUESTS` | 单进程处理多少次请求后回收重建（默认 200）。 |
 | `STUDY_AI_ALLOWED_HOSTS` | `allowlist` 策略下的额外放行域名（逗号分隔，支持通配符如 `*.openai.azure.com`）。 |
 | `S3_BUCKET` | 新上传文件写入私有 S3 桶。通过 AWS 凭据链或 `AWS_ACCESS_KEY_ID`、`AWS_SECRET_ACCESS_KEY`、`AWS_SESSION_TOKEN` 授权，可设 `AWS_REGION` 与 `S3_PREFIX`。MinIO 使用 `S3_ENDPOINT_URL`，例如容器可达的 `http://minio:9000`。先创建桶，Web 与 Worker 使用一致的桶配置。历史本地文件仍从共享数据目录读取。 |
 | `STUDY_EMBEDDING_BASE_URL`、`STUDY_EMBEDDING_MODEL`、`STUDY_EMBEDDING_API_KEY` | 启用 OpenAI 兼容 Embedding 接口，例如 API base `https://api.openai.com/v1`。新上传及 OCR 校对后的资料分块文本会发送给配置的服务。未配置或接口失败时回退到本地 TF-IDF。已有资料可重新上传或校对 OCR 以建立稠密向量。 |
+| `STUDY_EMBEDDING_MODE=local`、`STUDY_LOCAL_EMBEDDING_DIR` | 可选：本地向量（fastembed，需安装 `requirements-embeddings.txt`）。模型目录默认 `<data>/models/embeddings`，需预置 `bge-small-zh-v1.5`；不可用时回退本地全文检索。 |
+| `STUDY_RERANK=on`、`STUDY_LOCAL_RERANK_DIR` | 可选：本地重排（fastembed 交叉编码器）。模型目录默认 `<data>/models/rerank`，需预置 `bge-reranker-base`；失败沿用原排序。 |
 | `COMMUNITY_EXPLANATIONS_ENABLED=1` | 开启社区讲解。满足分享条件的题库讲解由生成者主动分享，可撤回。管理员可设为平台精选。部署默认关闭社区讲解。 |
 | `STUDY_REVIEW_SCHEDULER=fsrs-lite` | 达到全站 2,000 条由原卷或 AI 交叉核验判定的题库作答后启用 FSRS-lite。默认使用掌握度规则。 |
 

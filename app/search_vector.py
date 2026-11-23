@@ -9,6 +9,21 @@ from . import db
 
 _TOKEN_RX = re.compile(r"[\u4e00-\u9fff]+|[A-Za-z0-9_]+")
 
+#: \u91cd\u6392\u53ea\u53d6\u6df7\u5408\u5f97\u5206\u524d N \u6761\uff0c\u63a7\u5236 CPU \u63a8\u7406\u65f6\u5ef6\uff08\u00a75\uff09\u3002
+RERANK_POOL = 20
+RERANK_TEXT_CHARS = 512
+
+
+def _normalize_rerank_scores(scores: list[float]) -> list[float]:
+    """\u91cd\u6392\u5f97\u5206\u5f52\u4e00\u5230 0\u20131\uff08min-max\uff09\uff1b\u5168\u90e8\u76f8\u7b49\u65f6\u6309 0.5 \u5904\u7406\u3002"""
+    values = [float(score) for score in scores]
+    if not values:
+        return []
+    low, high = min(values), max(values)
+    if high - low <= 1e-9:
+        return [0.5 for _ in values]
+    return [(value - low) / (high - low) for value in values]
+
 
 def _extract_features(text: str) -> Counter:
     """Extract mixed word tokens and Chinese 2/3-gram character shingles for lightweight vectorization."""
@@ -83,11 +98,17 @@ def rank_chunks_hybrid(
     query_vector: list[float] | None = None,
     embedding_model: str | None = None,
     dense_vectors: dict[tuple[int, str], list[float]] | None = None,
+    rerank=None,
 ) -> list[dict]:
-    """Rank document chunks using TF-IDF n-gram cosine similarity + heading boost (+ optional dense vectors)."""
+    """Rank document chunks using TF-IDF n-gram cosine similarity + heading boost (+ optional dense vectors).
+
+    ``rerank`` 为可选可调用对象 ``(query, texts) -> list[float]``：启用时取混合得分前
+    ``RERANK_POOL`` 条送重排，最终按 ``0.3 × 混合得分 + 0.7 × 重排得分`` 重排；
+    返回的块结构与未启用时完全一致（不附带得分）。重排失败时沿用原排序。
+    """
     if not chunks or not (query_text or "").strip():
         return chunks[:top_k]
-    if len(chunks) <= top_k and not query_vector:
+    if len(chunks) <= top_k and not query_vector and rerank is None:
         return list(chunks)
 
     # Build corpus IDF over provided chunks
@@ -135,6 +156,24 @@ def rank_chunks_hybrid(
         scored.append((final_score, idx, c))
 
     scored.sort(key=lambda x: (-x[0], x[1]))
+    if rerank is not None and scored:
+        pool = scored[:min(RERANK_POOL, len(scored))]
+        try:
+            texts = [
+                ("\n".join(filter(None, [c.get("heading_path"), c.get("text")])))[:RERANK_TEXT_CHARS]
+                for _, _, c in pool
+            ]
+            scores = list(rerank(query_text, texts) or [])
+        except Exception:  # 重排只是增强：失败沿用原排序
+            scores = []
+        if len(scores) == len(pool):
+            normalized = _normalize_rerank_scores(scores)
+            reranked = [
+                (0.3 * max(0.0, min(1.0, base)) + 0.7 * score, idx, chunk)
+                for (base, idx, chunk), score in zip(pool, normalized)
+            ]
+            reranked.sort(key=lambda x: (-x[0], x[1]))
+            scored = reranked + scored[len(pool):]
     picked = [c for s, _, c in scored[:top_k] if s > 0]
     return picked or chunks[:top_k]
 

@@ -3,7 +3,7 @@
 #   cd E:\responsibility\study-platform
 #   .\scripts\ci_accept.ps1                         # 全量静态检查 + 全量 pytest（题库跟随 releases/CURRENT，当前 r5）
 #   .\scripts\ci_accept.ps1 -Ui -BaseUrl http://127.0.0.1:8840
-#                                                   # 额外跑浏览器验收（需先手动起隔离实例；服务器不可达直接失败）
+#                                                   # 额外跑浏览器验收（含 ui-a11y 无障碍；需先手动起隔离实例；服务器不可达直接失败）
 #   .\scripts\ci_accept.ps1 -EditorBuild            # 追加「编辑器重新构建 vs web/editor 入库产物」一致性检查
 #   .\scripts\ci_accept.ps1 -SkipPytest             # 开发用：跳过全量 pytest（汇总显示 SKIP，退出 3 / ACCEPT INCOMPLETE）
 #   .\scripts\ci_accept.ps1 -Stages bank,compileall # 开发用：只跑部分阶段（其余 SKIP，退出 3 / ACCEPT INCOMPLETE）

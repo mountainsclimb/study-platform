@@ -1,0 +1,113 @@
+/* 开源组件整合（批次二起）：类名前缀统一 .oss-，避免与既有页面样式冲突。 */
+
+/* MathLive 可视化公式编辑弹层（原生 <dialog>，可访问性：标题、44px 主控件、焦点可见）。 */
+.oss-dialog {
+  width: min(720px, calc(100vw - 32px));
+  max-height: min(86vh, 760px);
+  overflow: auto;
+  border: 1px solid var(--border, #d8dee8);
+  border-radius: 16px;
+  padding: 20px;
+  background: var(--surface, #fff);
+  color: var(--text, #1b2433);
+  box-shadow: 0 24px 64px rgba(16, 32, 56, 0.22);
+}
+
+.oss-dialog::backdrop {
+  background: rgba(10, 20, 36, 0.46);
+  backdrop-filter: blur(2px);
+}
+
+.oss-dialog-title {
+  margin: 0 0 12px;
+  font-size: 1.08rem;
+  line-height: 1.4;
+}
+
+.oss-formula-dialog .oss-mathfield {
+  display: block;
+  width: 100%;
+  min-height: 64px;
+  padding: 12px 14px;
+  border: 1px solid var(--border, #d8dee8);
+  border-radius: 12px;
+  background: var(--surface-2, #f7f9fc);
+  font-size: 1.35rem;
+  line-height: 1.6;
+  box-sizing: border-box;
+}
+
+.oss-formula-dialog .oss-mathfield:focus-visible {
+  outline: 2px solid var(--accent, #2f6fed);
+  outline-offset: 2px;
+}
+
+.oss-formula-toolbar {
+  display: flex;
+  justify-content: flex-end;
+  gap: 10px;
+  margin-top: 16px;
+}
+
+.oss-formula-toolbar .button {
+  min-height: 44px;
+  padding-inline: 18px;
+}
+
+.oss-formula-actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+  margin-top: 6px;
+}
+
+.oss-formula-actions .button {
+  min-height: 40px;
+}
+
+.oss-formula-fallback {
+  margin: 0 0 10px;
+}
+
+.oss-dialog .formula-input {
+  margin-top: 4px;
+}
+
+@media (max-width: 520px) {
+  .oss-dialog {
+    width: calc(100vw - 20px);
+    padding: 16px;
+    border-radius: 14px;
+  }
+
+  .oss-formula-toolbar {
+    flex-direction: column-reverse;
+  }
+
+  .oss-formula-toolbar .button {
+    width: 100%;
+  }
+}
+
+/* 拍题校对：表格结构只读预览（OCR 后处理，§3.2）。 */
+.upload-block-table-preview {
+  max-height: 260px;
+  overflow: auto;
+  margin: 8px 0;
+  border: 1px solid var(--line, #e2e9ec);
+  border-radius: 10px;
+  background: var(--surface, #fff);
+}
+
+.upload-block-table-preview table {
+  width: 100%;
+  border-collapse: collapse;
+  font-size: 0.8125rem;
+}
+
+.upload-block-table-preview th,
+.upload-block-table-preview td {
+  border: 1px solid var(--line, #e2e9ec);
+  padding: 8px 10px;
+  text-align: left;
+}
