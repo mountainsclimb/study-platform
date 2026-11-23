@@ -412,6 +412,9 @@ const DEMO_KIND_META = Object.freeze({
   isometric: { key: 'study.m4.kind.isometric', fallback: '等距结构' },
   science_demo: { key: 'study.m4.kind.scienceDemo', fallback: '科学演示' },
   demo_3d: { key: 'study.m4.kind.demo3d', fallback: '3D 演示' },
+  mech_3d: { key: 'study.m5.kind.mech3d', fallback: '机械 3D' },
+  factory_sim: { key: 'study.m5.kind.factorySim', fallback: '工厂仿真' },
+  molecule_3d: { key: 'study.oss.kind.molecule', fallback: '分子模型' },
 });
 
 /** 取 `study.m4.*` 文案：locale 缺键时回退中文常量并做 `{name}` 插值。 */

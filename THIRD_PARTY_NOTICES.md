@@ -227,6 +227,15 @@ SOFTWARE.
 | 用途 | `web/js/components/moleculeViewer.js`：化学题「分子模型」与学习附件 `molecule_3d` 的只读渲染；首次打开时懒加载 |
 | 分发 | `web/vendor/3dmol/` 随仓库分发（主脚本、LICENSE、README） |
 
+| 项目 | 内容 |
+|---|---|
+| 名称 | OpenChemLib JS（SMILES 解析与 3D 构象） |
+| 版权 | Copyright (c) 2015-2017, cheminfo |
+| 仓库 | <https://github.com/cheminfo/openchemlib-js> |
+| 许可证 | BSD-3-Clause（全文见 `web/vendor/openchemlib/LICENSE`） |
+| 用途 | `web/js/components/moleculeViewer.js`：SMILES → 3D 构象（`ConformerGenerator`），再交给 3Dmol 渲染；首次打开分子弹层时加载 |
+| 分发 | `web/vendor/openchemlib/` 随仓库分发（ESM 构建、COD 构象资源子集、LICENSE、README） |
+
 ## 13. 数据边界与免责声明
 
 
@@ -265,6 +274,7 @@ SOFTWARE.
 | 21 | fastembed（本地向量/重排） | `fastembed==0.9.1`（`requirements-embeddings.txt`） | Apache-2.0 | 运行时 site-packages；模型由部署方预置，不进仓库 | `pip install -r requirements-embeddings.txt`；开关 `STUDY_EMBEDDING_MODE=local`、`STUDY_RERANK=on` | 运行时安装（可选），不进镜像 |
 | 22 | sherpa-onnx（离线语音） | `sherpa-onnx==2.0.3`（`requirements-speech.txt`） | Apache-2.0 | 运行时 site-packages；模型由部署方预置，不进仓库 | `pip install -r requirements-speech.txt`；开关 `STUDY_LOCAL_SPEECH=on` | 运行时安装（可选），不进镜像 |
 | 23 | 3Dmol.js（分子 3D） | `3dmol@3.0.0` | BSD-3-Clause | `web/vendor/3dmol/`（版本、大小与 SHA-256 见同目录 README） | `npm pack 3dmol@3.0.0`，取 `build/3Dmol-min.js` 与 LICENSE | 随仓库分发 |
+| 24 | OpenChemLib JS（SMILES→3D） | `openchemlib@9.26.0` | BSD-3-Clause | `web/vendor/openchemlib/`（版本、大小与 SHA-256 见同目录 README） | `npm pack openchemlib@9.26.0`，取 ESM 构建、LICENSE，并由 dist/resources.json 生成 COD 子集 | 随仓库分发 |
 
 ## 15. 素材、语料与模型权重
 
@@ -308,7 +318,7 @@ SOFTWARE.
 | 本地重排（fastembed 交叉编码器） | 实验 | `STUDY_RERANK=on` + 本地重排模型目录 | 默认关闭；失败沿用原排序 |
 | 离线语音合成（sherpa-onnx Kokoro） | 实验 | `requirements-speech.txt` + `STUDY_LOCAL_SPEECH=on` + 预置 Kokoro 模型 | 默认关闭；零厂商配置下旁白可用；失败回退浏览器朗读 |
 | 离线语音识别（sherpa-onnx Paraformer） | 实验 | 同上 + 预置 Paraformer-zh 模型 | 默认关闭；只接受 16k 单声道 PCM16 WAV，前端自动转换 |
-| 分子模型查看（3Dmol.js） | 默认可用 | `web/vendor/3dmol/` 随仓库分发；浏览器需 WebGL | 化学题入口；保存为 `molecule_3d` 学习附件；WebGL 不可用时文字降级 |
+| 分子模型查看（3Dmol.js + OpenChemLib） | 默认可用 | `web/vendor/3dmol/`、`web/vendor/openchemlib/` 随仓库分发；浏览器需 WebGL | 化学题入口；SMILES 由 OpenChemLib 转 3D 构象，3Dmol 渲染；保存为 `molecule_3d` 学习附件；WebGL 不可用时文字降级 |
 | 化学方程式配平（sympy） | 默认可用 | `app/chem_balance.py`，`POST /api/chem/balance` | 无状态、需登录；只接受元素/括号/数字下标；无解返回 `ok:false` |
 | fsrs-lite 复习排程 | 实验 | `STUDY_REVIEW_SCHEDULER=fsrs-lite` | 默认 `rules`；先积累复习反馈再替换 |
 | 社区解析精选 | 可选服务 | `COMMUNITY_EXPLANATIONS_ENABLED=1` | 登录用户的既有题目 AI 解析分享 |

@@ -17,8 +17,6 @@ import re
 
 from fastapi import APIRouter, Depends, HTTPException
 from pydantic import BaseModel, Field
-from sympy import Matrix, Rational, ilcm, zeros
-
 from .auth import current_user
 
 __all__ = ["router", "balance_equation", "parse_formula", "MAX_EQUATION_CHARS"]
@@ -30,9 +28,21 @@ MAX_TERM_CHARS = 80
 MAX_TERMS = 20
 MAX_ELEMENTS = 40
 MAX_COEFFICIENT = 1000
-MAX_BASIS_SEARCH = 4
 
 _ELEMENT_RE = re.compile(r"[A-Z][a-z]?")
+#: 真实元素符号（118 种）；只做成员校验，不引入周期表依赖。
+ELEMENTS = frozenset({
+    "H", "He", "Li", "Be", "B", "C", "N", "O", "F", "Ne", "Na", "Mg", "Al",
+    "Si", "P", "S", "Cl", "Ar", "K", "Ca", "Sc", "Ti", "V", "Cr", "Mn", "Fe",
+    "Co", "Ni", "Cu", "Zn", "Ga", "Ge", "As", "Se", "Br", "Kr", "Rb", "Sr",
+    "Y", "Zr", "Nb", "Mo", "Tc", "Ru", "Rh", "Pd", "Ag", "Cd", "In", "Sn",
+    "Sb", "Te", "I", "Xe", "Cs", "Ba", "La", "Ce", "Pr", "Nd", "Pm", "Sm",
+    "Eu", "Gd", "Tb", "Dy", "Ho", "Er", "Tm", "Yb", "Lu", "Hf", "Ta", "W",
+    "Re", "Os", "Ir", "Pt", "Au", "Hg", "Tl", "Pb", "Bi", "Po", "At", "Rn",
+    "Fr", "Ra", "Ac", "Th", "Pa", "U", "Np", "Pu", "Am", "Cm", "Bk", "Cf",
+    "Es", "Fm", "Md", "No", "Lr", "Rf", "Db", "Sg", "Bh", "Hs", "Mt", "Ds",
+    "Rg", "Cn", "Nh", "Fl", "Mc", "Lv", "Ts", "Og",
+})
 _ARROW_RE = re.compile(r"->|→|⟶|=")
 _TERM_ALLOWED_RE = re.compile(r"^(?:[A-Z][a-z]?\d*|\(|\)\d*)+$")
 
@@ -72,6 +82,8 @@ def parse_formula(term: str) -> Counter:
             if multiplier < 1 or multiplier > 100:
                 raise ValueError(f"括号后的数字下标无效：{value}")
             group = stack.pop()
+            if not group:
+                raise ValueError(f"括号内的化学式为空：{value}")
             for element, count in group.items():
                 stack[-1][element] += count * multiplier
             continue
@@ -79,6 +91,8 @@ def parse_formula(term: str) -> Counter:
         if match is None:
             raise ValueError(f"无法识别的化学式：{value}")
         element = match.group(0)
+        if element not in ELEMENTS:
+            raise ValueError(f"未知元素符号：{element}")
         index = match.end()
         start = index
         while index < len(value) and value[index].isdigit():
@@ -107,45 +121,40 @@ def _split_side(part: str, label: str) -> list[str]:
     return terms
 
 
-def _positive_solution(matrix: Matrix) -> list[int] | None:
-    basis = matrix.nullspace()
-    if not basis:
+def _positive_solution(matrix) -> list[int] | None:
+    """求元素守恒方程组的全正有理解，并约分为整数系数。
+
+    使用线性规划 ``min sum(x_i)``、``x_i >= 1``、``A x = 0``：只要存在全正解，
+    缩放到每个分量 ≥1 后一定可行，不依赖零空间基的组合搜索；随后按分母公倍数
+    与最大公约数化为一组整数系数（同一配平反应的不同整数倍只保留最简比）。
+    """
+    from sympy import Eq, Ge, Rational, ilcm, symbols
+    from sympy.solvers.simplex import lpmin
+
+    column_count = matrix.cols
+    if column_count <= 0:
         return None
-    vector_length = basis[0].rows
-    candidates: list[Matrix] = []
-    if len(basis) <= 3:
-        from itertools import product
-
-        for coefficients in product(
-            range(-MAX_BASIS_SEARCH, MAX_BASIS_SEARCH + 1), repeat=len(basis)
-        ):
-            if not any(coefficients):
-                continue
-            vector = zeros(vector_length, 1)
-            for coefficient, item in zip(coefficients, basis):
-                vector += item * coefficient
-            candidates.append(vector)
-    else:
-        candidates.extend(basis)
-        candidates.extend(-item for item in basis)
-
-    for vector in candidates:
-        values = [Rational(item) for item in vector]
-        if not values:
-            continue
-        if all(value > 0 for value in values):
-            positive = values
-        elif all(value < 0 for value in values):
-            positive = [-value for value in values]
-        else:
-            continue
-        denominator_lcm = ilcm(*[value.q for value in positive])
-        integers = [int(value * denominator_lcm) for value in positive]
-        common = reduce(math.gcd, integers)
-        if common > 1:
-            integers = [value // common for value in integers]
-        if all(value > 0 for value in integers) and max(integers) <= MAX_COEFFICIENT:
-            return integers
+    variables = symbols(f"x0:{column_count}", real=True)
+    constraints = [Ge(variable, 1) for variable in variables]
+    for row in range(matrix.rows):
+        constraints.append(Eq(
+            sum(matrix[row, column] * variables[column] for column in range(column_count)),
+            0,
+        ))
+    try:
+        _value, solution = lpmin(sum(variables), constraints)
+    except Exception:  # 无可行解 / 线性规划异常都按无解处理
+        return None
+    values = [Rational(solution[variable]) for variable in variables]
+    if not values or not all(value > 0 for value in values):
+        return None
+    denominator_lcm = ilcm(*[value.q for value in values])
+    integers = [int(value * denominator_lcm) for value in values]
+    common = reduce(math.gcd, integers)
+    if common > 1:
+        integers = [value // common for value in integers]
+    if all(value > 0 for value in integers) and max(integers) <= MAX_COEFFICIENT:
+        return integers
     return None
 
 
@@ -160,6 +169,8 @@ def balance_equation(equation: str) -> dict:
         raise ValueError("请输入化学方程式")
     if len(value) > MAX_EQUATION_CHARS:
         raise ValueError(f"方程式不能超过 {MAX_EQUATION_CHARS} 个字符")
+    from sympy import Matrix
+
     parts = _ARROW_RE.split(value)
     if len(parts) != 2:
         raise ValueError("方程式需要使用一个箭头（->、→ 或 =）分隔反应物与生成物")

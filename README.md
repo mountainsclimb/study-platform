@@ -226,10 +226,11 @@ python -m uvicorn app.main:app --host 127.0.0.1 --port 8765
       零厂商配置也能完成课堂批量旁白（`provider: "local"`）、音色列表与语音输入识别；
       识别只接受 16k 单声道 PCM16 WAV，前端 `wavEncode.js` 用 WebAudio 自动重采样，
       模型缺失/合成失败时旁白回退浏览器朗读，不影响其它功能。
-    - **分子模型与配平**：`web/vendor/3dmol/`（3Dmol.js 3.0.0，BSD-3-Clause，版本与 SHA-256 见目录
-      README）提供化学题「分子模型」入口，支持 SMILES、球棍/空间填充/线框切换与 `molecule_3d`
-      学习附件；`POST /api/chem/balance` 用 sympy 配平元素/括号/数字下标组成的方程式，
-      无解返回 `ok:false`，不落库。
+    - **分子模型与配平**：`web/vendor/3dmol/`（3Dmol.js 3.0.0）与
+      `web/vendor/openchemlib/`（OpenChemLib 9.26.0，均 BSD-3-Clause，版本与 SHA-256 见各自 README）
+      提供化学题「分子模型」入口：OpenChemLib 把 SMILES 解析为 3D 构象，3Dmol 渲染，
+      支持球棍/空间填充/线框切换与 `molecule_3d` 学习附件；`POST /api/chem/balance`
+      用 sympy 配平元素/括号/数字下标组成的方程式，无解返回 `ok:false`，不落库。
 
 ## 验证
 

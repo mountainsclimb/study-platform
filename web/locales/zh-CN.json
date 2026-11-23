@@ -5333,5 +5333,6 @@
   "study.oss.molecule.invalid": "分子数据不合法：请检查 SMILES 是否为空或过长。",
   "study.oss.molecule.loading": "正在加载分子模型…",
   "study.oss.molecule.unavailable": "当前浏览器无法渲染分子模型（需要 WebGL）。",
-  "study.oss.molecule.close": "关闭"
+  "study.oss.molecule.close": "关闭",
+  "study.oss.molecule.tooLarge": "分子原子数超过 {n}，暂不支持 3D 预览。"
 }

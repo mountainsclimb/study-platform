@@ -19,8 +19,11 @@ import { busy, button, el, toast } from '../core/dom.js';
 import { t } from '../core/i18n.js';
 
 const SCRIPT_URL = '/static/vendor/3dmol/3Dmol-min.js';
+const OCL_URL = '/static/vendor/openchemlib/openchemlib.js';
+const OCL_RESOURCES_URL = '/static/vendor/openchemlib/resources.json';
 const SCRIPT_MARK = 'oss3DmolScript';
 const LOAD_TIMEOUT_MS = 15000;
+const MAX_ATOMS = 120;
 export const MOLECULE_KIND = 'molecule_3d';
 export const MAX_SMILES_LENGTH = 500;
 export const MOLECULE_STYLES = ['stick', 'sphere', 'line'];
@@ -34,6 +37,7 @@ const PRESETS = [
 ];
 
 let loaderPromise = null;
+let oclPromise = null;
 
 function ossText(key, fallback, vars) {
   const value = t(key, vars);
@@ -74,13 +78,15 @@ export function load3Dmol() {
   if (typeof window === 'undefined' || typeof document === 'undefined') {
     return Promise.reject(new Error(ossText('study.oss.molecule.unavailable', '当前环境不支持分子模型')));
   }
-  if (window.$3Dmol) return Promise.resolve(window.$3Dmol);
+  const existing = window.$3Dmol || window['3Dmol'];
+  if (existing && typeof existing.createViewer === 'function') return Promise.resolve(existing);
   if (loaderPromise) return loaderPromise;
   loaderPromise = new Promise((resolve, reject) => {
     let script = document.querySelector(`script[data-oss="${SCRIPT_MARK}"]`);
     const finish = () => {
-      if (window.$3Dmol && typeof window.$3Dmol.createViewer === 'function') {
-        resolve(window.$3Dmol);
+      const library = window.$3Dmol || window['3Dmol'];
+      if (library && typeof library.createViewer === 'function') {
+        resolve(library);
         return;
       }
       // 脚本 200 但不是有效产物：移除后允许重试，本次回退中文提示。
@@ -117,6 +123,40 @@ export function load3Dmol() {
     throw error;
   });
   return loaderPromise;
+}
+
+/** 首次调用时动态 import OpenChemLib 并注册 3D 构象所需资源；失败可重试。 */
+export function loadOpenChemLib() {
+  if (oclPromise) return oclPromise;
+  oclPromise = (async () => {
+    const module = await import(OCL_URL);
+    if (!module || !module.Molecule || !module.ConformerGenerator || !module.Resources) {
+      throw new Error(ossText('study.oss.molecule.unavailable', '分子解析器不可用'));
+    }
+    const response = await fetch(OCL_RESOURCES_URL, { credentials: 'same-origin' });
+    if (!response.ok) throw new Error(ossText('study.oss.molecule.unavailable', '分子资源加载失败'));
+    const resources = await response.json();
+    module.Resources.register(resources);
+    return module;
+  })().catch(error => {
+    oclPromise = null;
+    throw error;
+  });
+  return oclPromise;
+}
+
+function buildMolfile(ocl, definition) {
+  const molecule = ocl.Molecule.fromSmiles(definition.smiles);
+  if (!molecule || molecule.getAllAtoms() < 1) throw new Error('invalid smiles');
+  if (molecule.getAllAtoms() > MAX_ATOMS) {
+    throw new Error(ossText('study.oss.molecule.tooLarge', '分子原子数超过 {n}，暂不支持 3D 预览。', { n: MAX_ATOMS }));
+  }
+  const generator = new ocl.ConformerGenerator(1);
+  if (!generator.getOneConformerAsMolecule(molecule)) throw new Error('conformer failed');
+  if (molecule.getAllAtoms() > MAX_ATOMS) {
+    throw new Error(ossText('study.oss.molecule.tooLarge', '分子原子数超过 {n}，暂不支持 3D 预览。', { n: MAX_ATOMS }));
+  }
+  return molecule.toMolfile();
 }
 
 function styleSpec(style) {
@@ -167,13 +207,20 @@ export function createMoleculeView(container, rawDefinition, options = {}) {
 
   (async () => {
     try {
-      const $3Dmol = await load3Dmol();
+      const [library, ocl] = await Promise.all([load3Dmol(), loadOpenChemLib()]);
       if (destroyed) return;
-      viewer = $3Dmol.createViewer(host, { backgroundColor: 'white' });
-      viewer.addModel(definition.smiles, 'smi');
+      const molfile = buildMolfile(ocl, definition);
+      viewer = library.createViewer(host, { backgroundColor: 'white' });
+      const model = viewer.addModel(molfile, 'sdf');
+      const atomCount = model && typeof model.selectedAtoms === 'function'
+        ? model.selectedAtoms({}).length : 0;
+      if (!atomCount) throw new Error(ossText('study.oss.molecule.invalid', '分子数据不合法：请检查 SMILES 是否有效。'));
       viewer.setStyle({}, styleSpec(definition.style));
       viewer.zoomTo();
       viewer.render();
+      const renderer = typeof viewer.getRenderer === 'function' ? viewer.getRenderer() : null;
+      const gl = renderer && typeof renderer.getContext === 'function' ? renderer.getContext() : null;
+      if (!gl) throw new Error(ossText('study.oss.molecule.unavailable', '当前浏览器无法渲染分子模型（需要 WebGL）。'));
       const loading = host.querySelector('.oss-molecule-loading');
       if (loading) loading.remove();
       try { viewer.resize(); viewer.render(); } catch { /* 尺寸异常只影响首帧 */ }
@@ -311,7 +358,11 @@ export function openMoleculeViewer(options = {}) {
     }
     if (!controller) rebuild();
     if (controller) {
-      try { await controller.ready; } catch { /* 首帧失败也允许保存模型参数 */ }
+      const outcome = await controller.ready;
+      if (!outcome || outcome.ok === false) {
+        toast(ossText('study.oss.molecule.invalid', '分子数据不合法：请检查 SMILES 是否有效。'), true);
+        return;
+      }
     }
     const preview = buildPreview(controller, definition);
     const links = Array.isArray(options.links) ? options.links : [];

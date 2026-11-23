@@ -23,12 +23,25 @@ def test_parse_formula_supports_nested_parentheses():
     ("Ca(OH)2 + H3PO4 -> Ca3(PO4)2 + H2O", [3, 2, 1, 6]),
     ("NH4NO3 -> N2O + H2O", [1, 1, 2]),
     ("H2 + O2 = H2O", [2, 1, 2]),
+    # 多解/高维零空间：线性规划应找到全正解，而不是 basis 小范围搜索漏掉。
+    ("H2 + O2 -> H2O + H2O2 + O3 + H2O3", [6, 9, 2, 2, 2, 2]),
+    ("CH4 + CO -> O2 + H2O + C2H6 + O3", [20, 6, 1, 1, 13, 1]),
 ])
 def test_balances_common_equations_with_minimal_integers(equation, expected):
     result = balance_equation(equation)
     assert result["ok"] is True
     assert result["coefficients"] == expected
     assert result["reason"] == ""
+
+
+def test_multi_solution_equation_returns_a_valid_balance():
+    result = balance_equation("C + O2 -> CO + CO2")
+    assert result["ok"] is True
+    # 多解反应不承诺唯一解；返回的系数必须真实守恒且全为正。
+    assert all(value > 0 for value in result["coefficients"])
+    carbon, oxygen, carbon_monoxide, carbon_dioxide = result["coefficients"]
+    assert carbon == carbon_monoxide + carbon_dioxide
+    assert 2 * oxygen == carbon_monoxide + 2 * carbon_dioxide
 
 
 def test_balanced_text_omits_coefficient_one():
@@ -45,6 +58,8 @@ def test_unsolvable_equation_returns_ok_false():
 
 @pytest.mark.parametrize("equation", [
     "2H2 + O2 -> H2O",
+    "Xx + Yy -> XxYy",
+    "H2() + O2 -> H2O",
     "H2 + O2",
     "H2 + -> H2O",
     "H2 + O2 -> H2O +",

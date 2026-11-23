@@ -5333,5 +5333,6 @@
   "study.oss.molecule.invalid": "Invalid molecule data: check that SMILES is non-empty and not too long.",
   "study.oss.molecule.loading": "Loading molecule model…",
   "study.oss.molecule.unavailable": "The browser cannot render the molecule model (WebGL required).",
-  "study.oss.molecule.close": "Close"
+  "study.oss.molecule.close": "Close",
+  "study.oss.molecule.tooLarge": "Molecule has more than {n} atoms; 3D preview is not supported yet."
 }

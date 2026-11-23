@@ -30,6 +30,14 @@ ASSETS = {
             "LICENSE": "4c6eaaed856f3f28a3b1a98e74f4a8a71618de7d51ea4155c29f6f793bcef861",
         },
     },
+    "openchemlib": {
+        "version": "9.26.0",
+        "files": {
+            "openchemlib.js": "2d7fb693bc4ee83dbc8d3a2fd3cd7edcc0195ac2af3b5daac948b4f99cede4b3",
+            "resources.json": "bd976efcd5ea199cb5d5ed847a6f44431cd95a0940b0df8151cb7131325edb53",
+            "LICENSE": "38dc3aed3def8cc4dd15ac879daa4af9b0d71af86fef82611ca1752497c6f464",
+        },
+    },
 }
 
 
