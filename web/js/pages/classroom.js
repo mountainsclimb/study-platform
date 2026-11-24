@@ -417,6 +417,7 @@ const DEMO_KIND_META = Object.freeze({
   geometry_demo: { key: 'study.oss.kind.geometry', fallback: '几何演示' },
   molecule_3d: { key: 'study.oss.kind.molecule', fallback: '分子模型' },
   physics_sandbox: { key: 'study.oss.kind.sandbox', fallback: '物理沙盒' },
+  timeline: { key: 'study.oss.kind.timeline', fallback: '时间轴' },
 });
 
 /** 取 `study.m4.*` 文案：locale 缺键时回退中文常量并做 `{name}` 插值。 */

@@ -12,6 +12,7 @@
 from __future__ import annotations
 
 import base64
+import datetime
 import html as html_lib
 import json
 import math
@@ -63,6 +64,8 @@ DEMO_ARTIFACT_KINDS = (
     "molecule_3d",
     # 批次五（§6.3）：Matter.js 物理自由沙盒。
     "physics_sandbox",
+    # 批次五（§6.5）：vis-timeline 历史时间轴。
+    "timeline",
 )
 #: 演示附件类型的中文名（PPTX / 离线 HTML / 打印讲义共用）。
 DEMO_ARTIFACT_KIND_LABELS = {
@@ -77,6 +80,7 @@ DEMO_ARTIFACT_KIND_LABELS = {
     "geometry_demo": "几何演示",
     "molecule_3d": "分子模型",
     "physics_sandbox": "物理沙盒",
+    "timeline": "时间轴",
 }
 #: 演示附件快照限额（与 ``study_artifact`` 的 256KB / 64KB 存储上限兼容，课堂侧再收窄）。
 MAX_DEMO_DATA_BYTES = 200 * 1024
@@ -100,6 +104,12 @@ SANDBOX_DEMO_MAX_BODIES = 60
 SANDBOX_DEMO_MAX_CONSTRAINTS = 40
 _SANDBOX_BODY_NUMBERS = ("x", "y", "width", "height", "radius", "angle",
                          "restitution", "friction", "vx", "vy")
+#: 批次五（§6.5）：历史时间轴演示数据的上限与日期格式，与前端
+#: ``normalizeTimelineDefinition`` 对齐（公元 1–9999 年，四位年份）。
+TIMELINE_DEMO_MAX_EVENTS = 200
+TIMELINE_DEMO_MAX_TITLE_CHARS = 120
+TIMELINE_DEMO_MAX_GROUP_CHARS = 40
+TIMELINE_DEMO_DATE_RE = re.compile(r"^(\d{4})(?:-(\d{2})(?:-(\d{2}))?)?$")
 
 MIN_SCENE_COUNT = 3
 MAX_SCENE_COUNT = 12
@@ -1197,6 +1207,97 @@ def _validate_sandbox_demo_data(data: dict) -> None:
             raise ClassroomSchemaError("物理沙盒重力的 %s 必须是有限数值" % field)
 
 
+def _timeline_date(value) -> datetime.date | None:
+    """严格解析 ``YYYY`` / ``YYYY-MM`` / ``YYYY-MM-DD``；非法返回 None。"""
+    if not isinstance(value, str):
+        return None
+    text = value.strip()
+    match = TIMELINE_DEMO_DATE_RE.match(text)
+    if not match:
+        return None
+    year = int(match.group(1))
+    month = int(match.group(2) or 1)
+    day = int(match.group(3) or 1)
+    if not 1 <= year <= 9999:
+        return None
+    try:
+        return datetime.date(year, month, day)
+    except ValueError:
+        return None
+
+
+def _validate_timeline_demo_data(data: dict) -> None:
+    """校验历史时间轴演示快照结构（专题、事件日期与选项；与前端规范化对齐）。"""
+    preset_id = data.get("preset_id")
+    if not isinstance(preset_id, str) or not preset_id.strip() or len(preset_id) > 64:
+        raise ClassroomSchemaError("时间轴缺少有效的专题编号 preset_id")
+    events = data.get("events")
+    if not isinstance(events, list) or not events:
+        raise ClassroomSchemaError("时间轴事件 events 必须是非空数组")
+    if len(events) > TIMELINE_DEMO_MAX_EVENTS:
+        raise ClassroomSchemaError(
+            "时间轴事件数量超过 %d 上限" % TIMELINE_DEMO_MAX_EVENTS)
+    for index, item in enumerate(events):
+        label = "第 %d 条时间轴事件" % (index + 1)
+        if not isinstance(item, dict):
+            raise ClassroomSchemaError("%s必须是 JSON 对象" % label)
+        title = item.get("title")
+        if not isinstance(title, str) or not title.strip():
+            raise ClassroomSchemaError("%s缺少标题" % label)
+        if len(title.strip()) > TIMELINE_DEMO_MAX_TITLE_CHARS:
+            raise ClassroomSchemaError(
+                "%s的标题超过 %d 字" % (label, TIMELINE_DEMO_MAX_TITLE_CHARS))
+        start = _timeline_date(item.get("start"))
+        if start is None:
+            raise ClassroomSchemaError(
+                "%s的开始日期不合法（YYYY、YYYY-MM 或 YYYY-MM-DD）" % label)
+        end_raw = item.get("end")
+        if end_raw not in (None, ""):
+            end = _timeline_date(end_raw)
+            if end is None:
+                raise ClassroomSchemaError(
+                    "%s的结束日期不合法（YYYY、YYYY-MM 或 YYYY-MM-DD）" % label)
+            if end < start:
+                raise ClassroomSchemaError("%s的结束日期不能早于开始日期" % label)
+        group = item.get("group")
+        if group not in (None, ""):
+            if not isinstance(group, str) or not group.strip():
+                raise ClassroomSchemaError("%s的分组必须是非空字符串" % label)
+            if len(group.strip()) > TIMELINE_DEMO_MAX_GROUP_CHARS:
+                raise ClassroomSchemaError(
+                    "%s的分组超过 %d 字" % (label, TIMELINE_DEMO_MAX_GROUP_CHARS))
+    options = data.get("options")
+    if options is None:
+        return
+    if not isinstance(options, dict):
+        raise ClassroomSchemaError("时间轴选项 options 必须是 JSON 对象")
+    height = options.get("height")
+    if height is not None:
+        if (not isinstance(height, int) or isinstance(height, bool)
+                or not 280 <= height <= 720):
+            raise ClassroomSchemaError("时间轴高度 height 必须是 280–720 的整数")
+    start_raw = options.get("start")
+    end_raw = options.get("end")
+    start = None
+    end = None
+    if start_raw not in (None, ""):
+        start = _timeline_date(start_raw)
+        if start is None:
+            raise ClassroomSchemaError("时间轴选项 start 日期不合法")
+    if end_raw not in (None, ""):
+        end = _timeline_date(end_raw)
+        if end is None:
+            raise ClassroomSchemaError("时间轴选项 end 日期不合法")
+    if start and end and end <= start:
+        raise ClassroomSchemaError("时间轴选项 end 必须晚于 start")
+    for field in ("zoomMin", "zoomMax"):
+        value = options.get(field)
+        if value is None:
+            continue
+        if not isinstance(value, int) or isinstance(value, bool) or value <= 0:
+            raise ClassroomSchemaError("时间轴选项 %s 必须是正整数" % field)
+
+
 def normalize_demo_content(raw) -> tuple[dict, list[str]]:
     """归一化「原理演示」场景内容（固定版本学习附件快照），返回 ``(content, warnings)``。
 
@@ -1235,6 +1336,9 @@ def normalize_demo_content(raw) -> tuple[dict, list[str]]:
     if kind == "physics_sandbox":
         # 结构上限（刚体/约束/形状/数值）在插入固定版本时校验，见常量区注释。
         _validate_sandbox_demo_data(data_raw)
+    elif kind == "timeline":
+        # 日期、事件上限与选项在插入固定版本时校验，见常量区注释。
+        _validate_timeline_demo_data(data_raw)
     preview = _normalize_demo_preview(artifact_raw.get("preview"))
     source_note = _demo_text(
         payload.get("source_note"), "演示说明", MAX_DEMO_SOURCE_NOTE_CHARS,

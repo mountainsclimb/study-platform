@@ -1,9 +1,11 @@
 """开源组件 vendor 资产自检（批次二起，后续演示库复用）。
 
-当前覆盖 MathLive（《开源组件整合实施方案》§3.3）：
+覆盖 MathLive、3Dmol / OpenChemLib、Matter.js、JSXGraph、markmap 与 vis-timeline 等
+随仓库分发的第三方资产：
 * 主文件、样式、字体与 LICENSE 存在；
 * README.md 里的版本、大小与 SHA-256 与磁盘一致；
-* 不引入按键音效等非必要资源。
+* 不引入按键音效、字符串求值模块等非必要资源；
+* 预设纪律与组件接线（JSXGraph / markmap / vis-timeline）。
 """
 from pathlib import Path
 import hashlib
@@ -51,6 +53,22 @@ ASSETS = {
             "jsxgraphcore.js": "3b256219e90c83e183f253374ffcecab0cfbb1350a7b4252a69af134a684ee43",
             "jsxgraph.css": "c82ee298a077701100fd99e85374b7e572ebe483fc287fd13cf72a6e5f86d64c",
             "LICENSE.MIT": "43e325001487de7f09745fbe086b054bb1b70d4ab58060e87153849365b23ff1",
+        },
+    },
+    "markmap": {
+        "version": "0.18.13",
+        "files": {
+            "markmap-view.iife.min.js": "cd44f6fb7316bffa5b5782c6c76aaf0baee90cb9d4ac16a463572b2ff4366095",
+            "LICENSE": "3f92393bdf2d11859119785b6cd442fa6fcfebe01f67c72c79997ef52a1f1df7",
+        },
+    },
+    "vis-timeline": {
+        "version": "8.5.6",
+        "files": {
+            "vis-timeline-graph2d.min.js": "01e838f31f1aaef88d686915b5a3f1453ba970270155157daed5fe6063a25889",
+            "vis-timeline-graph2d.min.css": "43689b3d6a6342da896e7ea9d78873d8d370d7b9805850f7e9508e918dde5a8a",
+            "LICENSE.Apache-2.0.txt": "1509904280a272780fd69c04b858f512cf216f8e3464a0dd98d8f34416feced9",
+            "LICENSE.MIT.txt": "507e7e91e0a385c9de0464889068fada0620e327d23f1d64605a7d046490ec97",
         },
     },
 }
@@ -188,6 +206,173 @@ def test_geometry_preset_normalizers_via_node():
     assert data["underMin"] == 0.2
     assert data["numericString"] == 1.5
 
+
+def test_markmap_bundle_is_registered_and_pinned():
+    """markmap 打包产物（§6.4）：构建脚本版本锁定、产物可由脚本重建、
+    组件与笔记页接线存在。--check 的字节级复现校验为手动命令（需网络），
+    见 web/vendor/markmap/README.md。"""
+    import json as json_lib
+
+    build_script = (ROOT / "scripts" / "build_markmap_bundle.mjs").read_text(encoding="utf-8")
+    for pinned in ("'markmap-view': '0.18.13'", "'markmap-common': '0.18.9'",
+                   "d3: '7.9.2'", "'@babel/runtime': '7.29.15'"):
+        assert pinned in build_script, pinned
+    assert "--check" in build_script
+    # 顶层与全部传递依赖由仓库内 lockfile 钉死（npm ci），不再依赖运行时解析。
+    lock_dir = ROOT / "scripts" / "markmap-bundle"
+    assert (lock_dir / "package.json").is_file()
+    lock = json_lib.loads((lock_dir / "package-lock.json").read_text(encoding="utf-8"))
+    for name, version in (
+        ("markmap-view", "0.18.13"), ("markmap-common", "0.18.9"),
+        ("d3", "7.9.2"), ("d3-scale", "4.0.3"), ("@gera2ld/jsx-dom", "2.2.2"),
+    ):
+        assert lock["packages"][f"node_modules/{name}"]["version"] == version, name
+    assert "npm ci" in build_script
+    assert "metafile: true" in build_script
+    # LICENSE 按 metafile 的实际打入包逐包聚合，不能只登记四个顶层包。
+    license_text = (VENDOR / "markmap" / "LICENSE").read_text(encoding="utf-8")
+    assert license_text.count("\n## ") + license_text.startswith("## ") >= 33
+    for name in ("markmap-view", "markmap-common", "d3", "d3-scale", "d3-selection"):
+        assert f"## {name} " in license_text, name
+
+    mindmap = (ROOT / "web" / "js" / "components" / "mindmap.js").read_text(encoding="utf-8")
+    assert "renderInteractiveMindmap" in mindmap
+    assert "/static/vendor/markmap/markmap-view.iife.min.js" in mindmap
+    assert "mindmap.interactiveFailed" in mindmap
+    # markmap 的 content 按 HTML 渲染：笔记文本必须先转义（安全审查 HIGH）。
+    assert "escapeMindmapLabel" in mindmap
+    assert "content: escapeMindmapLabel(node.label)" in mindmap
+
+    notes = (ROOT / "web" / "js" / "pages" / "notes.js").read_text(encoding="utf-8")
+    assert "renderInteractiveMindmap" in notes
+    assert "mindmap.viewInteractive" in notes
+    assert "aria-pressed" in notes
+    # 切换按钮常驻，切换视图不重建按钮（键盘焦点保留，审查 M4）。
+    assert "mindmapModeButtons" in notes
+    assert "mindmapMount.contains(mindmapModes)" in notes
+    # 打包产物是唯一的 vendor 文件:无源映射、无多余产物。
+    directory = VENDOR / "markmap"
+    assert sorted(item.name for item in directory.iterdir()) == [
+        "LICENSE", "README.md", "markmap-view.iife.min.js",
+    ]
+
+
+def test_mindmap_escape_label_via_node():
+    """交互脑图的纯文本转义（安全审查 HIGH）：content 进入 markmap 前必须转义。"""
+    import json as json_lib
+    import shutil
+    import subprocess
+
+    node = shutil.which("node")
+    if not node:
+        return
+    module = (ROOT / "web" / "js" / "components" / "mindmap.js").as_uri()
+    script = (
+        "const mod = await import(" + json_lib.dumps(module) + ");\n"
+        "console.log(mod.escapeMindmapLabel('<img src=x onerror=1> & \"q\"'));\n"
+    )
+    result = subprocess.run(
+        [node, "--input-type=module", "-e", script],
+        capture_output=True, text=True, encoding="utf-8", errors="replace", timeout=60,
+    )
+    assert result.returncode == 0, result.stderr
+    assert result.stdout.strip() == "&lt;img src=x onerror=1&gt; &amp; &quot;q&quot;"
+
+
+def test_timeline_presets_discipline():
+    """时间轴预设纪律（方案 §6.5）：无 Math.random / eval / new Function；
+    四个专题、事件按开始日期排序、分组引用有效（日期校验见 Node 用例）。"""
+    content = (VENDOR / "timeline" / "timelinePresets.js").read_text(encoding="utf-8")
+    code_only = re.sub(r"/\*.*?\*/", "", content, flags=re.S)
+    code_only = re.sub(r"//[^\n]*", "", code_only)
+    assert "Math.random" not in code_only, "时间轴预设不允许 Math.random"
+    for pattern in (r"new\s+Function", r"\beval\s*\("):
+        assert not re.search(pattern, code_only), f"时间轴预设不允许 {pattern}"
+    assert code_only.count("    id: '") == 4, "时间轴预设应为 4 个"
+
+
+def test_timeline_presets_and_normalizers_via_node():
+    """预设纯函数边界：日期严格校验、事件上限、选项白名单、HTML 转义。"""
+    import json as json_lib
+    import shutil
+    import subprocess
+
+    node = shutil.which("node")
+    if not node:
+        return
+    presets_path = (VENDOR / "timeline" / "timelinePresets.js").as_uri()
+    script = (
+        "const mod = await import(" + json_lib.dumps(presets_path) + ");\n"
+        "const presets = mod.TIMELINE_PRESETS;\n"
+        "const def = mod.normalizeTimelineDefinition({preset_id: presets[0].id});\n"
+        "const bad = raw => mod.normalizeTimelineDefinition(raw) === null;\n"
+        "const events = presets.flatMap(p => p.events);\n"
+        "console.log(JSON.stringify({\n"
+        "  presets: presets.length,\n"
+        "  idsUnique: new Set(presets.map(p => p.id)).size === presets.length,\n"
+        "  events: events.length,\n"
+        "  sorted: presets.every(p => p.events.every((e, i) => !i || p.events[i-1].start <= e.start)),\n"
+        "  groupsOk: presets.every(p => p.events.every(e => !e.group || p.groups.some(g => g.id === e.group))),\n"
+        "  datesOk: events.every(e => mod.parseTimelineDate(e.start) && (!e.end || mod.parseTimelineDate(e.end) >= mod.parseTimelineDate(e.start))),\n"
+        "  defaultCount: def.events.length,\n"
+        "  badPreset: bad({preset_id: 'nope'}),\n"
+        "  badMonth: mod.parseTimelineDate('1840-13-01') === null,\n"
+        "  badDay: mod.parseTimelineDate('1900-02-29') === null,\n"
+        "  leap: mod.parseTimelineDate('2000-02-29') !== null,\n"
+        "  overLimit: bad({preset_id: presets[0].id, events: Array.from({length: 201}, (_, i) => ({start: '1900', title: 'e' + i}))}),\n"
+        "  endBeforeStart: bad({preset_id: presets[0].id, events: [{start: '1900-02-01', end: '1900-01-01', title: 'x'}]}),\n"
+        "  badHeight: bad({preset_id: presets[0].id, options: {height: 99}}),\n"
+        "  escaped: mod.escapeTimelineHtml('<img>'),\n"
+        "}));\n"
+    )
+    result = subprocess.run(
+        [node, "--input-type=module", "-e", script],
+        capture_output=True, text=True, encoding="utf-8", errors="replace", timeout=60,
+    )
+    assert result.returncode == 0, result.stderr
+    data = json_lib.loads(result.stdout.strip().splitlines()[-1])
+    assert 3 <= data["presets"] <= 5
+    assert data["idsUnique"] is True
+    assert data["events"] == 71
+    assert data["sorted"] is True
+    assert data["groupsOk"] is True
+    assert data["datesOk"] is True
+    assert data["defaultCount"] == 21
+    for key in ("badPreset", "badMonth", "badDay", "overLimit", "endBeforeStart", "badHeight"):
+        assert data[key] is True, key
+    assert data["leap"] is True
+    assert data["escaped"] == "&lt;img&gt;"
+
+
+def test_timeline_vendor_bundle_and_wiring():
+    """vis-timeline standalone 产物无字符串求值；组件与五步接线齐全。"""
+    bundle = (VENDOR / "vis-timeline" / "vis-timeline-graph2d.min.js").read_text(
+        encoding="utf-8", errors="ignore")
+    for pattern in (r"new\s+Function", r"\beval\s*\("):
+        assert not re.search(pattern, bundle), f"vis-timeline 产物不允许 {pattern}"
+    directory = VENDOR / "vis-timeline"
+    assert sorted(item.name for item in directory.iterdir()) == [
+        "LICENSE.Apache-2.0.txt", "LICENSE.MIT.txt", "README.md",
+        "vis-timeline-graph2d.min.css", "vis-timeline-graph2d.min.js",
+    ]
+
+    component = (ROOT / "web" / "js" / "components" / "timelineDemo.js").read_text(encoding="utf-8")
+    for needle in (
+        "createTimelineView", "openTimelineDemo", "escapeTimelineHtml",
+        "/static/vendor/vis-timeline/vis-timeline-graph2d.min.js",
+        "study.oss.timeline", "destroy()",
+    ):
+        assert needle in component, needle
+
+    question = (ROOT / "web" / "js" / "pages" / "question.js").read_text(encoding="utf-8")
+    assert "TIMELINE_SUBJECTS" in question
+    assert "timelineEntryButton" in question
+    notes = (ROOT / "web" / "js" / "pages" / "notes.js").read_text(encoding="utf-8")
+    assert "timelineDemo.js" in notes and "createTimelineView" in notes
+    player = (ROOT / "web" / "js" / "components" / "classroomPlayer.js").read_text(encoding="utf-8")
+    assert "kind === 'timeline'" in player
+    offline = (ROOT / "web" / "js" / "offline" / "offlineDemo.js").read_text(encoding="utf-8")
+    assert "timeline: true" in offline and 'timeline: "时间轴"' in offline
 
 
 def test_vendor_static_assets_served(client):

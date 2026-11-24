@@ -176,6 +176,34 @@
   }
 }
 
+/* 批次五（§6.4）：markmap 交互脑图（笔记详情「交互 / 静态」切换）。 */
+.pg-mindmap-modes {
+  gap: 8px;
+  margin: 8px 0 10px;
+}
+
+.mindmap-interactive {
+  border: 1px solid var(--line, #e2e9ec);
+  border-radius: 12px;
+  background: #fff;
+  min-height: 420px;
+  overflow: hidden;
+}
+
+html[data-theme="dark"] .mindmap-interactive {
+  background: var(--surface);
+}
+
+.mindmap-interactive-svg {
+  width: 100%;
+  height: 420px;
+  display: block;
+}
+
+.mindmap-interactive .help {
+  margin: 12px;
+}
+
 /* 批次五（§6.1）：JSXGraph 交互几何演示。 */
 .oss-geometry-dialog {
   width: min(760px, calc(100vw - 32px));
@@ -304,5 +332,107 @@
   .oss-sandbox-toolbar,
   .pg-phys-sandbox-controls {
     grid-template-columns: 1fr;
+  }
+}
+
+/* 批次五（§6.5）：vis-timeline 历史时间轴。 */
+.oss-timeline-dialog {
+  width: min(980px, calc(100vw - 32px));
+}
+
+.oss-timeline-toolbar {
+  margin: 10px 0 6px;
+}
+
+.oss-timeline-field {
+  display: flex;
+  gap: 8px;
+  align-items: center;
+  font-size: 0.8125rem;
+  color: var(--muted);
+}
+
+.oss-timeline-description,
+.oss-timeline-source {
+  margin: 4px 0 6px;
+}
+
+.oss-timeline-source {
+  font-size: 0.75rem;
+  color: var(--muted);
+}
+
+.oss-timeline-canvas {
+  border: 1px solid var(--line);
+  border-radius: 12px;
+  padding: 4px;
+  background: #fff;
+  overflow: hidden;
+}
+
+.oss-timeline-count {
+  margin: 6px 0;
+}
+
+.oss-timeline-editor {
+  border-top: 1px dashed var(--line);
+  margin-top: 10px;
+  padding-top: 10px;
+}
+
+.oss-timeline-form {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+}
+
+.oss-timeline-form .input {
+  flex: 1 1 150px;
+  min-width: 120px;
+  min-height: 44px;
+}
+
+.oss-timeline-form .button,
+.oss-timeline-editor .button,
+.oss-timeline-dialog .oss-formula-toolbar .button {
+  min-height: 44px;
+}
+
+.oss-timeline-custom-list {
+  max-height: 160px;
+  overflow: auto;
+  margin-top: 8px;
+}
+
+.oss-timeline-custom-row {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  gap: 8px;
+  padding: 4px 0;
+  border-bottom: 1px solid var(--line);
+}
+
+.oss-timeline-custom-title {
+  font-size: 0.8125rem;
+  word-break: break-all;
+}
+
+.oss-timeline-unavailable,
+.oss-timeline-loading {
+  padding: 12px;
+}
+
+html[data-theme="dark"] .oss-timeline-canvas {
+  background: var(--surface);
+}
+
+@media (max-width: 760px) {
+  .oss-timeline-form .input {
+    flex-basis: 100%;
+  }
+
+  .oss-timeline-canvas .vis-timeline {
+    font-size: 12px;
   }
 }

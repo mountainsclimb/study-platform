@@ -50,6 +50,7 @@ PRACTICE_JS = JS / "pages" / "practice.js"
 INSIGHT_JS = JS / "pages" / "insight.js"
 HOME_JS = JS / "pages" / "home.js"
 NOTES_JS = JS / "pages" / "notes.js"
+MINDMAP_JS = JS / "components" / "mindmap.js"
 CLASSROOM_JS = JS / "pages" / "classroom.js"
 PAPERLAB_JS = JS / "pages" / "paperlab.js"
 MYBANK_JS = JS / "pages" / "mybank.js"
@@ -129,7 +130,7 @@ LOCALE_NAMESPACES = (
     ("study.m7.", 2),
     # 开源组件整合：MathLive 公式编辑、3Dmol 分子模型、物理沙盒、几何演示等
     #（批次二/五，键量下限按本轮交付）。
-    ("study.oss.", 79),
+    ("study.oss.", 109),
 )
 
 #: 直接 t('literal') 键扫描的前端文件（WS30 相关页面/组件；其余页面键由既有 pytest 覆盖）。
@@ -138,6 +139,8 @@ LOCALE_SCAN_FILES = (
     PAPERLAB_JS, MYBANK_JS, UPLOAD_JS, ADMIN_JS, PLAZA_JS, PLAZA_ADMIN_JS, NOTIFY_JS,
     # 第五轮接线页面/组件（t('...') 字面量必须都能在两种语言中找到）。
     WRONGBOOK_JS, REVIEW_RATING_JS, PRINCIPLE_DEMO_JS,
+    # 批次五 §6.4：交互脑图的错误降级文案。
+    MINDMAP_JS,
 )
 
 #: 通过常量映射/模板字符串间接引用的 locale 键（静态扫描 t('...') 覆盖不到）。

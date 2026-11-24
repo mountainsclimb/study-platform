@@ -1175,6 +1175,38 @@ function geometryEntryButton(q) {
 }
 
 /* ---------------------------------------------------------------------------
+ * 批次五（§6.5）：历史/政治题「时间轴」入口；vis-timeline 首次打开时懒加载。
+ * ------------------------------------------------------------------------- */
+
+const TIMELINE_SUBJECTS = new Set(['历史', '政治']);
+
+async function launchTimelineDemo(q, trigger) {
+  const module = await import('../components/timelineDemo.js');
+  const ref = questionRefOf(q);
+  module.openTimelineDemo({
+    trigger,
+    titleHint: String((q?.knowledge_tags || [])[0] || ''),
+    links: ref ? [{ target_kind: 'question', target_key: ref }] : [],
+    ref,
+    onSaved: () => toast(t('study.oss.timeline.savedToast')),
+  });
+}
+
+/** 题目详情「时间轴」按钮；学科不匹配时返回 null。 */
+function timelineEntryButton(q) {
+  const subject = String(q?.subject || '').trim();
+  if (!TIMELINE_SUBJECTS.has(subject)) return null;
+  return button(t('study.oss.timeline.open'), (event) => {
+    launchTimelineDemo(q, event?.currentTarget || null).catch(error => {
+      toast(t('study.oss.timeline.openFailed', { reason: error?.message || '' }), true);
+    });
+  }, 'soft small', 'history', {
+    title: t('study.oss.timeline.openHint'),
+    'data-timeline-demo-open': subject,
+  });
+}
+
+/* ---------------------------------------------------------------------------
  * M3 数学互动入口（方案 §3「数学主流程」第 2 步 / §5.4「Mafs 与 Excalidraw」「逐步辅导」）
  * ---------------------------------------------------------------------------
  * - 「函数图像」：数学题或题干含公式时显示；懒加载 components/functionGraph.js
@@ -1705,6 +1737,8 @@ export function renderQuestion(
     moleculeEntryButton(q),
     // 批次五（§6.1）：数学题「几何演示」（懒加载 JSXGraph，失败仅 toast）。
     geometryEntryButton(q),
+    // 批次五（§6.5）：历史/政治题「时间轴」（懒加载 vis-timeline，失败仅 toast）。
+    timelineEntryButton(q),
     // M3 数学互动：函数图像（数学/公式题）、画解题思路（所有题）、按步骤提示（所有题）。
     functionGraphEntryButton(q),
     sketchBoardEntryButton(q),

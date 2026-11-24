@@ -109,6 +109,7 @@ ARTIFACT_KIND_LABELS = {
     "geometry_demo": "几何演示",
     "molecule_3d": "分子模型",
     "physics_sandbox": "物理沙盒",
+    "timeline": "时间轴",
 }
 
 _SCHEMA = """

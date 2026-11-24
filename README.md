@@ -197,7 +197,7 @@ python -m uvicorn app.main:app --host 127.0.0.1 --port 8765
     - 许可登记：`THIRD_PARTY_NOTICES.md` 新增第 8–10 节（shigure / chinese-poetry 子集 / genanki），
       并补登记既有的 KaTeX、markdown-it、DOMPurify（第 11 节）。
 
-16. **开源组件整合（批次一 / 二 / 三 / 四 / 五·6.1–6.3，默认不改变运行时）**：
+16. **开源组件整合（批次一 / 二 / 三 / 四 / 五·6.1–6.5，默认不改变运行时）**：
     - **无障碍回归**：`scripts/ui_check_a11y.py` 用随脚本分发的 axe-core 4.14.1（MPL-2.0，仅开发期，
       不进镜像）在桌面 1440 与手机 390 视口跑 WCAG 2A/2AA，存在新增 critical/serious 即失败；
       首次可 `--update-baseline` 固化存量基线，报告落 `screenshots/a11y/`。已注册为 `-Ui` 验收的
@@ -241,6 +241,15 @@ python -m uvicorn app.main:app --host 127.0.0.1 --port 8765
       全部用 JS 函数/数值入参（无字符串表达式，兼容无 `unsafe-eval` 的 CSP），按保存的
       预设与参数可完全重建，保存为 `geometry_demo` 学习附件；课堂播放/笔记只读打开，
       离线导出仅海报。
+    - **笔记交互脑图**：`web/vendor/markmap/`（markmap-view 0.18.13 + d3 的单文件构建产物，
+      `scripts/markmap-bundle/package-lock.json` 钉死全部依赖、`npm ci` 重建，
+      `--check` 字节校验；LICENSE 按实际打入的 33 个包逐包聚合）提供笔记详情
+      脑图的「交互 / 静态」切换，默认静态视图不变；交互视图支持折叠与缩放，
+      首次切换时懒加载，`.mmd`/SVG 导出不受影响。
+    - **历史时间轴**：`web/vendor/vis-timeline/`（vis-timeline 8.5.6 standalone 产物）
+      提供历史、政治题的「时间轴」入口：中国近代史 / 世界近现代史 / 新中国史 / 科技史
+      四个专题（71 条人工校对事件），可切换专题、自建事件并保存为 `timeline` 学习附件；
+      日期严格校验，课堂只读播放、离线仅海报，首次打开时懒加载。
 
 ## 验证
 
@@ -316,6 +325,10 @@ python -m pytest tests/test_speech_local.py tests/test_classroom_local_tts.py -v
 python -m pytest tests/test_chem_balance.py tests/test_demo_kinds.py tests/test_oss_vendor_assets.py -v
 # 物理自由沙盒（Matter.js vendor 资产）
 python -m pytest tests/test_demo_kinds.py tests/test_oss_vendor_assets.py -v
+# 历史时间轴（vis-timeline vendor 资产 + 预设校验）
+python -m pytest tests/test_demo_kinds.py tests/test_oss_vendor_assets.py -v
+# markmap 交互脑图构建产物的字节级复现校验（需网络，手动运行）
+node scripts/build_markmap_bundle.mjs --check
 # 课堂全链路验收（本机假模型，无需真实 Key；详见 scripts/integration/README.md）
 python scripts/integration/fake_model_server.py --port 8899
 python scripts/integration/classroom_accept.py --base-url http://127.0.0.1:8813 --fake-model-base-url http://127.0.0.1:8899

@@ -48,6 +48,7 @@
     molecule_3d: "分子模型",
     physics_sandbox: "物理沙盒",
     geometry_demo: "几何演示",
+    timeline: "时间轴",
   };
 
   /**
@@ -61,6 +62,7 @@
     molecule_3d: true,
     physics_sandbox: true,
     geometry_demo: true,
+    timeline: true,
   };
 
   /** 工厂仿真事件类型分组（与 web/js/components/mechDemo.js 的回放口径一致）。 */

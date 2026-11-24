@@ -10,7 +10,7 @@ import { mountJob } from '../core/jobs.js';
 import { createModelPicker } from '../components/modelPicker.js';
 import { filePicker } from '../components/filePicker.js';
 import { createPromptGrid } from '../components/promptGrid.js';
-import { renderMindmapWidget, markdownToMindmapTree } from '../components/mindmap.js';
+import { renderMindmapWidget, renderInteractiveMindmap, markdownToMindmapTree } from '../components/mindmap.js';
 import { renderTopicReportsPanel, renderHandoutsPanel, m6t } from '../components/learningDocs.js';
 import { openFormulaEditor, insertFormulaAtCursor } from '../components/formulaEditor.js';
 import { t } from '../core/i18n.js';
@@ -1561,6 +1561,7 @@ const NOTE_ARTIFACT_KIND_META = Object.freeze({
   geometry_demo: { key: 'study.oss.kind.geometry', fallback: '几何演示' },
   molecule_3d: { key: 'study.oss.kind.molecule', fallback: '分子模型' },
   physics_sandbox: { key: 'study.oss.kind.sandbox', fallback: '物理沙盒' },
+  timeline: { key: 'study.oss.kind.timeline', fallback: '时间轴' },
 });
 
 const NOTE_ARTIFACT_DEMO_KINDS = new Set(['flow_animation', 'isometric', 'demo_3d', 'science_demo']);
@@ -1652,6 +1653,17 @@ async function mountNoteArtifactView(mount, { kind, title, data }) {
       throw new Error(m4t('study.m4.notes.invalidData', '附件数据不合法'));
     }
     const view = module.createMoleculeView(mount, data, { readOnly: true });
+    if (!view || !view.element) throw new Error(m4t('study.m4.notes.invalidData', '附件数据不合法'));
+    try { await view.ready; } catch { /* ready 不应 reject；兼容异常实现 */ }
+    return view;
+  }
+  if (kind === 'timeline') {
+    const module = await import('../components/timelineDemo.js');
+    if (typeof module.normalizeTimelineDefinition === 'function'
+      && !module.normalizeTimelineDefinition(data)) {
+      throw new Error(m4t('study.m4.notes.invalidData', '附件数据不合法'));
+    }
+    const view = module.createTimelineView(mount, data, { readOnly: true });
     if (!view || !view.element) throw new Error(m4t('study.m4.notes.invalidData', '附件数据不合法'));
     try { await view.ready; } catch { /* ready 不应 reject；兼容异常实现 */ }
     return view;
@@ -1852,14 +1864,45 @@ function renderNoteDetail(note, container, reload, onPatched = null) {
   const own = note.origin !== 'official' || state.user.role === 'admin';
   const versionsMount = el('div');
   const mindmapMount = el('div');
+  const mindmapView = el('div', { class: 'pg-mindmap-view' });
+  const mindmapModeButtons = {
+    static: button(t('mindmap.viewStatic'), () => openMindmap('static'), 'soft small'),
+    interactive: button(t('mindmap.viewInteractive'), () => openMindmap('interactive'), 'soft small'),
+  };
+  const mindmapModes = el('div', {
+    class: 'row pg-mindmap-modes', role: 'group', 'aria-label': t('mindmap.viewMode'),
+  }, mindmapModeButtons.static, mindmapModeButtons.interactive);
+  let mindmapController = null;
+
+  function closeMindmap() {
+    if (mindmapController) { try { mindmapController.destroy(); } catch { /* 忽略 */ } mindmapController = null; }
+    mindmapMount.replaceChildren();
+  }
+
+  /** 批次五(§6.4):脑图「静态 / 交互」切换,默认静态;按钮常驻以保留键盘焦点。 */
+  function openMindmap(mode) {
+    const tree = markdownToMindmapTree(note.title, note.content || '');
+    const mindmapTitle = t('notes.mindMap', { v1: note.title });
+    if (mindmapController) { try { mindmapController.destroy(); } catch { /* 忽略 */ } mindmapController = null; }
+    for (const [name, node] of Object.entries(mindmapModeButtons)) {
+      node.setAttribute('aria-pressed', name === mode ? 'true' : 'false');
+    }
+    const view = mode === 'interactive'
+      ? (() => {
+        mindmapController = renderInteractiveMindmap(tree, { title: mindmapTitle });
+        return mindmapController.element;
+      })()
+      : renderMindmapWidget(tree, { title: mindmapTitle });
+    if (!mindmapMount.contains(mindmapModes)) mindmapMount.replaceChildren(mindmapModes, mindmapView);
+    mindmapView.replaceChildren(view);
+  }
 
   const actions = el('div', { class: 'row pg-note-actions' });
   if (own) actions.append(button(t('settings.edit'), () => editNote(note, container, reload, onPatched), 'secondary small', 'edit'));
   actions.append(
     button(t('notes.mindMapView'), () => {
-      if (mindmapMount.childNodes.length) { mindmapMount.replaceChildren(); return; }
-      const tree = markdownToMindmapTree(note.title, note.content || '');
-      mindmapMount.replaceChildren(renderMindmapWidget(tree, { title: t('notes.mindMap', { v1: note.title }) }));
+      if (mindmapMount.childNodes.length) { closeMindmap(); return; }
+      openMindmap('static');
     }, 'soft small', 'eye'),
     button(t('notes.exportMd'), () => downloadText(`${note.title}.md`, note.content || ''), 'ghost small', 'download'),
     button('Anki CSV', async e => busy(e.currentTarget, async () => {

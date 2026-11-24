@@ -1,4 +1,4 @@
-"""演示附件类型验收（批次五起；覆盖 molecule_3d / physics_sandbox / geometry_demo）。
+"""演示附件类型验收（批次五起；覆盖 molecule_3d / physics_sandbox / geometry_demo / timeline）。
 
 覆盖：
 1. `POST /api/artifacts` 接受 `molecule_3d`，data/preview 往返一致；
@@ -6,7 +6,8 @@
 3. `GET /api/classroom/meta` 的 demo_artifact_kinds 包含 molecule_3d；
 4. `physics_sandbox` 附件往返、课堂固定版本与离线仅海报导出；
 5. 课堂插入端的结构校验：刚体/约束上限、形状白名单、数值与约束索引非法时 422；
-6. `geometry_demo` 附件往返、课堂固定版本与离线仅海报导出。
+6. `geometry_demo` 附件往返、课堂固定版本与离线仅海报导出；
+7. `timeline` 附件往返、课堂固定版本、离线仅海报导出与事件/选项结构校验。
 """
 from __future__ import annotations
 
@@ -28,6 +29,14 @@ PHYSICS_DATA = {
     "constraints": [{"bodyA": 0, "bodyB": 1, "stiffness": 0.02, "length": 120, "damping": 0.02}],
 }
 GEOMETRY_DATA = {"preset_id": "conic-unified", "params": {"e": 0.9}}
+TIMELINE_DATA = {
+    "preset_id": "modern-china-1840-1949",
+    "events": [
+        {"start": "1840-06-28", "end": "1842-08-29", "title": "第一次鸦片战争", "group": "aggression"},
+        {"start": "1919-05-04", "title": "五四运动", "group": "revolution"},
+    ],
+    "options": {"height": 360},
+}
 
 
 def create_course(client):
@@ -215,3 +224,93 @@ def test_physics_sandbox_artifact_and_demo_scene(client):
     assert 'data-offline-demo-mounted="1"' not in html.text
     assert "物理沙盒" in html.text
     assert "data:image/png;base64," in html.text
+
+
+def _timeline_artifact(client, data):
+    response = client.post("/api/artifacts", json={
+        "kind": "timeline",
+        "title": "中国近代史时间轴",
+        "data": data,
+        "preview": {"kind": "timeline", "preset_id": data.get("preset_id"), "png": TINY_PNG},
+    })
+    assert response.status_code == 201, response.text
+    return response.json()["artifact"]["artifact_id"]
+
+
+def test_timeline_artifact_and_demo_scene(client):
+    response = client.post("/api/artifacts", json={
+        "kind": "timeline",
+        "title": "中国近代史时间轴",
+        "data": TIMELINE_DATA,
+        "preview": {"kind": "timeline", "preset_id": TIMELINE_DATA["preset_id"], "png": TINY_PNG},
+    })
+    assert response.status_code == 201, response.text
+    body = response.json()
+    artifact_id = body["artifact"]["artifact_id"]
+    assert body["artifact"]["kind"] == "timeline"
+    assert body["revision"]["data"] == TIMELINE_DATA
+
+    course = create_course(client)
+    attached = client.post(f"/api/classroom/courses/{course['id']}/scenes/demo", json={
+        "artifact_id": artifact_id,
+    })
+    assert attached.status_code == 201, attached.text
+    scenes = client.get(f"/api/classroom/courses/{course['id']}").json()["scenes"]
+    demo = next(scene for scene in scenes if scene["scene_type"] == "demo")
+    assert demo["content"]["artifact"]["kind"] == "timeline"
+    assert demo["content"]["artifact"]["data"] == TIMELINE_DATA
+
+    html = client.get(
+        f"/api/classroom/courses/{course['id']}/export", params={"format": "html"},
+    )
+    assert html.status_code == 200, html.text
+    assert 'data-offline-demo="timeline"' in html.text
+    assert 'data-offline-demo-mounted="1"' not in html.text
+    assert "时间轴" in html.text
+    assert "data:image/png;base64," in html.text
+
+
+def test_meta_declares_timeline_kind(client):
+    meta = client.get("/api/classroom/meta").json()
+    assert "timeline" in schema.DEMO_ARTIFACT_KINDS
+    assert schema.DEMO_ARTIFACT_KIND_LABELS["timeline"] == "时间轴"
+    assert meta["demo_artifact_kinds"]["demo"] == list(schema.DEMO_ARTIFACT_KINDS)
+
+
+def test_timeline_demo_scene_rejects_invalid_structure(client):
+    course = create_course(client)
+
+    def attach(data):
+        return client.post(f"/api/classroom/courses/{course['id']}/scenes/demo", json={
+            "artifact_id": _timeline_artifact(client, data),
+        })
+
+    # 事件数超过 200 上限。
+    overflow = dict(TIMELINE_DATA)
+    overflow["events"] = [
+        {"start": "1900", "title": "事件 %d" % index} for index in range(201)
+    ]
+    response = attach(overflow)
+    assert response.status_code == 422, response.text
+    assert "200" in response.text
+
+    # 非法日期（13 月）。
+    bad_date = dict(TIMELINE_DATA)
+    bad_date["events"] = [{"start": "1840-13-01", "title": "坏日期"}]
+    response = attach(bad_date)
+    assert response.status_code == 422, response.text
+    assert "开始日期不合法" in response.text
+
+    # 结束早于开始。
+    reversed_range = dict(TIMELINE_DATA)
+    reversed_range["events"] = [{"start": "1900-02-01", "end": "1900-01-01", "title": "倒序"}]
+    response = attach(reversed_range)
+    assert response.status_code == 422, response.text
+    assert "不能早于" in response.text
+
+    # 选项高度越界。
+    bad_options = dict(TIMELINE_DATA)
+    bad_options["options"] = {"height": 99}
+    response = attach(bad_options)
+    assert response.status_code == 422, response.text
+    assert "280" in response.text

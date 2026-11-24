@@ -71,6 +71,8 @@ ARTIFACT_KINDS = (
     "molecule_3d",
     # 批次五（§6.3）：Matter.js 物理自由沙盒（探索模式）。
     "physics_sandbox",
+    # 批次五（§6.5）：vis-timeline 历史时间轴（专题预设 + 自建事件）。
+    "timeline",
 )
 #: 附件可关联的目标类型白名单。
 TARGET_KINDS = ("question", "note", "classroom", "review", "assistant")

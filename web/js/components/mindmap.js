@@ -1,5 +1,12 @@
 import { el, button, downloadText } from '../core/dom.js';
 import { t } from '../core/i18n.js';
+import { escapeHtml } from '../core/markdown.js';
+
+/** 取 `mindmap.*` 文案：locale 缺键时回退中文常量（第二参在 `t()` 里是插值变量）。 */
+function ossText(key, fallback) {
+  const value = t(key);
+  return value !== key ? value : fallback;
+}
 
 const BRANCH_COLORS = ['#147d70', '#48689e', '#b56e2d', '#7a5195', '#2c7a5b', '#a84a54', '#2e7d9b'];
 
@@ -185,4 +192,130 @@ export function renderMindmapWidget(treeOrMermaid, { title = t('mindmap.mindMap'
           downloadText(`${title}.svg`, serialized, 'image/svg+xml;charset=utf-8');
         }, 'secondary small', 'download'))),
     viewport);
+}
+
+/* ---------------------------------------------------------------------------
+ * 批次五（§6.4）：markmap 交互脑图。
+ * 打包产物 web/vendor/markmap/markmap-view.iife.min.js 由
+ * scripts/build_markmap_bundle.mjs 生成（版本锁定，重建字节一致）；
+ * 节点由既有树结构 {label, children} 转成 markmap 的 {content, children}，
+ * 样式经 markmap 的 embedGlobalCSS 内嵌，无需外部 CSS。
+ * ------------------------------------------------------------------------- */
+
+const MARKMAP_SCRIPT_URL = '/static/vendor/markmap/markmap-view.iife.min.js';
+const MARKMAP_MARK = 'ossMarkmapScript';
+const MARKMAP_LOAD_TIMEOUT_MS = 15000;
+let markmapLoader = null;
+
+/**
+ * markmap 的节点 content 按 HTML 写入页面；笔记标题/正文是用户内容，
+ * 复用核心转义函数（与 DOMPurify fail-closed 的 `markdown()` 同一安全口径），
+ * 按纯文本渲染（§6.4 先做纯文本节点），避免注入并保证真实 CSP 零违规。
+ */
+export const escapeMindmapLabel = escapeHtml;
+
+/** 首次调用时注入打包产物（IIFE 全局 Markmap）；失败可重试。 */
+export function loadMarkmap() {
+  if (typeof window === 'undefined' || typeof document === 'undefined') {
+    return Promise.reject(new Error(ossText('mindmap.interactiveFailed', '交互脑图加载失败，可使用静态视图。')));
+  }
+  const existing = window.Markmap;
+  if (existing && typeof existing.Markmap === 'function' && typeof existing.deriveOptions === 'function') {
+    return Promise.resolve(existing);
+  }
+  if (markmapLoader) return markmapLoader;
+  markmapLoader = new Promise((resolve, reject) => {
+    let script = document.querySelector(`script[data-oss="${MARKMAP_MARK}"]`);
+    const finish = () => {
+      const library = window.Markmap;
+      if (library && typeof library.deriveOptions === 'function' && library.Markmap) {
+        resolve(library);
+        return;
+      }
+      if (script) script.remove();
+      reject(new Error(ossText('mindmap.interactiveFailed', '交互脑图加载失败，可使用静态视图。')));
+    };
+    if (script && script.dataset.loaded === '1') {
+      finish();
+      return;
+    }
+    if (!script) {
+      script = document.createElement('script');
+      script.src = MARKMAP_SCRIPT_URL;
+      script.async = true;
+      script.dataset.oss = MARKMAP_MARK;
+      document.head.append(script);
+    }
+    const timer = setTimeout(() => {
+      if (script) script.remove();
+      reject(new Error(ossText('mindmap.interactiveFailed', '交互脑图加载失败，可使用静态视图。')));
+    }, MARKMAP_LOAD_TIMEOUT_MS);
+    script.addEventListener('load', () => {
+      clearTimeout(timer);
+      script.dataset.loaded = '1';
+      finish();
+    }, { once: true });
+    script.addEventListener('error', () => {
+      clearTimeout(timer);
+      script.remove();
+      reject(new Error(ossText('mindmap.interactiveFailed', '交互脑图加载失败，可使用静态视图。')));
+    }, { once: true });
+  }).catch(error => {
+    markmapLoader = null;
+    throw error;
+  });
+  return markmapLoader;
+}
+
+/**
+ * 交互脑图（可折叠、可缩放）；返回 {element, destroy}。
+ * 输入是既有 parseMermaidMindmap / markdownToMindmapTree 的 {label, children} 树。
+ */
+export function renderInteractiveMindmap(tree, { title = t('mindmap.mindMap') } = {}) {
+  const host = el('div', {
+    class: 'mindmap-interactive',
+    role: 'region',
+    'aria-busy': 'true',
+    'aria-label': title || t('mindmap.mindMap'),
+  });
+  let instance = null;
+  let destroyed = false;
+  (async () => {
+    try {
+      const library = await loadMarkmap();
+      if (destroyed) return;
+      const ns = 'http://www.w3.org/2000/svg';
+      const svg = document.createElementNS(ns, 'svg');
+      svg.setAttribute('class', 'mindmap-interactive-svg');
+      host.replaceChildren(svg);
+      // markmap 节点:{content, children};fit 等首帧后再调,初始渲染是异步过渡。
+      // content 是 HTML：笔记文本先转义，按纯文本渲染。
+      const toNode = node => ({
+        content: escapeMindmapLabel(node.label),
+        children: (node.children || []).map(toNode),
+      });
+      instance = library.Markmap.create(svg, library.deriveOptions({ maxWidth: 260 }), toNode(tree));
+      host.removeAttribute('aria-busy');
+      requestAnimationFrame(() => {
+        // fit() 是 async：显式 catch，且 destroy 后不再执行。
+        if (destroyed || !instance) return;
+        Promise.resolve(instance.fit()).catch(() => { /* 首帧未就绪时忽略 */ });
+      });
+    } catch (error) {
+      if (destroyed) return;
+      host.removeAttribute('aria-busy');
+      console.warn('[mindmap] 交互视图加载失败：', error);
+      host.replaceChildren(el('p', { class: 'help', role: 'status' },
+        ossText('mindmap.interactiveFailed', '交互脑图加载失败，可使用静态视图。')));
+    }
+  })();
+  return {
+    element: host,
+    destroy() {
+      if (destroyed) return;
+      destroyed = true;
+      try { if (instance) instance.destroy(); } catch { /* 忽略 */ }
+      host.remove();
+    },
+  };
 }

@@ -46,6 +46,7 @@ const DEMO_KIND_META = Object.freeze({
   geometry_demo: { key: 'study.oss.kind.geometry', fallback: '几何演示' },
   molecule_3d: { key: 'study.oss.kind.molecule', fallback: '分子模型' },
   physics_sandbox: { key: 'study.oss.kind.sandbox', fallback: '物理沙盒' },
+  timeline: { key: 'study.oss.kind.timeline', fallback: '时间轴' },
 });
 
 /** 交给 principleDemo 渲染的 kind（其余读取本地 functionGraph / sketchBoard）。 */
@@ -1126,6 +1127,36 @@ export function createPlayerView({ container, version, courseId }) {
         try {
           const outcome = await view.ready;
           if (!outcome || outcome.ok === false) throw new Error('geometry unavailable');
+        } catch {
+          throw new Error(m4Text('study.m4.demoStage.failed', '演示加载失败，可查看海报'));
+        }
+        if (stale()) return;
+        markDemoReady(stage, info, scene);
+        return;
+      }
+
+      // 批次五（§6.5）：vis-timeline 历史时间轴只读渲染（保留缩放与时间窗拖动）。
+      if (kind === 'timeline') {
+        const module = await import('./timelineDemo.js');
+        if (stale()) return;
+        if (typeof module.normalizeTimelineDefinition === 'function'
+          && !module.normalizeTimelineDefinition(info.data)) {
+          throw new Error(m4Text('study.m4.demoStage.invalidData', '演示数据不合法'));
+        }
+        const view = module.createTimelineView(host, info.data, { readOnly: true });
+        if (!view || !view.element) {
+          throw new Error(m4Text('study.m4.demoStage.invalidData', '演示数据不合法'));
+        }
+        if (stale()) {
+          try { view.destroy(); } catch { /* 忽略 */ }
+          return;
+        }
+        demoController = view;
+        loadingNode.remove();
+        host.replaceChildren(view.element);
+        try {
+          const outcome = await view.ready;
+          if (!outcome || outcome.ok === false) throw new Error('timeline unavailable');
         } catch {
           throw new Error(m4Text('study.m4.demoStage.failed', '演示加载失败，可查看海报'));
         }

@@ -254,6 +254,24 @@ SOFTWARE.
 | 用途 | `web/js/components/geometryDemo.js`：数学题「几何演示」与学习附件 `geometry_demo` 的交互渲染；首次打开时懒加载；预设全部用 JS 函数/数值入参，不用字符串表达式（详见 `web/vendor/jsxgraph/README.md` 的 CSP 说明） |
 | 分发 | `web/vendor/jsxgraph/` 随仓库分发（jsxgraphcore.js、jsxgraph.css、LICENSE.MIT、README）；依赖字符串求值的 JessieScript/geogebra 等独立模块不带 |
 
+| 项目 | 内容 |
+|---|---|
+| 名称 | markmap 交互脑图（构建产物） |
+| 版权 | markmap-view © markmap 贡献者（MIT）；markmap-common © markmap 贡献者（MIT）；d3 及 30 个 d3-* 子包 © Mike Bostock 及贡献者（ISC） |
+| 仓库 | <https://github.com/markmap/markmap>、<https://github.com/d3/d3> |
+| 许可证 | 实际打入产物的 33 个包逐包许可全文见 `web/vendor/markmap/LICENSE`（由 esbuild metafile 的 inputs 生成） |
+| 用途 | `web/js/components/mindmap.js` 的 `renderInteractiveMindmap()`：笔记详情「交互 / 静态」脑图切换的交互视图（折叠、缩放）；首次切换时懒加载 |
+| 分发 | `web/vendor/markmap/markmap-view.iife.min.js` 为 `scripts/build_markmap_bundle.mjs` 的构建产物（`scripts/markmap-bundle/package-lock.json` 钉死全部依赖、`npm ci` 安装；重建字节一致，`--check` 校验），随仓库分发；npm 包本体不进仓库 |
+
+| 项目 | 内容 |
+|---|---|
+| 名称 | vis-timeline（历史时间轴） |
+| 版权 | Copyright (c) 2011-2017 Almende B.V. and contributors; Copyright (c) 2017-2019 vis.js contributors |
+| 仓库 | <https://github.com/visjs/vis-timeline> |
+| 许可证 | 双许可 Apache-2.0 或 MIT，本仓库按 MIT 使用（全文见 `web/vendor/vis-timeline/LICENSE.MIT.txt` 与 `LICENSE.Apache-2.0.txt`） |
+| 用途 | `web/js/components/timelineDemo.js`：历史/政治题「时间轴」与学习附件 `timeline` 的交互渲染；预设与数据校验收敛在 `web/vendor/timeline/` |
+| 分发 | `web/vendor/vis-timeline/` 随仓库分发（vis-timeline-graph2d.min.js、.min.css、两份许可、README）；不带 esnext/types/peer 与 source map |
+
 ## 13. 数据边界与免责声明
 
 
@@ -295,6 +313,8 @@ SOFTWARE.
 | 24 | OpenChemLib JS（SMILES→3D） | `openchemlib@9.26.0` | BSD-3-Clause | `web/vendor/openchemlib/`（版本、大小与 SHA-256 见同目录 README） | `npm pack openchemlib@9.26.0`，取 ESM 构建、LICENSE，并由 dist/resources.json 生成 COD 子集 | 随仓库分发 |
 | 25 | Matter.js（物理沙盒） | `matter-js@0.20.0` | MIT | `web/vendor/matter/`（版本、大小与 SHA-256 见同目录 README） | `npm pack matter-js@0.20.0`，取 `build/matter.min.js` 与 LICENSE | 随仓库分发 |
 | 26 | JSXGraph（交互几何） | `jsxgraph@1.14.3` | MIT 或 LGPL-3.0（按 MIT 使用） | `web/vendor/jsxgraph/`（版本、大小与 SHA-256 见同目录 README） | `npm pack jsxgraph@1.14.3`，取 `distrib/jsxgraphcore.js`、`jsxgraph.css` 与 `LICENSE.MIT`；不带 JessieScript/geogebra 等独立模块 | 随仓库分发 |
+| 27 | markmap 交互脑图（构建产物） | `markmap-view@0.18.13` + `markmap-common@0.18.9` + `d3@7.9.2`（另解析 30 个 d3-* 子包；`@babel/runtime` 仅安装、未入产物） | MIT / MIT / ISC | `web/vendor/markmap/`（版本、大小与 SHA-256 见同目录 README；LICENSE 逐包聚合 33 个实际打入包） | `node scripts/build_markmap_bundle.mjs`（`scripts/markmap-bundle/package-lock.json` 钉死全部依赖、`npm ci`；esbuild 0.28.2 仅构建期；`--check` 校验字节一致） | 构建产物随仓库分发 |
+| 28 | vis-timeline（历史时间轴） | `vis-timeline@8.5.6` | Apache-2.0 或 MIT（按 MIT 使用） | `web/vendor/vis-timeline/`（版本、大小与 SHA-256 见同目录 README） | `npm pack vis-timeline@8.5.6`，取 `dist/vis-timeline-graph2d.min.js`、`.min.css` 与两份许可；不带 esnext/types/peer/source map | 随仓库分发 |
 
 ## 15. 素材、语料与模型权重
 
@@ -342,6 +362,8 @@ SOFTWARE.
 | 化学方程式配平（sympy） | 默认可用 | `app/chem_balance.py`，`POST /api/chem/balance` | 无状态、需登录；只接受元素/括号/数字下标；无解返回 `ok:false` |
 | 物理自由沙盒（Matter.js） | 默认可用 | `web/vendor/matter/` 随仓库分发；浏览器需 Canvas 2D | 探索模式，结果可能有细微差异；保存为 `physics_sandbox` 学习附件；离线仅海报 |
 | 交互几何演示（JSXGraph） | 默认可用 | `web/vendor/jsxgraph/` 随仓库分发；预设为自有代码（`web/vendor/geometry/`） | 十个高中几何预设，纯函数/数值入参，按保存参数可完全重建；保存为 `geometry_demo` 学习附件；离线仅海报 |
+| 笔记交互脑图（markmap） | 默认可用 | `web/vendor/markmap/` 构建产物随仓库分发 | 笔记详情「交互 / 静态」切换，默认静态；交互视图可折叠缩放，懒加载；`.mmd`/SVG 导出不变 |
+| 历史时间轴（vis-timeline） | 默认可用 | `web/vendor/vis-timeline/` 随仓库分发；预设为自有代码（`web/vendor/timeline/`） | 四个历史专题、可自建事件；日期严格校验后按参数重建；保存为 `timeline` 学习附件；课堂只读、离线仅海报 |
 | fsrs-lite 复习排程 | 实验 | `STUDY_REVIEW_SCHEDULER=fsrs-lite` | 默认 `rules`；先积累复习反馈再替换 |
 | 社区解析精选 | 可选服务 | `COMMUNITY_EXPLANATIONS_ENABLED=1` | 登录用户的既有题目 AI 解析分享 |
 | PostgreSQL / Redis Worker / 对象存储 | 可选服务（生产推荐） | `DATABASE_URL`、`REDIS_URL`、`S3_*`；公网部署校验见 `scripts/check_public_config.py` | SQLite 单机开发可用 |
