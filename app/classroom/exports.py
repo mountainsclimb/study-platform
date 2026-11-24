@@ -23,7 +23,7 @@
 - **固定版本原理演示（M4）**：``scene_type='demo'`` 场景按插入时冻结的学习附件快照导出——
   PPTX 一页「标题 + 原理演示 · <kind 中文> · 固定版本 vN + 说明/假设 + 可选 PNG 海报」；
   离线 HTML / 打印讲义输出 ``section.cls-demo-scene[data-artifact-id][data-fixed-revision]``
-  并内嵌 ``application/json`` 快照；ZIP 额外写 ``demos/scene-<NN>-<artifact_id>.json``。
+  并内嵌 ``application/json`` 快照；ZIP 额外写 ``demos/scene-<NN>-<artifact_id>.json`` 与同名 ``.html``（独立可交互壳，零外链）。
   源附件后续升版不会改变已导出的固定版本内容。
 """
 from __future__ import annotations
@@ -2950,6 +2950,35 @@ def _offline_html_for_zip(course: dict, scenes: list[dict],
         return None
 
 
+def _standalone_demo_html(title: str, content: dict) -> bytes:
+    """单个演示场景的独立 HTML：内联演示段落、播放器与样式，零外链。"""
+    section = _demo_section_html(title, content, heading_tag="h1", offline_player=True)
+    css = _offline_demo_principles_css()
+    scripts = _offline_demo_scripts_html(
+        _offline_demo_bundle_js(), _offline_demo_player_js(),
+    )
+    safe_title = html_lib.escape(str(title or "原理演示"))
+    document = """<!doctype html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>%s</title>
+<style>
+body{margin:0;padding:16px;background:#fbfaf5;color:#1d3b34;font-family:system-ui,'Microsoft YaHei','PingFang SC',sans-serif;}
+main{max-width:960px;margin:0 auto;}
+%s</style>
+</head>
+<body>
+<main>
+%s
+</main>
+%s</body>
+</html>
+""" % (safe_title, css, section, scripts)
+    return document.encode("utf-8")
+
+
 def build_course_zip(course: dict, scenes: list[dict], *, tts_assets: dict[int, dict] | None = None,
                      resources: list[dict] | None = None, note: str = "") -> bytes:
     """课程 ZIP：manifest.json + course.json + scenes/*.json + assets/**，可被导入接口还原。
@@ -3018,6 +3047,10 @@ def build_course_zip(course: dict, scenes: list[dict], *, tts_assets: dict[int, 
             "artifact": artifact,
         }
         demo_files[path] = json.dumps(payload, ensure_ascii=False, indent=2).encode("utf-8")
+        html_path = path[:-5] + ".html"
+        demo_files[html_path] = _standalone_demo_html(
+            str(scene.get("title") or artifact.get("title") or "原理演示"), content,
+        )
         demo_entries.append({
             "order": order,
             "sceneId": int(scene["id"]),
@@ -3026,6 +3059,7 @@ def build_course_zip(course: dict, scenes: list[dict], *, tts_assets: dict[int, 
             "kind": str(artifact.get("kind") or ""),
             "fixedRevision": revision,
             "path": path,
+            "htmlPath": html_path,
         })
     for resource in (resources or []):
         path = str(resource.get("path") or "")

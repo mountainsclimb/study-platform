@@ -535,18 +535,29 @@ def test_exports_render_fixed_version_demo_scene(client):
     assert zip_response.status_code == 200, zip_response.text
     with zipfile.ZipFile(io.BytesIO(zip_response.content)) as archive:
         names = archive.namelist()
-        demo_names = sorted(name for name in names if name.startswith("demos/"))
-        assert len(demo_names) == 2
-        assert demo_names[0].startswith("demos/scene-02-")
-        assert demo_names[0].endswith(".json")
-        demo_payload = json.loads(archive.read(demo_names[0]).decode("utf-8"))
+        demo_json = sorted(
+            name for name in names if name.startswith("demos/") and name.endswith(".json")
+        )
+        demo_html = sorted(
+            name for name in names if name.startswith("demos/") and name.endswith(".html")
+        )
+        assert len(demo_json) == 2 and len(demo_html) == 2
+        assert demo_json[0].startswith("demos/scene-02-")
+        demo_payload = json.loads(archive.read(demo_json[0]).decode("utf-8"))
         assert demo_payload["format"] == "zhixu-classroom-demo-snapshot"
         assert demo_payload["fixed"] is True
         assert demo_payload["fixedRevision"] == 1
         assert demo_payload["artifact"]["artifact_id"] == artifact["artifact_id"]
         assert "固定版本" in demo_payload["fixedNote"]
+        standalone = archive.read(demo_html[0]).decode("utf-8")
+        assert "data-offline-demo" in standalone
+        assert "application/json" in standalone
+        assert "http://" not in standalone and "https://" not in standalone
+        assert 'src="http' not in standalone and "<link" not in standalone
+        assert 'src="data:image/png;base64,' in standalone
         manifest = json.loads(archive.read("manifest.json").decode("utf-8"))
         assert len(manifest["demoScenes"]) == 2
+        assert all(entry.get("htmlPath") for entry in manifest["demoScenes"])
         assert "demo-scenes" in manifest["capabilities"]
         scene_snapshot = json.loads(archive.read("scenes/scene_002.json").decode("utf-8"))
         assert scene_snapshot["type"] == "demo"
