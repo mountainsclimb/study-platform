@@ -203,7 +203,25 @@ export function createMoleculeView(container, rawDefinition, options = {}) {
   }
 
   if (container && typeof container.replaceChildren === 'function') container.replaceChildren(host);
-  host.append(el('p', { class: 'help oss-molecule-loading' }, ossText('study.oss.molecule.loading', '正在加载分子模型…')));
+  const infoLine = el('p', { class: 'help oss-molecule-info', hidden: true });
+  host.append(
+    el('p', { class: 'help oss-molecule-loading' }, ossText('study.oss.molecule.loading', '正在加载分子模型…')),
+    infoLine,
+  );
+
+  /** §9：RDKit 可选信息（分子式/相对分子质量）；未安装（503）时静默隐藏。 */
+  async function loadChemInfo() {
+    try {
+      const info = await api('/chem/info', { method: 'POST', data: { smiles: definition.smiles } });
+      if (destroyed || !info || info.ok !== true) return;
+      infoLine.textContent = ossText(
+        'study.oss.molecule.info',
+        '分子式 {formula} · 相对分子质量 {weight}',
+        { formula: info.formula, weight: String(info.molecular_weight) },
+      );
+      infoLine.hidden = false;
+    } catch { /* 可选依赖：不可用时保持隐藏 */ }
+  }
 
   (async () => {
     try {
@@ -225,6 +243,7 @@ export function createMoleculeView(container, rawDefinition, options = {}) {
       if (loading) loading.remove();
       try { viewer.resize(); viewer.render(); } catch { /* 尺寸异常只影响首帧 */ }
       resolveReady({ ok: true });
+      loadChemInfo();
     } catch (error) {
       if (!destroyed) fail(error?.message || ossText(
         'study.oss.molecule.unavailable',

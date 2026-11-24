@@ -159,6 +159,12 @@
   max-width: 100%;
 }
 
+.oss-molecule-info {
+  margin: 6px 2px 0;
+  font-size: 0.8125rem;
+  color: var(--muted, #5b6b7a);
+}
+
 .oss-molecule-loading,
 .oss-molecule-unavailable {
   padding: 18px;

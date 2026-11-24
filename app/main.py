@@ -29,6 +29,8 @@ from . import demo_library
 from . import handout, topic_report
 # 批次六（§7）：ECDICT 高考词汇本与四档词汇复习。
 from . import vocab
+# §9 进阶项：RDKit 可选化学信息（未安装时接口 503，不影响既有配平/渲染）。
+from . import chem_info
 
 WEB_DIR = Path(__file__).resolve().parents[1] / "web"
 health_log = logging.getLogger("zhixu.health")
@@ -765,6 +767,8 @@ app.include_router(handout.router)
 app.include_router(chem_balance.router)
 # 批次六（§7）：词汇本（ECDICT 种子 + 四档复习卡）。
 app.include_router(vocab.router)
+# §9 进阶项：RDKit 分子信息（可选依赖）。
+app.include_router(chem_info.router)
 
 app.mount("/static", StaticFiles(directory=str(WEB_DIR)), name="static")
 

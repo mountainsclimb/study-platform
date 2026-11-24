@@ -5354,6 +5354,7 @@
   "study.oss.molecule.unavailable": "The browser cannot render the molecule model (WebGL required).",
   "study.oss.molecule.close": "Close",
   "study.oss.molecule.tooLarge": "Molecule has more than {n} atoms; 3D preview is not supported yet.",
+  "study.oss.molecule.info": "Formula {formula} · Relative molecular mass {weight}",
   "physicsPage.deterministicDemos": "Deterministic demos",
   "study.oss.kind.sandbox": "Physics sandbox",
   "study.oss.sandbox.tab": "Free sandbox",

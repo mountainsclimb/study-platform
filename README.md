@@ -271,6 +271,12 @@ Copyright (c) 2025 Linwei**）。`scripts/build_vocab.py` 只抽取高考词优�
       词汇总数与今日到期；`GET /api/insight/home` 新增加法键 `vocab`。
     - 导出：`GET /api/vocab/export` 生成 Anki 牌组（正面单词/音标，背面释义/标签）。
 
+18. **进阶项 · RDKit 化学信息（可选依赖，方案 §9）**：
+    - `requirements-chem.txt`（rdkit 2025.3.5，BSD-3-Clause）；**仅服务端可选依赖**，
+      未安装时接口 503，不影响既有配平与分子渲染。
+    - `POST /api/chem/info`：SMILES 校验、规范 SMILES、分子式、相对分子质量；
+      分子查看器在可用时展示「分子式 · 相对分子质量」，不可用时静默隐藏。
+
 ## 验证
 
 ```powershell
@@ -352,6 +358,9 @@ python -m pytest tests/test_insight_kp_graph.py tests/test_oss_vendor_assets.py 
 # 词汇模块（ECDICT 种子 + 四档复习卡 + Anki 牌组）
 python -m pytest tests/test_vocab_seed.py tests/test_vocab.py -v
 python scripts/build_vocab.py --check   # 需本地 ECDICT 缓存；手动运行
+# RDKit 分子信息（可选依赖；未安装时接口 503、测试自动跳过功能断言）
+pip install -r requirements-chem.txt
+python -m pytest tests/test_chem_info.py -v
 # markmap 交互脑图构建产物的字节级复现校验（需网络，手动运行）
 node scripts/build_markmap_bundle.mjs --check
 # 课堂全链路验收（本机假模型，无需真实 Key；详见 scripts/integration/README.md）

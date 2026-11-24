@@ -1,0 +1,12 @@
+# 可选依赖：RDKit 化学信息学（方案 §9 进阶项）。
+# 仅服务端使用：/api/chem/info 提供 SMILES 校验、规范 SMILES、分子式与相对分子质量；
+# 未安装时接口返回 503，分子查看器仍走既有 OpenChemLib/3Dmol 链路。
+#
+# 版本与约束：
+# * rdkit 2025.3.5（BSD-3-Clause）wheel 约 23.5MB。
+# * numpy/Pillow 只圈定主工程可接受的范围：已在 numpy 1.26.4 + Pillow 12.2.0 与
+#   numpy 2.4.6 + Pillow 13.0.0 下实测 SMILES/分子式/分子量；不强制降级主环境。
+# * 不进生产镜像；需要时安装：pip install -r requirements-chem.txt
+rdkit==2025.3.5
+numpy>=1.26.4,<3
+Pillow>=12.2.0,<13

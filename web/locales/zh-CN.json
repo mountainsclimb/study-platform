@@ -5354,6 +5354,7 @@
   "study.oss.molecule.unavailable": "当前浏览器无法渲染分子模型（需要 WebGL）。",
   "study.oss.molecule.close": "关闭",
   "study.oss.molecule.tooLarge": "分子原子数超过 {n}，暂不支持 3D 预览。",
+  "study.oss.molecule.info": "分子式 {formula} · 相对分子质量 {weight}",
   "physicsPage.deterministicDemos": "确定性演示",
   "study.oss.kind.sandbox": "物理沙盒",
   "study.oss.sandbox.tab": "自由沙盒",
