@@ -5530,5 +5530,7 @@
   "study.chem.balance.forwardResult": "已按正向反应输出 ->",
   "study.chem.balance.empty": "请输入化学方程式",
   "study.chem.balance.failed": "无法配平该方程式",
-  "study.chem.balance.requestFailed": "配平请求失败：{reason}"
+  "study.chem.balance.requestFailed": "配平请求失败：{reason}",
+  "study.tools.explore": "探究工具",
+  "study.tools.recommended": "推荐"
 }

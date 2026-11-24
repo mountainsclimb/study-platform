@@ -53,3 +53,14 @@ def test_chem_balance_entry_is_wired():
     component = _read(ROOT / "web" / "js" / "components" / "chemBalancer.js")
     assert "api('/chem/balance'" in component
     assert "normalizeArrow" in component
+
+
+def test_explore_tools_menu_is_wired():
+    question = _read(ROOT / "web" / "js" / "pages" / "question.js")
+    assert "createExploreToolsMenu" in question
+    assert "subject: q.subject" in question
+    component = _read(ROOT / "web" / "js" / "components" / "exploreTools.js")
+    assert "export function createExploreToolsMenu" in component
+    assert "export function recommendedTool" in component
+    assert "SUBJECT_ALIASES" in component
+    assert "data-explore-tools" in component

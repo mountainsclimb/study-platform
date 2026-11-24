@@ -623,3 +623,66 @@
 .cls-editor-latex-field textarea {
   width: 100%;
 }
+
+/* 题目页探究工具聚合入口（exploreTools.js） */
+.explore-tools {
+  position: relative;
+  display: inline-block;
+}
+
+.explore-tools-summary {
+  list-style: none;
+  cursor: pointer;
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+}
+
+.explore-tools-summary::-webkit-details-marker {
+  display: none;
+}
+
+.explore-tools-count {
+  opacity: 0.7;
+  font-size: 0.85em;
+}
+
+.explore-tools-menu {
+  position: absolute;
+  z-index: 40;
+  right: 0;
+  top: calc(100% + 6px);
+  min-width: 240px;
+  max-height: 60vh;
+  overflow: auto;
+  display: grid;
+  gap: 6px;
+  padding: 8px;
+  border: 1px solid var(--line);
+  border-radius: 12px;
+  background: var(--surface);
+  box-shadow: 0 12px 32px rgba(0, 0, 0, 0.16);
+}
+
+.explore-tools-item {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+}
+
+.explore-tools-item .button {
+  width: 100%;
+  justify-content: flex-start;
+}
+
+@media (max-width: 640px) {
+  .explore-tools-menu {
+    position: fixed;
+    left: 12px;
+    right: 12px;
+    top: auto;
+    bottom: 12px;
+    max-height: 70vh;
+  }
+}

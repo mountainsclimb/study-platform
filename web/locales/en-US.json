@@ -5530,5 +5530,7 @@
   "study.chem.balance.forwardResult": "Output uses -> for a forward reaction",
   "study.chem.balance.empty": "Enter a chemical equation",
   "study.chem.balance.failed": "This equation could not be balanced",
-  "study.chem.balance.requestFailed": "Balance request failed: {reason}"
+  "study.chem.balance.requestFailed": "Balance request failed: {reason}",
+  "study.tools.explore": "Explore tools",
+  "study.tools.recommended": "Recommended"
 }

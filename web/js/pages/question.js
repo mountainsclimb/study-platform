@@ -13,6 +13,7 @@ import { renderAiResult } from '../components/aiResultCard.js';
 import { openKpDetailDialog } from '../components/kpDetailModal.js';
 import { openPresentationMode } from '../components/presentationMode.js';
 import { formulaEditorButton } from '../components/formulaEditor.js';
+import { createExploreToolsMenu } from '../components/exploreTools.js';
 import { t } from '../core/i18n.js';
 import { markdown } from '../core/markdown.js';
 
@@ -1750,21 +1751,21 @@ export function renderQuestion(
       : null,
     // 方案界面落点：题目详情提供「查看原理」；仅六科显示（见 principleEntryButton）。
     principleEntryButton(q),
-    // M5 机械与工厂：物理/机械/技术题提供「机械演示」（懒加载 mechDemo.js，失败仅 toast）。
-    mechDemoEntryButton(q),
-    // 批次五（§6.3）：物理题「自由沙盒」（懒加载 Matter.js，探索模式）。
-    sandboxEntryButton(q),
-    // 批次五（§6.2）：化学题「分子模型」（懒加载 3Dmol，失败仅 toast）。
-    moleculeEntryButton(q),
-    // 阶段 3-3：化学题「配平方程式」（服务端线性规划，可逆箭头保留）。
-    chemBalanceEntryButton(q),
-    // 批次五（§6.1）：数学题「几何演示」（懒加载 JSXGraph，失败仅 toast）。
-    geometryEntryButton(q),
-    // 批次五（§6.5）：历史/政治题「时间轴」（懒加载 vis-timeline，失败仅 toast）。
-    timelineEntryButton(q),
-    // M3 数学互动：函数图像（数学/公式题）、画解题思路（所有题）、按步骤提示（所有题）。
-    functionGraphEntryButton(q),
-    sketchBoardEntryButton(q),
+    // 阶段 3-1：探究工具聚合入口（推荐项置顶，其余收进折叠菜单）。
+    createExploreToolsMenu({
+      subject: q.subject,
+      tags: q.knowledge_tags || [],
+      entries: [
+        { id: 'mech', node: mechDemoEntryButton(q) },
+        { id: 'sandbox', node: sandboxEntryButton(q) },
+        { id: 'molecule', node: moleculeEntryButton(q) },
+        { id: 'chemBalance', node: chemBalanceEntryButton(q) },
+        { id: 'geometry', node: geometryEntryButton(q) },
+        { id: 'timeline', node: timelineEntryButton(q) },
+        { id: 'functionGraph', node: functionGraphEntryButton(q) },
+        { id: 'sketch', node: sketchBoardEntryButton(q) },
+      ],
+    }),
     guidedHintsEntryButton(q),
     button(t('question.presentationMode'), () => {
       openPresentationMode({ qid: q.qid, question: q })
