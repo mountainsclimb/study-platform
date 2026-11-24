@@ -510,3 +510,167 @@ html[data-theme="dark"] .oss-kp-graph {
   margin: 10px 0 6px;
   word-break: break-word;
 }
+
+/* 通用朗读与跟读检查（readAloud.js / shadowingCheck.js，阶段 4） */
+.read-aloud {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  flex-wrap: wrap;
+}
+
+.read-aloud-button {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  min-height: 36px;
+}
+
+.read-aloud-button.is-playing {
+  border-color: var(--accent);
+  color: var(--accent);
+}
+
+.read-aloud-button.is-loading {
+  opacity: 0.75;
+}
+
+.read-aloud-status {
+  font-size: 0.82rem;
+  color: var(--muted);
+}
+
+.read-aloud-status[data-tone="error"] {
+  color: var(--danger, #b42318);
+}
+
+.read-aloud-status[data-tone="info"] {
+  color: var(--accent);
+}
+
+.speech-shadow-details {
+  margin: 14px 0;
+  border: 1px solid var(--line);
+  border-radius: 12px;
+  padding: 10px 14px;
+  background: var(--surface);
+}
+
+.speech-shadow-details > summary {
+  cursor: pointer;
+  font-weight: 600;
+  min-height: 32px;
+  display: flex;
+  align-items: center;
+}
+
+.speech-shadow {
+  display: grid;
+  gap: 8px;
+  margin: 10px 0;
+  padding: 12px;
+  border: 1px solid var(--line);
+  border-radius: 12px;
+  background: var(--surface-soft, var(--surface));
+}
+
+.speech-shadow.is-compact {
+  padding: 10px;
+  margin: 8px 0 0;
+}
+
+.speech-shadow-head {
+  display: flex;
+  justify-content: space-between;
+  align-items: flex-start;
+  gap: 10px;
+  flex-wrap: wrap;
+}
+
+.speech-shadow-head h3 {
+  margin: 0 0 2px;
+  font-size: 0.98rem;
+}
+
+.speech-shadow-head .help { margin: 0; }
+
+.speech-shadow-expected {
+  margin: 0;
+  font-size: 0.9rem;
+  color: var(--muted);
+  word-break: break-word;
+}
+
+.speech-shadow-controls {
+  display: flex;
+  gap: 8px;
+  flex-wrap: wrap;
+}
+
+.speech-shadow-status[data-tone="error"] {
+  color: var(--danger, #b42318);
+}
+
+.speech-shadow-status[data-tone="ready"] {
+  color: var(--accent);
+}
+
+.speech-shadow-result {
+  display: grid;
+  gap: 6px;
+}
+
+.speech-shadow-verdict {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  flex-wrap: wrap;
+}
+
+.speech-shadow-verdict.is-similar { color: var(--accent); }
+.speech-shadow-verdict.is-different { color: #b54708; }
+
+.speech-shadow-transcript {
+  margin: 0;
+  font-size: 0.9rem;
+  word-break: break-word;
+}
+
+.vb-word .read-aloud,
+.vb-word .read-aloud-button {
+  vertical-align: middle;
+  margin-left: 6px;
+}
+
+.vb-read-word .read-aloud-label {
+  display: none;
+}
+
+.vb-read-word {
+  min-height: 28px;
+  padding: 2px 8px;
+}
+
+.vb-shadow-mount:empty {
+  display: none;
+}
+
+/* 跟读面板里的朗读按钮不重复显示文字标签，避免移动端拥挤 */
+.speech-shadow.is-compact .speech-shadow-read .read-aloud-label {
+  display: none;
+}
+
+@media (max-width: 640px) {
+  .speech-shadow-head {
+    flex-direction: column;
+  }
+
+  .read-aloud-button {
+    width: 100%;
+    justify-content: center;
+  }
+
+  .vb-card .read-aloud {
+    width: auto;
+  }
+}

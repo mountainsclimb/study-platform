@@ -1,7 +1,7 @@
 {
   "version": 1,
   "generated_from": "app.main:app",
-  "count": 398,
+  "count": 402,
   "routes": [
     {
       "method": "GET",
@@ -1430,6 +1430,22 @@
     {
       "method": "GET",
       "path": "/api/reviews"
+    },
+    {
+      "method": "GET",
+      "path": "/api/speech/info"
+    },
+    {
+      "method": "POST",
+      "path": "/api/speech/shadowing/check"
+    },
+    {
+      "method": "POST",
+      "path": "/api/speech/transcribe"
+    },
+    {
+      "method": "POST",
+      "path": "/api/speech/tts"
     },
     {
       "method": "GET",

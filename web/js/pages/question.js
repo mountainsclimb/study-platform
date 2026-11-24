@@ -14,6 +14,8 @@ import { openKpDetailDialog } from '../components/kpDetailModal.js';
 import { openPresentationMode } from '../components/presentationMode.js';
 import { formulaEditorButton } from '../components/formulaEditor.js';
 import { createExploreToolsMenu } from '../components/exploreTools.js';
+import { createReadAloudButton, stopAllReadAloud } from '../components/readAloud.js';
+import { createShadowingPanel, stopAllShadowing } from '../components/shadowingCheck.js';
 import { t } from '../core/i18n.js';
 import { markdown } from '../core/markdown.js';
 
@@ -442,6 +444,26 @@ function questionStemNode(q, keyword, context) {
     if (node.childNodes.length) return node;
   }
   return questionText(q.stem_plain || q.stem, q.images || [], q.subject, keyword, context);
+}
+
+/** 朗读/跟读用纯文本：共用材料 + 题干 + 选项；不含图片编号与答案。 */
+function questionSpeechText(q) {
+  const parts = [];
+  const blockText = blocks => blockList(blocks)
+    .map(block => String(block?.text || '').trim())
+    .filter(Boolean)
+    .join('。');
+  const shared = blockText(q.shared_blocks) || blockText(q.group?.shared_blocks);
+  if (shared) parts.push(shared);
+  const material = String(q.group?.material_text || '').trim();
+  if (material) parts.push(material);
+  const stem = blockText(q.stem_blocks) || String(q.stem_plain || q.stem || '').trim();
+  if (stem) parts.push(stem);
+  for (const item of q.options || []) {
+    const text = String(item?.text || '').trim();
+    if (text) parts.push(`${String(item.label || '').toUpperCase()} ${text}`);
+  }
+  return parts.join('。');
 }
 
 let activeObjectUrl = null;
@@ -1659,6 +1681,9 @@ export function openGuidedHintsPanel(options = {}) {
 
 export async function openQuestion(qid, container = $('#question-detail'), { scrollOnMobile = false, onSubmitted = null } = {}) {
   if (!container) return;
+  // 换题/提交后重渲染时停止上一题的朗读与录音，避免音频在被移除的页面继续播放。
+  stopAllReadAloud();
+  stopAllShadowing();
   revokePreviewUrl();
   const changed = state.selectedQid !== qid;
   state.selectedQid = qid;
@@ -1746,6 +1771,11 @@ export function renderQuestion(
     isOfficial ? officialReviewBadge(q) : null,
     !isApp && !isOfficial ? badge(t('question.source.bank'), '') : null,
     badge(q.subject, 'teal'), badge(typeLabel(q, state.catalog)), difficultyBadge(q),
+    // 阶段 4-2：题目题干/选项朗读；解析面板展开后另有「朗读解析」。
+    createReadAloudButton({
+      getText: () => questionSpeechText(q),
+      label: t('speech.readQuestion'),
+    }).node,
     q.subject === '物理'
       ? button(t('nav.physics'), () => go('physics'), 'ghost small', 'atom')
       : null,
@@ -2086,6 +2116,26 @@ export function renderQuestion(
   const revealMount = el('section', { class: 'answer-section' });
   container.append(revealMount);
 
+  // ---- 阶段 4-3：跟读检查（按需挂载，收起时销毁录音/播放）
+  const shadowMount = el('div', { class: 'speech-shadow-mount' });
+  const shadowDetails = el('details', { class: 'speech-shadow-details' },
+    el('summary', {}, t('speech.shadow.entry')),
+    shadowMount);
+  let shadowPanel = null;
+  shadowDetails.addEventListener('toggle', () => {
+    if (!shadowDetails.open) {
+      if (shadowPanel) { try { shadowPanel.destroy(); } catch { /* 忽略 */ } shadowPanel = null; }
+      return;
+    }
+    if (shadowPanel) return;
+    shadowPanel = createShadowingPanel({
+      getExpected: () => questionSpeechText(q),
+      compact: true,
+    });
+    shadowMount.append(shadowPanel.element);
+  });
+  container.append(shadowDetails);
+
   // ---- 错因标签
   if (latest?.result === 'incorrect' || q.wrong_info?.in_wrongbook) {
     const presets = state.catalog?.error_tag_presets || ['概念不清', '审题失误', '计算错误', '方法不会', '记忆遗漏', '粗心'];
@@ -2394,11 +2444,21 @@ async function revealPanel(kind, container, q, trigger = null) {
       trigger.focus();
     }
   }, 'ghost small');
+  // 阶段 4-2：答案/解析展开后可朗读；只读已揭晓的文本，不触发额外请求。
+  const revealedSpeech = blocks.length
+    ? blocks.map(block => String(block?.text || '').trim()).filter(Boolean).join('。')
+    : String(text || '').trim();
   const panel = el('div', { class: 'answer-box' + (isAnswer ? '' : ' solution-box'), 'data-panel': kind },
     el('h3', {}, isAnswer ? t('question.originalReferenceAnswer') : t('question.originalSolution')),
     blocks.length
       ? el('div', { class: 'question-text question-blocks' }, questionBlocks(blocks, q.subject, '', assetContext))
       : questionText(text || (isAnswer ? t('question.theOriginalPaperProvidesNoDisplayableAnswer') : t('question.theOriginalPaperHasNoSolution')), q.images || [], q.subject, '', assetContext),
+    revealedSpeech
+      ? createReadAloudButton({
+        getText: () => revealedSpeech,
+        label: isAnswer ? t('speech.readAnswer') : t('speech.readSolution'),
+      }).node
+      : null,
     closeButton);
   box.append(panel);
   panel.scrollIntoView({ behavior: 'smooth', block: 'nearest' });

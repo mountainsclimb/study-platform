@@ -14,6 +14,7 @@ import { renderMindmapWidget, renderInteractiveMindmap, markdownToMindmapTree } 
 import { renderTopicReportsPanel, renderHandoutsPanel, m6t } from '../components/learningDocs.js';
 import { openFormulaEditor, insertFormulaAtCursor } from '../components/formulaEditor.js';
 import { createDemoCreateMenu } from '../components/demoCreateMenu.js';
+import { createReadAloudButton } from '../components/readAloud.js';
 import { t } from '../core/i18n.js';
 
 /** 笔记内容框旁的「插入公式」：Markdown 正文以 `$latex$` 插入。 */
@@ -1926,6 +1927,11 @@ function renderNoteDetail(note, container, reload, onPatched = null) {
 
   const actions = el('div', { class: 'row pg-note-actions' });
   if (own) actions.append(button(t('settings.edit'), () => editNote(note, container, reload, onPatched), 'secondary small', 'edit'));
+  // 阶段 4-2：笔记标题 + 正文朗读（Markdown/公式标记在组件里去噪）。
+  actions.append(createReadAloudButton({
+    getText: () => `${note.title || ''}。${note.content || ''}`,
+    label: t('speech.readNote'),
+  }).node);
   actions.append(
     button(t('notes.mindMapView'), () => {
       if (mindmapMount.childNodes.length) { closeMindmap(); return; }

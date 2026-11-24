@@ -124,6 +124,17 @@ def tts_candidates(user_id: int) -> list[dict]:
     return candidates
 
 
+def select_candidate(user_id: int, provider_id: int | None = None) -> dict | None:
+    """通用朗读/课堂共用的连接选择：指定连接必须存在，否则取第一个。"""
+    candidates = tts_candidates(user_id)
+    if provider_id:
+        for item in candidates:
+            if int(item["provider"]["id"]) == int(provider_id):
+                return item
+        return None
+    return candidates[0] if candidates else None
+
+
 def tts_provider_info(user_id: int) -> dict | None:
     """``GET /meta`` 用：当前用户可用的 TTS 连接摘要；没有则 None。"""
     candidates = tts_candidates(user_id)
@@ -413,6 +424,13 @@ async def list_voices(user_id: int, *, provider_id: int | None = None) -> dict:
 
 
 
+async def synthesize_provider(provider: dict, model: str, text: str, *,
+                              voice: str | None = None,
+                              speed: float | None = None) -> tuple[bytes, str]:
+    """公开的厂商合成入口（通用朗读复用；课堂内部仍走 :func:`_request_speech`）。"""
+    return await _request_speech(provider, model, text, voice=voice, speed=speed)
+
+
 async def _request_speech(provider: dict, model: str, text: str, *, voice: str | None = None,
                           speed: float | None = None) -> tuple[bytes, str]:
     """合成语音；小米 MiMo 走 chat 复合模态，其余厂商走 OpenAI 兼容 ``/audio/speech``。"""
@@ -506,13 +524,20 @@ def asset_public(row) -> dict:
 
 async def _local_synthesize(*, user_id: int, course_id: int, text: str,
                             voice: str | None, speed: float | None) -> dict:
-    """零厂商配置时的本地合成；失败落回浏览器朗读并保留中文原因。"""
+    """零厂商配置时的本地合成；失败落回浏览器朗读并保留中文原因。
+
+    合成成功先经过阶段 4-4 的压缩（MP3/Opus，失败回退 WAV），再按内容寻址落
+    ``cls_assets``；缓存键由 sha256 天然包含格式与音色。
+    """
+    from ..ai import audio_compress
+
     effective_voice = speech_local.normalize_voice(voice)
     try:
         audio, mime = await asyncio.wait_for(
             asyncio.to_thread(speech_local.synthesize, text, effective_voice, speed),
             timeout=speech_local.SYNTH_TIMEOUT_SECONDS,
         )
+        audio, mime, audio_format = audio_compress.compress_speech(audio, mime)
         asset = _save_audio_asset(user_id, course_id, audio, mime, voice=effective_voice)
     except Exception as exc:  # 本地失败与厂商失败同口径：回退浏览器，不 500
         log.warning("Local classroom TTS failed, falling back to browser: %s", type(exc).__name__)
@@ -522,6 +547,7 @@ async def _local_synthesize(*, user_id: int, course_id: int, text: str,
         "provider": "local",
         "model": speech_local.model_label(),
         "voice": effective_voice,
+        "format": audio_format,
     }
 
 
@@ -583,6 +609,6 @@ __all__ = [
     "DEFAULT_SPEED", "DEFAULT_VOICE", "MAX_TTS_CHARS", "MINIMAX_STATIC_VOICES",
     "MIMO_VOICE_LABELS", "OPENAI_STATIC_VOICES", "TTS_FOLDER", "TTS_KIND",
     "VOICES_CACHE_TTL_SECONDS", "asset_public", "asset_url", "clear_voice_cache",
-    "default_voice_for", "list_voices", "normalize_voice_for", "synthesize",
-    "tts_candidates", "tts_provider_info",
+    "default_voice_for", "list_voices", "normalize_voice_for", "select_candidate",
+    "synthesize", "synthesize_provider", "tts_candidates", "tts_provider_info",
 ]

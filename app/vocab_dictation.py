@@ -8,19 +8,21 @@
   目标单词做规范化编辑距离评分，返回 `correct/score/transcript/expected`。
 
 全部依赖缺失/未开启时返回 `available:false` 或 503，不产生占位音频/假分数；
-课堂/主站 CSP 不变（音频走同源接口，前端只播放 data: audio/wav）。
+课堂/主站 CSP 不变（音频走同源接口，前端只播放同源 data URI）。
+合成与评分复用通用语音层：`app.ai.audio_compress` 压缩（失败回退 WAV）、
+`app.ai.speech_score` 编辑距离评分，与跟读检查保持同一套文本口径。
 """
 from __future__ import annotations
 
 import asyncio
 import base64
 from functools import lru_cache
-import re
 
 from fastapi import APIRouter, Depends, File, Form, HTTPException, UploadFile
 
 from . import db
-from .ai import speech_local
+from .ai import audio_compress, speech_local
+from .ai.speech_score import levenshtein, normalize_spelling, score_attempt
 from .auth import current_user
 from . import vocab
 
@@ -30,75 +32,13 @@ MAX_ASR_BYTES = 25 * 1024 * 1024
 MAX_EXCLUDE_IDS = 200
 MAX_TRANSCRIPT_CHARS = 500
 _TTS_CACHE_SIZE = 256
-_WORD_NORMALIZE_RE = re.compile(r"[^a-z0-9]+")
-
-
-def normalize_spelling(value: str) -> str:
-    """小写并去掉空格/连字符/标点，用于听写比对（ice cream ≈ icecream）。"""
-    text = str(value or "").strip().lower()
-    text = text.replace("’", "'").replace("‘", "'")
-    return _WORD_NORMALIZE_RE.sub("", text)
-
-
-def levenshtein(left: str, right: str) -> int:
-    """标准编辑距离（插入/删除/替换各计 1）。"""
-    if left == right:
-        return 0
-    if not left:
-        return len(right)
-    if not right:
-        return len(left)
-    previous = list(range(len(right) + 1))
-    for i, char_left in enumerate(left, start=1):
-        current = [i]
-        for j, char_right in enumerate(right, start=1):
-            cost = 0 if char_left == char_right else 1
-            current.append(min(
-                previous[j] + 1,
-                current[j - 1] + 1,
-                previous[j - 1] + cost,
-            ))
-        previous = current
-    return previous[-1]
-
-
-def score_attempt(expected: str, transcript: str) -> dict:
-    """规范化后按编辑距离评分；correct 以 80 分为线，完全一致必对。
-
-    返回 ``{correct, score, distance, expected_normalized, transcript_normalized}``；
-    空转写记 0 分。评分只反映听写转写与目标拼写的接近程度，不代表发音质量。
-    """
-    expected_norm = normalize_spelling(expected)
-    transcript_norm = normalize_spelling(transcript)
-    if not expected_norm:
-        return {
-            "correct": False, "score": 0, "distance": 0,
-            "expected_normalized": "", "transcript_normalized": transcript_norm,
-            "reason": "目标单词为空",
-        }
-    if not transcript_norm:
-        return {
-            "correct": False, "score": 0, "distance": len(expected_norm),
-            "expected_normalized": expected_norm, "transcript_normalized": "",
-            "reason": "没有识别到文本",
-        }
-    distance = levenshtein(expected_norm, transcript_norm)
-    longest = max(len(expected_norm), len(transcript_norm)) or 1
-    score = max(0, min(100, round(100 * (1 - distance / longest))))
-    return {
-        "correct": distance == 0 or (score >= 80 and len(expected_norm) >= 4),
-        "score": score,
-        "distance": distance,
-        "expected_normalized": expected_norm,
-        "transcript_normalized": transcript_norm,
-        "reason": "",
-    }
 
 
 @lru_cache(maxsize=_TTS_CACHE_SIZE)
-def _synthesize_word(word: str) -> bytes:
-    wav, _mime = speech_local.synthesize(word, speed=1.0)
-    return wav
+def _synthesize_word(word: str) -> tuple[bytes, str]:
+    """合成单词发音并压缩；返回 ``(音频, MIME)``，压缩失败时仍是 WAV。"""
+    audio, mime = speech_local.synthesize(word, speed=1.0)
+    return audio_compress.compress_speech(audio, mime)[:2]
 
 
 def _parse_exclude(raw: str) -> set[int]:
@@ -180,7 +120,7 @@ async def next_dictation_item(
         }
     word = str(row["word"] or "")
     try:
-        wav = await asyncio.wait_for(
+        audio_bytes, audio_mime = await asyncio.wait_for(
             asyncio.to_thread(_synthesize_word, word),
             timeout=speech_local.SYNTH_TIMEOUT_SECONDS,
         )
@@ -188,13 +128,16 @@ async def next_dictation_item(
         raise HTTPException(503, str(exc)) from exc
     except Exception as exc:  # noqa: BLE001 - 本地合成异常统一中文降级
         raise HTTPException(502, "本地语音合成失败（%s）" % type(exc).__name__) from exc
-    audio = "data:audio/wav;base64," + base64.b64encode(wav).decode("ascii")
+    audio = "data:%s;base64,%s" % (
+        audio_mime or "audio/wav", base64.b64encode(audio_bytes).decode("ascii"),
+    )
     return {
         "available": True,
         "done": False,
         "card_id": int(row["id"]),
         "audio": audio,
-        "audio_bytes": len(wav),
+        "audio_mime": audio_mime or "audio/wav",
+        "audio_bytes": len(audio_bytes),
         "meaning": row["translation"] or "",
         "phonetic_hint": row["phonetic"] or "",
         "reps": int(row["reps"] or 0),

@@ -35,6 +35,8 @@ from . import chem_info
 from . import vocab_dictation
 # 阶段 2：知识点本地向量打标（人工确认关联不覆盖，低置信进复核队列）。
 from . import kp_tagging
+# 阶段 4：通用朗读 / 语音转写 / 跟读检查（课堂旧接口保持兼容）。
+from . import speech_api
 
 WEB_DIR = Path(__file__).resolve().parents[1] / "web"
 health_log = logging.getLogger("zhixu.health")
@@ -791,6 +793,8 @@ app.include_router(chem_info.router)
 app.include_router(vocab_dictation.router)
 # 阶段 2：知识点本地向量打标（管理员触发；人工确认关联不覆盖）。
 app.include_router(kp_tagging.router)
+# 阶段 4：通用朗读 / 语音转写 / 跟读检查（非课堂页面使用；课堂旧接口保留）。
+app.include_router(speech_api.router)
 
 app.mount("/static", StaticFiles(directory=str(WEB_DIR)), name="static")
 

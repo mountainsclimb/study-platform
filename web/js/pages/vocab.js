@@ -19,6 +19,8 @@ import {
 import { t } from '../core/i18n.js';
 import { state } from '../core/state.js';
 import { renderReviewRating, isVersionConflict } from '../components/reviewRating.js';
+import { createReadAloudButton } from '../components/readAloud.js';
+import { createShadowingPanel } from '../components/shadowingCheck.js';
 
 const TAGS = [
   { value: '', key: 'vocab.tagAll' },
@@ -81,16 +83,36 @@ function dueCard(card, onRated) {
       ratingHolder.append(rating.element);
     }
   }, 'soft small');
+  // 阶段 4-2/4-3：单词朗读与跟读检查（跟读面板按需挂载，收起时销毁录音）。
+  const shadowMount = el('div', { class: 'vb-shadow-mount' });
+  let shadowPanel = null;
+  const shadowToggle = button(t('speech.shadow.entry'), () => {
+    if (shadowPanel) {
+      try { shadowPanel.destroy(); } catch { /* 忽略 */ }
+      shadowPanel = null;
+      shadowMount.replaceChildren();
+      return;
+    }
+    shadowPanel = createShadowingPanel({ getExpected: () => card.word, compact: true });
+    shadowMount.append(shadowPanel.element);
+  }, 'ghost small', 'message');
   const article = el('article', { class: 'vb-card', 'data-word': card.word },
     el('div', { class: 'vb-card-head' },
       el('div', {},
-        el('h3', { class: 'vb-word' }, card.word),
+        el('h3', { class: 'vb-word' }, card.word,
+          createReadAloudButton({
+            text: card.word,
+            label: t('speech.readWord'),
+            className: 'vb-read-word',
+          }).node),
         el('p', { class: 'vb-phonetic' }, card.phonetic ? `[${card.phonetic}]` : '')),
       el('div', { class: 'vb-card-meta' },
         badge(card.state === 'new' ? t('vocab.stateNew') : t('vocab.stateReview'), ''),
         el('span', { class: 'help' }, t('vocab.reps', { count: number(card.reps || 0) })))),
     reveal,
     translation,
+    shadowToggle,
+    shadowMount,
     ratingHolder);
   return article;
 }
@@ -110,7 +132,12 @@ function browseRow(item, onAdd) {
   return el('article', { class: 'vb-row' },
     el('div', { class: 'vb-row-main' },
       el('div', {},
-        el('strong', { class: 'vb-word' }, item.word),
+        el('strong', { class: 'vb-word' }, item.word,
+          createReadAloudButton({
+            text: item.word,
+            label: t('speech.readWord'),
+            className: 'vb-read-word',
+          }).node),
         el('span', { class: 'vb-phonetic' }, item.phonetic ? ` [${item.phonetic}]` : '')),
       el('p', { class: 'vb-row-translation' }, item.translation || '')),
     tagBadges(item),
