@@ -278,6 +278,13 @@ Copyright (c) 2025 Linwei**）。`scripts/build_vocab.py` 只抽取高考词优�
     - `POST /api/chem/info`：SMILES 校验、规范 SMILES、分子式、相对分子质量；
       分子查看器在可用时展示「分子式 · 相对分子质量」，不可用时静默隐藏。
 
+19. **进阶项 · Pyodide Python 实验台（独立策略专用页，方案 §9）**：
+    - `web/vendor/pyodide/`：Pyodide 0.28.0 核心约 **11.9MB**（MPL-2.0，内置 CPython
+      为 PSF），同源分发、按需加载。
+    - `GET /lab/python`（登录）：编辑器 + 输出 + 运行；该路由单独下发
+      `script-src 'self' 'wasm-unsafe-eval'` 的 CSP，**主站与课堂交互沙箱不放宽**。
+    - 首次运行需加载约 12MB；加载失败/超时有中文提示，输出一律按纯文本显示。
+
 ## 验证
 
 ```powershell
@@ -362,6 +369,8 @@ python scripts/build_vocab.py --check   # 需本地 ECDICT 缓存；手动运行
 # RDKit 分子信息（可选依赖；未安装时接口 503、测试自动跳过功能断言）
 pip install -r requirements-chem.txt
 python -m pytest tests/test_chem_info.py -v
+# Pyodide Python 实验台（独立 CSP 专用页；登录后访问 /lab/python）
+python -m pytest tests/test_pyodide_lab.py -v
 # markmap 交互脑图构建产物的字节级复现校验（需网络，手动运行）
 node scripts/build_markmap_bundle.mjs --check
 # 课堂全链路验收（本机假模型，无需真实 Key；详见 scripts/integration/README.md）

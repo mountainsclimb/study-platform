@@ -1,0 +1,63 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>知序 · Python 实验台</title>
+  <link rel="stylesheet" href="/static/lab/python.css">
+</head>
+<body class="lab-body">
+  <header class="lab-header">
+    <a class="lab-brand" href="/#/home">
+      <span class="lab-brand-mark" aria-hidden="true">知</span>
+      <span>知序 · Python 实验台</span>
+    </a>
+    <span class="lab-badge">Pyodide 0.28.0 · 本地 WASM</span>
+  </header>
+
+  <main class="lab-main">
+    <section class="lab-intro">
+      <p class="lab-kicker">BROWSER PYTHON</p>
+      <h1>不装环境，直接运行 Python</h1>
+      <p class="lab-sub">
+        运行时在本机浏览器内加载，代码与输出不离开页面。首次运行约需加载 12MB，
+        之后由浏览器缓存。
+      </p>
+    </section>
+
+    <section class="lab-grid" aria-label="Python 编辑器与输出">
+      <div class="lab-pane lab-editor-pane">
+        <div class="lab-toolbar">
+          <span class="lab-file">main.py</span>
+          <div class="lab-actions">
+            <button type="button" id="clear-code" class="lab-button lab-button--ghost">清空</button>
+            <button type="button" id="run-code" class="lab-button lab-button--run">运行</button>
+          </div>
+        </div>
+        <label class="lab-sr-only" for="code">Python 代码</label>
+        <textarea id="code" class="lab-code" spellcheck="false" autocomplete="off">print("你好，知序")
+
+# 试着改一改
+for i in range(1, 6):
+    print(i, i * i)
+
+sum(range(1, 101))</textarea>
+      </div>
+
+      <div class="lab-pane lab-output-pane">
+        <div class="lab-toolbar">
+          <span class="lab-file">输出</span>
+          <button type="button" id="clear-output" class="lab-button lab-button--ghost">清空</button>
+        </div>
+        <pre id="output" class="lab-output" aria-live="polite" aria-label="运行输出"></pre>
+      </div>
+    </section>
+
+    <p id="status" class="lab-status" role="status" aria-live="polite">
+      首次运行会加载约 12MB 的 Python 运行时。
+    </p>
+  </main>
+
+  <script type="module" src="/static/lab/python.js"></script>
+</body>
+</html>

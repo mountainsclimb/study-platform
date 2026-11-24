@@ -326,6 +326,7 @@ SOFTWARE.
 | 28 | vis-timeline（历史时间轴） | `vis-timeline@8.5.6` | Apache-2.0 或 MIT（按 MIT 使用） | `web/vendor/vis-timeline/`（版本、大小与 SHA-256 见同目录 README） | `npm pack vis-timeline@8.5.6`，取 `dist/vis-timeline-graph2d.min.js`、`.min.css` 与两份许可；不带 esnext/types/peer/source map | 随仓库分发 |
 | 29 | sigma.js + graphology（知识图谱） | `sigma@4.0.6` + `graphology@0.26.0` | MIT / MIT | `web/vendor/graph/`（版本、大小与 SHA-256 见同目录 README） | `npm pack sigma@4.0.6`、`npm pack graphology@0.26.0`，取 `dist/sigma.min.js`、`dist/graphology.umd.min.js` 与 LICENSE.txt；不带 esnext/types/peer/source map | 随仓库分发 |
 | 30 | RDKit（化学信息学，可选） | `rdkit==2025.3.5`（`requirements-chem.txt`） | BSD-3-Clause | 运行时 site-packages，不进仓库与镜像 | `pip install -r requirements-chem.txt`；未安装时 `/api/chem/info` 返回 503 | 运行时安装（可选），不进镜像 |
+| 31 | Pyodide（浏览器内 Python） | `pyodide@0.28.0` 核心资产 | MPL-2.0（内置 CPython 为 PSF） | `web/vendor/pyodide/`（版本、大小与 SHA-256 见同目录 README） | 自 `cdn.jsdelivr.net/pyodide/v0.28.0/full/` 取核心与 `LICENSE`；不带额外包/source map | 随仓库分发（专用页 `/lab/python`） |
 
 ## 15. 素材、语料与模型权重
 
@@ -379,6 +380,7 @@ SOFTWARE.
 | 知识图谱（sigma.js） | 默认可用 | `web/vendor/graph/` 随仓库分发 | 学情页知识点共现/从属图谱，弱项红色高亮，点击直达练习；首次点击懒加载 |
 | 词汇本（ECDICT） | 默认可用 | `app/data/vocab_seed.json` 随仓库分发；`scripts/build_vocab.py` 可重建 | 8000 条高考词；四档评分复用 `study_review.schedule()`；种子缺失时模块 `available:false`，不影响其它功能；Anki 导出需 genanki |
 | RDKit 分子信息 | 可选服务 | `pip install -r requirements-chem.txt` | `/api/chem/info` 的 SMILES 校验/分子式/相对分子质量；未安装时 503，分子查看器静默隐藏信息行 |
+| Pyodide Python 实验台 | 默认可用 | `web/vendor/pyodide/` 随仓库分发；`/lab/python` 独立 CSP | 登录后使用；核心约 11.9MB 按需加载；主站/课堂交互沙箱不放宽 `wasm-unsafe-eval` |
 | fsrs-lite 复习排程 | 实验 | `STUDY_REVIEW_SCHEDULER=fsrs-lite` | 默认 `rules`；先积累复习反馈再替换 |
 | 社区解析精选 | 可选服务 | `COMMUNITY_EXPLANATIONS_ENABLED=1` | 登录用户的既有题目 AI 解析分享 |
 | PostgreSQL / Redis Worker / 对象存储 | 可选服务（生产推荐） | `DATABASE_URL`、`REDIS_URL`、`S3_*`；公网部署校验见 `scripts/check_public_config.py` | SQLite 单机开发可用 |

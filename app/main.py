@@ -111,6 +111,17 @@ DEFAULT_CSP = (
     "object-src 'none'; base-uri 'none'; frame-ancestors 'none'"
 )
 
+#: §9 进阶项：Pyodide 实验台专用 CSP。只给 WebAssembly 编译所需的
+#: ``wasm-unsafe-eval``，仍无 ``unsafe-eval``、无 Worker、无外链；
+#: 该策略只下发到 /lab/python，主站与课堂交互沙箱不放宽。
+PYODIDE_LAB_CSP = (
+    "default-src 'none'; script-src 'self' 'wasm-unsafe-eval'; "
+    "style-src 'self' 'unsafe-inline'; img-src 'self' data:; "
+    "font-src 'self' data:; connect-src 'self'; worker-src 'none'; "
+    "frame-src 'none'; object-src 'none'; base-uri 'none'; "
+    "form-action 'none'; frame-ancestors 'none'"
+)
+
 # 上游错误体/诊断信息里可能夹带密钥：统一脱敏后再返回，避免未鉴权回显。
 _SECRET_PATTERNS = (
     (re.compile(r"sk-[A-Za-z0-9_\-]{8,}"), "sk-***"),
@@ -771,6 +782,18 @@ app.include_router(vocab.router)
 app.include_router(chem_info.router)
 
 app.mount("/static", StaticFiles(directory=str(WEB_DIR)), name="static")
+
+
+@app.get("/lab/python", include_in_schema=False)
+def pyodide_lab(user=Depends(auth.current_user)):
+    """§9 进阶项：独立 CSP 的 Pyodide 专用页（登录可见，不进入主站 SPA）。"""
+    path = WEB_DIR / "lab" / "python.html"
+    if not path.is_file():
+        raise HTTPException(503, "Python 实验台页面未部署")
+    response = FileResponse(path, media_type="text/html; charset=utf-8")
+    response.headers["Content-Security-Policy"] = PYODIDE_LAB_CSP
+    response.headers["X-Frame-Options"] = "DENY"
+    return response
 
 
 @app.get("/", include_in_schema=False)
