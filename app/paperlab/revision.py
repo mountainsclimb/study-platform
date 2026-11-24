@@ -298,9 +298,37 @@ def _consolidate_candidates(
             "_kp_overlap": len(set(card.get("knowledge_tags") or []) & set(kp_names.values())),
         })
     candidates.sort(key=lambda item: (-item.get("_kp_overlap", 0), item["ref"]))
+    candidates = _apply_rerank(candidates, relevant)
     for candidate in candidates:
         candidate.pop("_kp_overlap", None)
     return candidates[:MAX_REVISION_CANDIDATES], target_kp_ids
+
+
+def _apply_rerank(candidates: list[dict], wrongs: list[dict]) -> list[dict]:
+    """错题巩固候选可选重排；未启用/失败时保持知识点重合排序。"""
+    try:
+        from ..ai import rerank as rerank_module
+
+        if not rerank_module.available() or len(candidates) < 2:
+            return candidates
+        query = " ".join(
+            str(item.get("stem_plain") or "")[:120] for item in wrongs[:5]
+        ).strip()[:512]
+        if not query:
+            return candidates
+        pool = candidates[:40]
+        texts = [str(item.get("stem_preview") or "")[:512] for item in pool]
+        scores = list(rerank_module.score_texts(query, texts) or [])
+        if len(scores) != len(pool):
+            return candidates
+        for item, score in zip(pool, scores):
+            item["rerank_score"] = round(float(score), 4)
+        pool.sort(key=lambda item: (
+            -item.get("rerank_score", 0.0), -item.get("_kp_overlap", 0), item["ref"],
+        ))
+        return pool + candidates[len(pool):]
+    except Exception:  # 重排只是增强：失败保持原排序
+        return candidates
 
 
 def _infer_subject(wrongs: list[dict], subject: str | None) -> str | None:
