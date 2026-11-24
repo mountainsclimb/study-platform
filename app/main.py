@@ -219,6 +219,7 @@ def _ready_detail_allowed(request: Request) -> bool:
 @asynccontextmanager
 async def lifespan(app):
     from . import ai, practice
+    from .ai import warmup as ai_warmup
     db.init_db()
     # WS6 / P0：公网模式启动自检（fail-closed）。本地模式不触发，开发与测试默认值不受影响。
     # 显式危险配置（任意转发来源、示例密钥、仅本地 Host、local_open AI 策略、
@@ -247,6 +248,8 @@ async def lifespan(app):
     topic_report.init_topic_reports()
     handout.init_handouts()
     vocab.init_vocab()
+    # 可选引擎在后台预热（仅在显式开启时启动），避免首个拍题/检索请求承担模型加载。
+    ai_warmup.start_background_warmup()
     dispatcher = asyncio.create_task(ai.recover_queued_jobs()) if ai.redis_url() else None
     try:
         yield

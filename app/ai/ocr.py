@@ -45,10 +45,15 @@ from __future__ import annotations
 
 import asyncio
 import base64
+from collections import OrderedDict
+from concurrent.futures import ThreadPoolExecutor
 from contextlib import closing
+import functools
+import hashlib
 from io import BytesIO
 import importlib.metadata
 import importlib.util
+import json
 import math
 import os
 from pathlib import Path
@@ -75,7 +80,9 @@ __all__ = [
     "engine_status",
     "engine_meta",
     "enrichment_status",
+    "enrich_timeout",
     "enrich_blocks",
+    "reset_enrich_cache",
     "build_blocks",
     "reset_engine",
     "recognize_image",
@@ -184,6 +191,7 @@ def reset_engine() -> None:
     with _engine_lock:
         _engine = None
         _engine_error = None
+    reset_enrich_cache()
 
 
 def _module_available() -> bool:
@@ -684,6 +692,143 @@ def _blocks_extension(lines, width: int, height: int, *, page: int = 1) -> dict:
 ENRICH_TABLE_MAX_BLOCKS = 20
 ENRICH_TABLE_MAX_AREA_RATIO = 0.85
 ENRICH_TABLE_MAX_SPAN = 30
+DEFAULT_ENRICH_TIMEOUT = 20.0
+ENRICH_WORKERS = 4
+ENRICH_ABANDON_LIMIT = 3
+ENRICH_CIRCUIT_SECONDS = 60.0
+ENRICH_CACHE_SIZE = 64
+ENRICH_CACHE_FIELDS = (
+    "latex", "latex_engine", "table_html", "row_count", "col_count",
+    "table_engine", "table_span",
+)
+
+
+class _EnrichCircuitOpen(RuntimeError):
+    """连续超时后熔断：本页跳过可选后处理，避免继续占满线程池。"""
+
+
+_enrich_executor = ThreadPoolExecutor(
+    max_workers=ENRICH_WORKERS, thread_name_prefix="ocr-enrich",
+)
+_enrich_state_lock = threading.Lock()
+_enrich_abandoned = 0
+_enrich_circuit_until = 0.0
+_enrich_cache: OrderedDict[str, dict] = OrderedDict()
+
+
+def enrich_timeout() -> float:
+    """单页公式+表格后处理总预算秒数（STUDY_ENRICH_TIMEOUT，默认 20，范围 0.1–120）。"""
+    raw = os.environ.get("STUDY_ENRICH_TIMEOUT", "").strip()
+    if not raw:
+        return DEFAULT_ENRICH_TIMEOUT
+    try:
+        value = float(raw)
+    except (TypeError, ValueError):
+        return DEFAULT_ENRICH_TIMEOUT
+    return min(120.0, max(0.1, value))
+
+
+def _enrich_circuit_state() -> tuple[bool, float]:
+    with _enrich_state_lock:
+        remaining = max(0.0, _enrich_circuit_until - time.monotonic())
+        return remaining > 0, remaining
+
+
+def _enrich_mark_abandoned() -> None:
+    global _enrich_abandoned, _enrich_circuit_until
+    with _enrich_state_lock:
+        _enrich_abandoned += 1
+        if _enrich_abandoned >= ENRICH_ABANDON_LIMIT:
+            _enrich_circuit_until = time.monotonic() + ENRICH_CIRCUIT_SECONDS
+
+
+def _enrich_release() -> None:
+    global _enrich_abandoned
+    with _enrich_state_lock:
+        _enrich_abandoned = max(0, _enrich_abandoned - 1)
+
+
+async def _enrich_call(fn, *args, timeout: float, **kwargs):
+    """在有界专用线程池中执行一次后处理；超时不再占用请求，连续超时熔断。"""
+    is_open, remaining = _enrich_circuit_state()
+    if is_open:
+        raise _EnrichCircuitOpen(f"后处理熔断中（{remaining:.0f}s 后重试）")
+    concurrent = _enrich_executor.submit(functools.partial(fn, *args, **kwargs))
+    abandoned = [False]
+
+    def _done(_future) -> None:
+        if abandoned[0]:
+            _enrich_release()
+
+    concurrent.add_done_callback(_done)
+    try:
+        return await asyncio.wait_for(
+            asyncio.wrap_future(concurrent), timeout=max(0.05, timeout)
+        )
+    except asyncio.TimeoutError:
+        abandoned[0] = True
+        _enrich_mark_abandoned()
+        if concurrent.done():  # 极端竞态：回调已跑过，补一次释放
+            _enrich_release()
+        raise
+
+
+def _enrich_cache_key(image: Image.Image, blocks: list[dict], page: int) -> str:
+    digest = hashlib.sha256()
+    digest.update(f"{page}|{image.size}|{image.mode}".encode())
+    try:
+        digest.update(image.tobytes())
+    except Exception:
+        pass
+    for block in blocks:
+        digest.update(str(block.get("id") or "").encode())
+        digest.update(str(block.get("kind") or "").encode())
+        digest.update(str(block.get("text") or "").encode("utf-8", "replace"))
+        digest.update(
+            json.dumps(block.get("bbox") or {}, sort_keys=True, ensure_ascii=False).encode()
+        )
+    return digest.hexdigest()
+
+
+def _enrich_cache_load(key: str, blocks: list[dict]) -> bool:
+    with _enrich_state_lock:
+        saved = _enrich_cache.get(key)
+        if saved is None:
+            return False
+        _enrich_cache.move_to_end(key)
+    for index, fields in saved.items():
+        if 0 <= index < len(blocks):
+            blocks[index].update(fields)
+    return True
+
+
+def _enrich_cache_store(key: str, blocks: list[dict], enrichment: dict) -> None:
+    if any(
+        name in enrichment for name in
+        ("formula_error", "table_error", "budget_exhausted", "circuit_open", "timeout", "error")
+    ):
+        return
+    saved = {
+        index: {name: block[name] for name in ENRICH_CACHE_FIELDS if block.get(name) is not None}
+        for index, block in enumerate(blocks)
+    }
+    saved = {index: fields for index, fields in saved.items() if fields}
+    if not saved:
+        return
+    with _enrich_state_lock:
+        _enrich_cache[key] = saved
+        _enrich_cache.move_to_end(key)
+        while len(_enrich_cache) > ENRICH_CACHE_SIZE:
+            _enrich_cache.popitem(last=False)
+
+
+def reset_enrich_cache() -> None:
+    """清空后处理缓存与熔断计数（引擎重置或测试隔离时调用）。"""
+    global _enrich_abandoned, _enrich_circuit_until
+    with _enrich_state_lock:
+        _enrich_cache.clear()
+        _enrich_abandoned = 0
+        _enrich_circuit_until = 0.0
 
 
 def _enrichment_pil(image, width=None, height=None) -> Image.Image:
@@ -754,8 +899,10 @@ def _block_crop(image: Image.Image, block: dict, *, pad_ratio: float = 0.03):
     return result[0] if result is not None else None
 
 
-async def _enrich_formula_blocks(blocks: list[dict], image: Image.Image, enrichment: dict) -> None:
-    """为公式块填 ``latex``；失败/超时/空结果保持原块不变。"""
+async def _enrich_formula_blocks(
+    blocks: list[dict], image: Image.Image, enrichment: dict, *, deadline: float,
+) -> None:
+    """为公式块填 ``latex``；失败/超时/预算耗尽/空结果保持原块不变。"""
     candidates = [
         (index, block) for index, block in enumerate(blocks)
         if block.get("kind") == "math" and not str(block.get("latex") or "").strip()
@@ -769,20 +916,33 @@ async def _enrich_formula_blocks(blocks: list[dict], image: Image.Image, enrichm
     # 关键：超时计时只在真正拿到推理槽位后开始。否则 20 个块同时提交线程池，
     # 后排在队列里等待时也会消耗超时时间，健康引擎下后半个块会被误判 timeout。
     gate = asyncio.Semaphore(formula_ocr.MAX_CONCURRENCY)
+    budget_hit = False
+    circuit_hit = False
 
     async def recognize_one(item):
+        nonlocal budget_hit, circuit_hit
         index, block = item
         crop = _block_crop(image, block)
         if crop is None:
             return index, None, "bbox"
         async with gate:
+            remaining = deadline - time.monotonic()
+            if remaining <= 0:
+                budget_hit = True
+                return index, None, "budget"
             try:
-                outcome = await asyncio.wait_for(
-                    asyncio.to_thread(formula_ocr.recognize_crop, crop),
-                    timeout=block_timeout,
+                outcome = await _enrich_call(
+                    formula_ocr.recognize_crop, crop,
+                    timeout=min(block_timeout, remaining),
                 )
             except asyncio.TimeoutError:
+                if time.monotonic() >= deadline:
+                    budget_hit = True
+                    return index, None, "budget"
                 return index, None, "timeout"
+            except _EnrichCircuitOpen:
+                circuit_hit = True
+                return index, None, "circuit"
             except Exception as error:  # 单块失败不影响其它块
                 return index, None, type(error).__name__
         latex = str((outcome or {}).get("latex") or "").strip()
@@ -798,10 +958,14 @@ async def _enrich_formula_blocks(blocks: list[dict], image: Image.Image, enrichm
             blocks[index]["latex_engine"] = formula_ocr.ENGINE_NAME
             # 识别结果仍属草稿：needs_review 保持 True，由用户改动后才由前端清除。
             blocks[index]["needs_review"] = True
-        elif error:
+        elif error and error not in ("budget", "circuit"):
             errors.append(str(error))
     if skipped:
         enrichment["formula_skipped"] = skipped
+    if budget_hit:
+        enrichment["budget_exhausted"] = "formula"
+    if circuit_hit:
+        enrichment["circuit_open"] = True
     if errors:
         enrichment["formula_error"] = errors[0]
 
@@ -836,7 +1000,9 @@ def _group_bbox(blocks: list[dict], group: list[int]) -> dict | None:
     return {"x": left, "y": top, "w": right - left, "h": bottom - top}
 
 
-async def _enrich_table_blocks(blocks: list[dict], image: Image.Image, enrichment: dict) -> None:
+async def _enrich_table_blocks(
+    blocks: list[dict], image: Image.Image, enrichment: dict, *, deadline: float,
+) -> None:
     """为连续表格块填结构；只写组内第一块，其余块保持原样。"""
     groups = [
         group for group in _table_block_groups(blocks)
@@ -849,6 +1015,10 @@ async def _enrich_table_blocks(blocks: list[dict], image: Image.Image, enrichmen
     errors: list[str] = []
 
     for group in groups:
+        remaining = deadline - time.monotonic()
+        if remaining <= 0:
+            enrichment["budget_exhausted"] = "table"
+            break
         if len(group) > ENRICH_TABLE_MAX_SPAN:
             errors.append("span")
             continue
@@ -878,17 +1048,20 @@ async def _enrich_table_blocks(blocks: list[dict], image: Image.Image, enrichmen
             texts.append(str(blocks[index].get("text") or "")[:500])
             scores.append(float(blocks[index].get("confidence") or 0))
         try:
-            outcome = await asyncio.wait_for(
-                asyncio.to_thread(
-                    table_structure.recognize_table,
-                    crop,
-                    ocr_results=(boxes, texts, scores),
-                ),
-                timeout=table_timeout,
+            outcome = await _enrich_call(
+                table_structure.recognize_table, crop,
+                ocr_results=(boxes, texts, scores),
+                timeout=min(table_timeout, remaining),
             )
         except asyncio.TimeoutError:
+            if remaining <= table_timeout:
+                enrichment["budget_exhausted"] = "table"
+                break
             errors.append("timeout")
             continue
+        except _EnrichCircuitOpen:
+            enrichment["circuit_open"] = True
+            break
         except Exception as error:
             errors.append(type(error).__name__)
             continue
@@ -925,10 +1098,23 @@ async def enrich_blocks(blocks, image=None, *, page: int = 1,
     except Exception as error:
         enrichment["error"] = f"{type(error).__name__}: 图片无法用于后处理"
         return {"blocks": result_blocks, "enrichment": enrichment}
+    cache_key = (
+        f"{enrichment['formula']}|{enrichment['table']}|"
+        + _enrich_cache_key(prepared, result_blocks, page)
+    )
+    if _enrich_cache_load(cache_key, result_blocks):
+        enrichment["cache"] = "hit"
+        return {"blocks": result_blocks, "enrichment": enrichment}
+    deadline = time.monotonic() + enrich_timeout()
     if enrichment["formula"] == "on":
-        await _enrich_formula_blocks(result_blocks, prepared, enrichment)
+        await _enrich_formula_blocks(
+            result_blocks, prepared, enrichment, deadline=deadline,
+        )
     if enrichment["table"] == "on":
-        await _enrich_table_blocks(result_blocks, prepared, enrichment)
+        await _enrich_table_blocks(
+            result_blocks, prepared, enrichment, deadline=deadline,
+        )
+    _enrich_cache_store(cache_key, result_blocks, enrichment)
     return {"blocks": result_blocks, "enrichment": enrichment}
 
 

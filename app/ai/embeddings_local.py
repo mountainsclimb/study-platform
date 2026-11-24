@@ -56,6 +56,7 @@ __all__ = [
     "rerank",
     "dimension",
     "engine_status",
+    "warmup",
     "reset_engine",
     "MAX_CONCURRENCY",
 ]
@@ -346,6 +347,31 @@ def _get_rerank_engine():
             raise LocalEmbeddingUnavailable(_rerank_error) from None
         _rerank_engine = engine
         return _rerank_engine
+
+
+def warmup() -> dict:
+    """启动预热：只加载向量/重排模型，不做推理；开关关闭或不可用时跳过。"""
+    started = time.monotonic()
+    base = {"engine": ENGINE_NAME, "loaded": False, "rerank_loaded": False}
+    if mode() != "local":
+        return {**base, "skipped": "STUDY_EMBEDDING_MODE 未开启", "elapsed_ms": 0}
+    if not local_available():
+        return {**base, "skipped": _unavailable_reason(),
+                "elapsed_ms": int((time.monotonic() - started) * 1000)}
+    try:
+        _get_engine()
+    except Exception as error:
+        return {**base, "error": f"{type(error).__name__}: {error}",
+                "elapsed_ms": int((time.monotonic() - started) * 1000)}
+    result = {**base, "loaded": True}
+    if rerank_mode() == "on" and rerank_available():
+        try:
+            _get_rerank_engine()
+            result["rerank_loaded"] = True
+        except Exception as error:
+            result["rerank_error"] = f"{type(error).__name__}: {error}"
+    result["elapsed_ms"] = int((time.monotonic() - started) * 1000)
+    return result
 
 
 def reset_engine() -> None:

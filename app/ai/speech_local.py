@@ -49,6 +49,7 @@ __all__ = [
     "transcribe",
     "max_asr_seconds",
     "engine_status",
+    "warmup",
     "reset_engine",
     "SYNTH_TIMEOUT_SECONDS",
     "TRANSCRIBE_TIMEOUT_SECONDS",
@@ -301,6 +302,34 @@ def _get_asr_engine():
             raise SpeechUnavailable(_asr_error) from None
         _asr_engine = engine
         return _asr_engine
+
+
+def warmup() -> dict:
+    """启动预热：只加载可用的合成/识别模型，不做推理。"""
+    started = time.monotonic()
+    base = {"engine": ENGINE_NAME, "tts_loaded": False, "asr_loaded": False}
+    if mode() != "on":
+        return {**base, "skipped": "STUDY_LOCAL_SPEECH 未开启", "elapsed_ms": 0}
+    if not _module_available():
+        return {**base, "skipped": "sherpa-onnx 未安装",
+                "elapsed_ms": int((time.monotonic() - started) * 1000)}
+    result = dict(base)
+    if tts_available():
+        try:
+            _get_tts_engine()
+            result["tts_loaded"] = True
+        except Exception as error:
+            result["tts_error"] = f"{type(error).__name__}: {error}"
+    if asr_available():
+        try:
+            _get_asr_engine()
+            result["asr_loaded"] = True
+        except Exception as error:
+            result["asr_error"] = f"{type(error).__name__}: {error}"
+    result["elapsed_ms"] = int((time.monotonic() - started) * 1000)
+    if not result["tts_loaded"] and not result["asr_loaded"]:
+        result["skipped"] = _unavailable_reason("语音")
+    return result
 
 
 def reset_engine() -> None:

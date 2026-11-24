@@ -35,6 +35,7 @@ __all__ = [
     "local_table_available",
     "engine_status",
     "engine_meta",
+    "warmup",
     "reset_engine",
     "mode",
     "timeout",
@@ -207,6 +208,24 @@ def engine_status() -> dict:
         "notice": notice,
         "error": _engine_error,
     }
+
+
+def warmup() -> dict:
+    """启动预热：只加载模型、不做推理；关闭或不可用时如实跳过。"""
+    started = time.monotonic()
+    base = {"engine": ENGINE_NAME, "loaded": False}
+    if mode() != "on":
+        return {**base, "skipped": "STUDY_TABLE_OCR 未开启", "elapsed_ms": 0}
+    if not local_table_available():
+        return {**base, "skipped": _unavailable_reason(),
+                "elapsed_ms": int((time.monotonic() - started) * 1000)}
+    try:
+        _get_engine()
+    except Exception as error:
+        return {**base, "error": f"{type(error).__name__}: {error}",
+                "elapsed_ms": int((time.monotonic() - started) * 1000)}
+    return {**base, "loaded": True,
+            "elapsed_ms": int((time.monotonic() - started) * 1000)}
 
 
 # ---------------------------------------------------------------------------

@@ -276,6 +276,7 @@ Worker 支持 `STUDY_WORKER_CONCURRENCY`（默认 8）和 `STUDY_WORKER_JOB_TIME
 | `STUDY_PDF_TABLES`、`STUDY_PDF_TABLE_PAGES` | 可选：设为 `on` 后，知识清单上传文本型 PDF 时用 pdfplumber 抽取表格行并追加到对应页（默认 50 页上限）。需在镜像/环境额外安装 `requirements-pdf.txt`；未安装或关闭时与现状一致。 |
 | `STUDY_FORMULA_OCR`、`STUDY_FORMULA_TIMEOUT`、`STUDY_FORMULA_MAX_BLOCKS` | 可选：设为 `on` 后用 RapidLaTeXOCR 给拍题/扫描页的 math 块填 LaTeX（默认关闭；单块超时 5 秒、最多 20 块）。需安装 `requirements-formula.txt`；模型由 pip 包下载，离线部署需预置到 site-packages 内 `rapid_latex_ocr/models/`。 |
 | `STUDY_TABLE_OCR`、`STUDY_TABLE_TIMEOUT` | 可选：设为 `on` 后用 RapidTable 给连续表格块生成单元格结构（默认关闭；单区域超时 8 秒）。与公式识别共用一个依赖清单；模型需预置到 `rapid_table/models/`。 |
+| `STUDY_ENRICH_TIMEOUT` | 单页公式+表格后处理的总预算秒数（默认 20，范围 0.1–120）。超预算保留已完成块并返回 `budget_exhausted`；连续超时 3 次熔断 60 秒，避免占满线程池。开启可选引擎时启动后台预热模型。 |
 | `STUDY_SYMPY_POOL` | 是否启用 SymPy 常驻子进程池（默认启用；`0` 关闭）。 |
 | `STUDY_SYMPY_POOL_SIZE` | 常驻 SymPy 进程数（1–2，默认 1；并发评测可设 2）。 |
 | `STUDY_SYMPY_POOL_MAX_REQUESTS` | 单进程处理多少次请求后回收重建（默认 200）。 |
