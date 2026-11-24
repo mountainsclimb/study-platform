@@ -21,6 +21,7 @@ import { renderPlaza } from './pages/plaza.js';
 import { renderSubmission } from './pages/submission.js';
 import { renderReview } from './pages/review.js';
 import { renderPlazaAdmin } from './pages/plazaAdmin.js';
+import { renderVocab } from './pages/vocab.js';
 import { mountFocusWidget } from './components/focusTimer.js';
 import { mountDailyQuoteTeaser, maybeShowDailyQuote } from './components/dailyQuote.js';
 // 广场通知中心（Phase 3）：仅登录主壳顶栏挂载；访客壳不挂。接口未就绪时组件自行隐藏。
@@ -47,6 +48,7 @@ registerRenderers({
   mybank: renderMyBank,
   paperlab: renderPaperlab,
   insight: renderInsight,
+  vocab: renderVocab,
   assistant: renderAssistant,
   tasks: renderTasks,
   // 广场公开只读页（Phase 2）：访客与登录用户共用同一渲染器。

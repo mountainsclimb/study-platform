@@ -33,6 +33,12 @@ python -m uvicorn app.main:app --host 127.0.0.1 --port 8765
 本项目对数据的处理方式与非官方免责声明见 [THIRD_PARTY_NOTICES.md](THIRD_PARTY_NOTICES.md)。
 分发本项目或派生数据时请一并保留该文件与 MIT 声明。上游交互演示站的前端代码未附许可证，本项目未复制其代码。
 
+「词汇本」词表来自 [skywind3000/ECDICT](https://github.com/skywind3000/ECDICT)（**MIT License，
+Copyright (c) 2025 Linwei**）。`scripts/build_vocab.py` 只抽取高考词优先的 8000 条词条，
+字段白名单、来源提交与种子 SHA-256 见 `app/data/vocab_seed.README.md` 与
+[THIRD_PARTY_NOTICES.md](THIRD_PARTY_NOTICES.md)。`phonetic` / `translation` 为词典内容，
+来源混合，已抽样核对；`detail` / `audio` 不使用。
+
 ## 核心能力
 
 1. **题库检索与知识点体系**：
@@ -254,6 +260,17 @@ python -m uvicorn app.main:app --host 127.0.0.1 --port 8765
       提供知识点图谱：节点为知识点，边为同题共现与从属关系，薄弱点红色高亮；
       点击节点直达对应练习；首次点击才加载。
 
+17. **词汇模块（ECDICT，批次六 §7）**：
+    - `app/data/vocab_seed.json`：8000 条高考词（`tag` 含 `gk` 优先，按 `frq` 补齐），
+      来源 ECDICT（MIT，提交 `9c46923f`）；`scripts/build_vocab.py` 构建并带 `--check`。
+    - 后端 `/api/vocab`：`meta` / `items` / `cards` / `cards/due` /
+      `cards/{id}/ratings` / `stats` / `export`；词汇卡复用 `study_review.schedule()`
+      的四档排程，`vocab_ratings` 做幂等重放；种子缺失时模块 `available:false`，
+      不影响应用启动与其它功能。
+    - 前端 `#/vocab`：词表筛选/搜索、加入复习、先回忆再四档评分；首页行动卡显示
+      词汇总数与今日到期；`GET /api/insight/home` 新增加法键 `vocab`。
+    - 导出：`GET /api/vocab/export` 生成 Anki 牌组（正面单词/音标，背面释义/标签）。
+
 ## 验证
 
 ```powershell
@@ -332,6 +349,9 @@ python -m pytest tests/test_demo_kinds.py tests/test_oss_vendor_assets.py -v
 python -m pytest tests/test_demo_kinds.py tests/test_oss_vendor_assets.py -v
 # 知识图谱接口与 vendor 资产（sigma.js + graphology）
 python -m pytest tests/test_insight_kp_graph.py tests/test_oss_vendor_assets.py -v
+# 词汇模块（ECDICT 种子 + 四档复习卡 + Anki 牌组）
+python -m pytest tests/test_vocab_seed.py tests/test_vocab.py -v
+python scripts/build_vocab.py --check   # 需本地 ECDICT 缓存；手动运行
 # markmap 交互脑图构建产物的字节级复现校验（需网络，手动运行）
 node scripts/build_markmap_bundle.mjs --check
 # 课堂全链路验收（本机假模型，无需真实 Key；详见 scripts/integration/README.md）

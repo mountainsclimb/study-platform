@@ -73,6 +73,8 @@ _ID_TABLES = frozenset({
     "demo_sim_runs",
     # M6：带引文的专题报告与互动讲义（规则汇编 + 结构化导出）。
     "topic_reports", "handouts",
+    # 批次六（§7）：ECDICT 词汇本与词汇复习卡（vocab_ratings 为评分幂等日志）。
+    "vocab_items", "vocab_cards", "vocab_ratings",
 })
 _INSERT_TABLE = re.compile(r"^\s*INSERT\s+INTO\s+([a-z_][a-z_0-9]*)\b", re.IGNORECASE)
 _QMARK = re.compile(r"""'(?:[^']|'')*'|"(?:[^"]|"")*"|--[^\n]*|/\*[\s\S]*?\*/|\?""")

@@ -335,6 +335,7 @@ SOFTWARE.
 | 录取数据 | 31 省 2017–2025 招生计划/投档线/专业分/一分一段 | GaokaoCompass，MIT（§1） | 派生只读库 `data/` 不入库；页面保留来源与 MIT 声明 |
 | 官方批次线 | 2020–2026 省年批次线 | 教育在线公开页面（§4），保留来源 URL 与页面 SHA-256 | 只保留事实字段 |
 | 每日一句语料 | 365 条唐宋/先秦原文 | chinese-poetry（MIT）+ 公有领域原文；构建期抽样与去重 | 生成物入库，保留上游 LICENSE |
+| 词汇种子语料 | 8000 条高考词（tag/frq 等标注 + 音标/释义） | ECDICT（MIT，Copyright (c) 2025 Linwei，提交 `9c46923f`）；构建期抽取，词典内容已抽样核对 | 生成物 `app/data/vocab_seed.json` 入库，保留 LICENSE 与 README 的 SHA-256 |
 | OCR 模型权重 | PP-OCRv4 检测/识别/方向分类 | Apache-2.0，随 RapidOCR pip 包分发 | 不进仓库 |
 | 本地向量模型权重 | bge-small-zh-v1.5（512 维） | MIT，由部署方预置 | 不进仓库与镜像；目录见 `requirements-embeddings.txt` |
 | 本地重排模型权重 | bge-reranker-base | MIT，由部署方预置 | 不进仓库与镜像 |
@@ -375,6 +376,7 @@ SOFTWARE.
 | 笔记交互脑图（markmap） | 默认可用 | `web/vendor/markmap/` 构建产物随仓库分发 | 笔记详情「交互 / 静态」切换，默认静态；交互视图可折叠缩放，懒加载；`.mmd`/SVG 导出不变 |
 | 历史时间轴（vis-timeline） | 默认可用 | `web/vendor/vis-timeline/` 随仓库分发；预设为自有代码（`web/vendor/timeline/`） | 四个历史专题、可自建事件；日期严格校验后按参数重建；保存为 `timeline` 学习附件；课堂只读、离线仅海报 |
 | 知识图谱（sigma.js） | 默认可用 | `web/vendor/graph/` 随仓库分发 | 学情页知识点共现/从属图谱，弱项红色高亮，点击直达练习；首次点击懒加载 |
+| 词汇本（ECDICT） | 默认可用 | `app/data/vocab_seed.json` 随仓库分发；`scripts/build_vocab.py` 可重建 | 8000 条高考词；四档评分复用 `study_review.schedule()`；种子缺失时模块 `available:false`，不影响其它功能；Anki 导出需 genanki |
 | fsrs-lite 复习排程 | 实验 | `STUDY_REVIEW_SCHEDULER=fsrs-lite` | 默认 `rules`；先积累复习反馈再替换 |
 | 社区解析精选 | 可选服务 | `COMMUNITY_EXPLANATIONS_ENABLED=1` | 登录用户的既有题目 AI 解析分享 |
 | PostgreSQL / Redis Worker / 对象存储 | 可选服务（生产推荐） | `DATABASE_URL`、`REDIS_URL`、`S3_*`；公网部署校验见 `scripts/check_public_config.py` | SQLite 单机开发可用 |

@@ -1,0 +1,212 @@
+/* 高考词汇本（批次六 §7）。类名前缀 .vb-；沿用全局设计变量，暗色主题单独覆盖。 */
+.vb-page {
+  display: grid;
+  gap: 22px;
+}
+
+/* 首页行动卡新增「词汇本」后改为四列；窄屏回到两列。 */
+.home-actions {
+  grid-template-columns: repeat(4, minmax(0, 1fr));
+}
+
+@media (max-width: 1100px) {
+  .home-actions {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+  }
+}
+
+.vb-stats {
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  gap: 14px;
+}
+
+.vb-stat {
+  display: grid;
+  gap: 4px;
+  padding: 16px 18px;
+  border: 1px solid var(--line, #e2e9ec);
+  border-radius: 16px;
+  background: var(--surface, #fff);
+}
+
+.vb-stat-label {
+  font-size: 0.8125rem;
+  color: var(--muted, #5b6b7a);
+}
+
+.vb-stat-value {
+  font-size: clamp(1.6rem, 1.2rem + 1vw, 2.2rem);
+  line-height: 1.1;
+  letter-spacing: -0.02em;
+}
+
+.vb-stat-hint {
+  font-size: 0.75rem;
+  color: var(--muted, #5b6b7a);
+}
+
+.vb-source {
+  margin-top: -10px;
+  font-size: 0.75rem;
+  color: var(--muted, #5b6b7a);
+}
+
+.vb-section {
+  display: grid;
+  gap: 12px;
+}
+
+.vb-section-head h2 {
+  margin: 0;
+  font-size: 1.15rem;
+}
+
+.vb-section-head .help {
+  margin: 4px 0 0;
+}
+
+.vb-list {
+  display: grid;
+  gap: 10px;
+}
+
+.vb-card {
+  display: grid;
+  gap: 10px;
+  padding: 16px 18px;
+  border: 1px solid var(--line, #e2e9ec);
+  border-left: 4px solid var(--accent, #2f6fed);
+  border-radius: 14px;
+  background: var(--surface, #fff);
+}
+
+.vb-card-head {
+  display: flex;
+  justify-content: space-between;
+  align-items: flex-start;
+  gap: 12px;
+}
+
+.vb-word {
+  margin: 0;
+  font-size: 1.25rem;
+  letter-spacing: 0.01em;
+}
+
+.vb-phonetic {
+  margin: 2px 0 0;
+  color: var(--muted, #5b6b7a);
+  font-size: 0.875rem;
+}
+
+.vb-card-meta {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  flex-wrap: wrap;
+  justify-content: flex-end;
+}
+
+.vb-translation {
+  margin: 0;
+  padding: 10px 12px;
+  border-radius: 10px;
+  background: var(--tint, #eef4ff);
+  white-space: pre-wrap;
+  line-height: 1.7;
+}
+
+.vb-rating-holder:empty {
+  display: none;
+}
+
+.vb-row {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto auto;
+  gap: 12px;
+  align-items: center;
+  padding: 12px 16px;
+  border: 1px solid var(--line, #e2e9ec);
+  border-radius: 12px;
+  background: var(--surface, #fff);
+}
+
+.vb-row-main {
+  min-width: 0;
+}
+
+.vb-row-translation {
+  margin: 4px 0 0;
+  color: var(--muted, #5b6b7a);
+  font-size: 0.875rem;
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+}
+
+.vb-tags {
+  display: flex;
+  gap: 6px;
+  flex-wrap: wrap;
+  justify-content: flex-end;
+}
+
+.vb-controls {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+}
+
+.vb-controls .input {
+  flex: 1 1 220px;
+  min-height: 44px;
+}
+
+.vb-controls .button,
+.vb-row .button,
+.vb-more .button {
+  min-height: 44px;
+}
+
+.vb-more {
+  display: flex;
+  justify-content: center;
+}
+
+.vb-empty {
+  padding: 16px;
+  border: 1px dashed var(--line, #e2e9ec);
+  border-radius: 12px;
+}
+
+html[data-theme="dark"] .vb-stat,
+html[data-theme="dark"] .vb-card,
+html[data-theme="dark"] .vb-row {
+  background: var(--surface);
+}
+
+html[data-theme="dark"] .vb-translation {
+  background: var(--rail);
+}
+
+@media (max-width: 760px) {
+  .vb-stats {
+    grid-template-columns: 1fr;
+  }
+
+  .vb-row {
+    grid-template-columns: 1fr;
+  }
+
+  .vb-tags {
+    justify-content: flex-start;
+  }
+
+  .vb-card-head {
+    flex-direction: column;
+  }
+
+  .vb-card-meta {
+    justify-content: flex-start;
+  }
+}

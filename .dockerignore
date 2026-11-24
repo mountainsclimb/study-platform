@@ -5,6 +5,9 @@
 
 # --- 本地运行时数据 / 备份 / 密钥：绝不进镜像 ---
 data/
+# 例外：app/data 是随包分发的只读种子（知识点、高考词汇），不是本地运行数据。
+!app/data/
+!app/data/**
 backups/
 *.sqlite3
 *.sqlite3-wal

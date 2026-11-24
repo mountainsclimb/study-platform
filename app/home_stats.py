@@ -41,7 +41,7 @@ from datetime import datetime, timezone
 
 from fastapi import HTTPException
 
-from . import db, practice
+from . import db, practice, vocab
 
 DEFAULT_DAYS = 90
 # 知识点「样本不足」阈值：与学情页优势知识点门槛一致，少于 3 次已判定作答只展示样本数。
@@ -549,6 +549,8 @@ def build_home(user_id: int, days: int = DEFAULT_DAYS) -> dict:
         "personal": personal,
         # M2：今日复习以服务端四档复习卡为准（与错题/练习/学情同一到期值）。
         "review": review,
+        # 批次六（§7）：词汇本加法键；模块不可用时 available=false，旧字段不变。
+        "vocab": vocab.home_summary(user_id),
         "caliber": CALIBER,
     }
 

@@ -28,6 +28,7 @@ const ROUTE_DEFS = [
   ['plaza', 'layers', '广场'],
   // 工具
   ['insight', 'chart', '学情分析'],
+  ['vocab', 'tag', '词汇本'],
   ['review', 'check', '评审台'],
   ['plaza-admin', 'shield', '编辑台'],
   ['notes', 'notes', '知识清单'],
@@ -57,7 +58,7 @@ const NAV_GROUP_DEFS = [
   {
     key: 'tools',
     labelKey: 'nav.group.tools',
-    routes: ['insight', 'review', 'plaza-admin', 'notes', 'assistant', 'tasks', 'admission', 'settings', 'admin'],
+    routes: ['insight', 'vocab', 'review', 'plaza-admin', 'notes', 'assistant', 'tasks', 'admission', 'settings', 'admin'],
   },
 ];
 

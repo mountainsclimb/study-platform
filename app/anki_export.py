@@ -465,6 +465,25 @@ def _note_source_versions(note: dict) -> list[str]:
     return versions
 
 
+def vocab_deck(items) -> list[tuple[str, list[dict]]]:
+    """词汇卡 → Anki 牌组：正面单词 + 音标，背面释义 + 标签。"""
+    cards: list[dict] = []
+    for item in items or []:
+        word = str(item.get("word") or "").strip()
+        if not word:
+            continue
+        tags = _safe_tags(str(item.get("tag") or "").split())
+        phonetic = str(item.get("phonetic") or "").strip()
+        front = f"<div class='zx-stem'><b>{_escape(word)}</b></div>"
+        if phonetic:
+            front += f"<div class='zx-hint'>[{_escape(phonetic)}]</div>"
+        back = f"<div class='zx-answer'>{text_to_html(item.get('translation') or '')}</div>"
+        if tags:
+            back += f"<div class='zx-tags'>{_escape(' / '.join(tags))}</div>"
+        cards.append({"front": front, "back": back, "tags": tags})
+    return [("知序词汇 · 高考", cards)] if cards else []
+
+
 def note_deck(note: dict) -> list[tuple[str, list[dict]]]:
     title = (note.get("title") or "未命名笔记")[:40]
     cards = note_cards(

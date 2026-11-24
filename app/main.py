@@ -27,6 +27,8 @@ from . import doc_location, guided_hint, mastery_path
 from . import demo_library
 # M6（§5.3）：带引文的专题报告与互动讲义（规则汇编 + 结构化导出）。
 from . import handout, topic_report
+# 批次六（§7）：ECDICT 高考词汇本与四档词汇复习。
+from . import vocab
 
 WEB_DIR = Path(__file__).resolve().parents[1] / "web"
 health_log = logging.getLogger("zhixu.health")
@@ -229,6 +231,7 @@ async def lifespan(app):
     # M6：专题报告与互动讲义（规则汇编，引用真实资料/笔记/附件）。
     topic_report.init_topic_reports()
     handout.init_handouts()
+    vocab.init_vocab()
     dispatcher = asyncio.create_task(ai.recover_queued_jobs()) if ai.redis_url() else None
     try:
         yield
@@ -760,6 +763,8 @@ from . import chem_balance
 app.include_router(handout.router)
 # 批次五（§6.2）：化学方程式配平（无状态，需登录）。
 app.include_router(chem_balance.router)
+# 批次六（§7）：词汇本（ECDICT 种子 + 四档复习卡）。
+app.include_router(vocab.router)
 
 app.mount("/static", StaticFiles(directory=str(WEB_DIR)), name="static")
 

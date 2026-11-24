@@ -150,7 +150,7 @@ function actionCard({ title, text, meta, iconName, onOpen, countText, actionLabe
     el('p', { class: 'pg-focus-meta' }, meta || ''));
 }
 
-function actionCards(personal, bank, reviewDue = null) {
+function actionCards(personal, bank, reviewDue = null, vocabInfo = null) {
   const library = personal?.library || {};
   // M2：到期数字优先用服务端四档复习卡口径（review.due_now）；降级/旧后端回退旧字段。
   // 数字与「到期复习」卡片同源（镜像保证一致），避免首页出现两个互相矛盾的数字。
@@ -168,7 +168,7 @@ function actionCards(personal, bank, reviewDue = null) {
         : t('home.action.review.count', { count: number(due) }))
       : t('home.action.review.none'))
     : null;
-  return el('section', { class: 'pg-focus-grid', 'aria-label': t('home.action.aria') },
+  return el('section', { class: 'pg-focus-grid home-actions', 'aria-label': t('home.action.aria') },
     actionCard({
       title: t('home.action.upload.title'),
       text: t('home.action.upload.text'),
@@ -198,6 +198,19 @@ function actionCards(personal, bank, reviewDue = null) {
       countText: dueCountText,
       actionLabel: t('home.action.review.label'),
       onOpen: () => go('wrongbook'),
+    }),
+    actionCard({
+      title: t('home.action.vocab.title'),
+      text: t('home.action.vocab.text'),
+      meta: vocabInfo?.available
+        ? t('home.action.vocab.meta', { count: number(vocabInfo.due_today || 0) })
+        : t('common.unavailable'),
+      iconName: 'tag',
+      countText: vocabInfo?.available
+        ? t('home.action.vocab.count', { count: number(vocabInfo.total || 0) })
+        : null,
+      actionLabel: t('home.action.vocab.label'),
+      onOpen: () => go('vocab'),
     }));
 }
 
@@ -1001,7 +1014,7 @@ export async function renderHome(container, version) {
   const pageSections = [
     heading('LEARNING OVERVIEW', t('home.greeting', { greet, name: state.user.username }),
       t('home.subheading')),
-    actionCards(personal, bank, reviewDue),
+    actionCards(personal, bank, reviewDue, homeStats?.vocab || null),
     learningStats(personal),
     el('section', { class: 'pg-focus-grid', 'aria-label': t('home.next.aria') }, focusPrimary, dueCard, recentCard),
     workbench.node,
