@@ -43,7 +43,8 @@ ELEMENTS = frozenset({
     "Es", "Fm", "Md", "No", "Lr", "Rf", "Db", "Sg", "Bh", "Hs", "Mt", "Ds",
     "Rg", "Cn", "Nh", "Fl", "Mc", "Lv", "Ts", "Og",
 })
-_ARROW_RE = re.compile(r"->|→|⟶|=")
+_ARROW_RE = re.compile(r"<=>|<->|⇌|⇋|↔|->|→|⟶|=")
+_REVERSIBLE_ARROWS = ("<=>", "<->", "⇌", "⇋", "↔")
 _TERM_ALLOWED_RE = re.compile(r"^(?:[A-Z][a-z]?\d*|\(|\)\d*)+$")
 
 
@@ -173,7 +174,8 @@ def balance_equation(equation: str) -> dict:
 
     parts = _ARROW_RE.split(value)
     if len(parts) != 2:
-        raise ValueError("方程式需要使用一个箭头（->、→ 或 =）分隔反应物与生成物")
+        raise ValueError("方程式需要使用一个箭头（->、→、⇌ 或 =）分隔反应物与生成物")
+    reversible = any(arrow in value for arrow in _REVERSIBLE_ARROWS)
     left_terms = _split_side(parts[0], "反应物")
     right_terms = _split_side(parts[1], "生成物")
     if len(left_terms) + len(right_terms) > MAX_TERMS:
@@ -197,6 +199,8 @@ def balance_equation(equation: str) -> dict:
             "ok": False,
             "coefficients": [],
             "balanced": "",
+            "arrow": "⇌" if reversible else "->",
+            "reversible": reversible,
             "reason": "无法找到正整数配平系数（请检查元素是否守恒，或方程式是否可配平）",
         }
     left = " + ".join(
@@ -207,10 +211,13 @@ def balance_equation(equation: str) -> dict:
         _formula_with_coefficient(coefficient, formula)
         for coefficient, formula in zip(solution[len(left_terms):], right_terms)
     )
+    arrow = "⇌" if reversible else "->"
     return {
         "ok": True,
         "coefficients": solution,
-        "balanced": f"{left} -> {right}",
+        "balanced": f"{left} {arrow} {right}",
+        "arrow": arrow,
+        "reversible": reversible,
         "reason": "",
     }
 

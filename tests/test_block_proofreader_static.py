@@ -44,3 +44,12 @@ def test_formula_editor_exposes_generic_insert_helper():
         assert "formulaEditorButton" in text, page
     classroom = _read(ROOT / "web" / "js" / "components" / "classroomEditor.js")
     assert "formulaEditorButton" in classroom
+
+
+def test_chem_balance_entry_is_wired():
+    question = _read(ROOT / "web" / "js" / "pages" / "question.js")
+    assert "chemBalanceEntryButton" in question
+    assert "data-chem-balance-open" in question
+    component = _read(ROOT / "web" / "js" / "components" / "chemBalancer.js")
+    assert "api('/chem/balance'" in component
+    assert "normalizeArrow" in component

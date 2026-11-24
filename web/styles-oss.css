@@ -482,3 +482,31 @@ html[data-theme="dark"] .oss-kp-graph {
     height: 420px;
   }
 }
+
+/* 化学方程式配平弹层（chemBalancer.js） */
+.chem-balance-dialog {
+  width: min(760px, 94vw);
+  max-height: 90vh;
+  overflow: auto;
+}
+
+.chem-balance-substances {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+  margin: 8px 0 4px;
+}
+
+.chem-balance-reversible-row {
+  align-items: center;
+  gap: 8px;
+  margin: 10px 0;
+}
+
+.chem-balance-equation {
+  font-family: "Cambria Math", "Times New Roman", serif;
+  font-size: 1.15rem;
+  line-height: 1.8;
+  margin: 10px 0 6px;
+  word-break: break-word;
+}

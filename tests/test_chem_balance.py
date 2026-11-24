@@ -86,3 +86,22 @@ def test_api_requires_login_and_returns_422_for_bad_equation(client, monkeypatch
 
     response = client.post("/api/chem/balance", json={"equation": "H" * 201})
     assert response.status_code == 422
+
+
+def test_reversible_arrow_is_preserved_in_output():
+    result = balance_equation("N2 + H2 ⇌ NH3")
+    assert result["ok"] is True
+    assert result["reversible"] is True
+    assert result["arrow"] == "⇌"
+    assert "⇌" in result["balanced"]
+    assert "->" not in result["balanced"]
+
+    forward = balance_equation("H2 + O2 -> H2O")
+    assert forward["reversible"] is False
+    assert forward["arrow"] == "->"
+
+
+def test_ascii_reversible_arrow_is_accepted():
+    result = balance_equation("N2 + H2 <=> NH3")
+    assert result["ok"] is True
+    assert result["arrow"] == "⇌"

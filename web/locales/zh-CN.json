@@ -5515,5 +5515,20 @@
   "notes.rebuildStaleIndexes": "重建过期索引",
   "notes.batchReindexDone": "已重建 {ready} 份资料的索引",
   "admin.localVectorTagging": "本地向量打标",
-  "admin.localVectorTaggingDone": "本地向量打标已完成"
+  "admin.localVectorTaggingDone": "本地向量打标已完成",
+  "study.chem.balance.open": "配平方程式",
+  "study.chem.balance.title": "化学方程式配平",
+  "study.chem.balance.hint": "只输入化学式与一个箭头（-> 或 ⇌），不要带配平系数。",
+  "study.chem.balance.placeholder": "例如 H2 + O2 -> H2O",
+  "study.chem.balance.equation": "方程式",
+  "study.chem.balance.reversible": "可逆反应（输出 ⇌）",
+  "study.chem.balance.common": "常见物质（点击插入）",
+  "study.chem.balance.submit": "配平",
+  "study.chem.balance.loading": "正在配平…",
+  "study.chem.balance.coefficients": "系数：{values}",
+  "study.chem.balance.reversibleResult": "已按可逆反应输出 ⇌",
+  "study.chem.balance.forwardResult": "已按正向反应输出 ->",
+  "study.chem.balance.empty": "请输入化学方程式",
+  "study.chem.balance.failed": "无法配平该方程式",
+  "study.chem.balance.requestFailed": "配平请求失败：{reason}"
 }

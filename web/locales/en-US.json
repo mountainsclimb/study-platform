@@ -5515,5 +5515,20 @@
   "notes.rebuildStaleIndexes": "Rebuild stale indexes",
   "notes.batchReindexDone": "Rebuilt indexes for {ready} documents",
   "admin.localVectorTagging": "Local vector tagging",
-  "admin.localVectorTaggingDone": "Local vector tagging finished"
+  "admin.localVectorTaggingDone": "Local vector tagging finished",
+  "study.chem.balance.open": "Balance equation",
+  "study.chem.balance.title": "Balance a chemical equation",
+  "study.chem.balance.hint": "Enter formulas and one arrow (-> or ⇌); do not include coefficients.",
+  "study.chem.balance.placeholder": "e.g. H2 + O2 -> H2O",
+  "study.chem.balance.equation": "Equation",
+  "study.chem.balance.reversible": "Reversible reaction (output ⇌)",
+  "study.chem.balance.common": "Common substances (click to insert)",
+  "study.chem.balance.submit": "Balance",
+  "study.chem.balance.loading": "Balancing…",
+  "study.chem.balance.coefficients": "Coefficients: {values}",
+  "study.chem.balance.reversibleResult": "Output uses ⇌ for a reversible reaction",
+  "study.chem.balance.forwardResult": "Output uses -> for a forward reaction",
+  "study.chem.balance.empty": "Enter a chemical equation",
+  "study.chem.balance.failed": "This equation could not be balanced",
+  "study.chem.balance.requestFailed": "Balance request failed: {reason}"
 }

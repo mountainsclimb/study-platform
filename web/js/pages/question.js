@@ -1144,6 +1144,26 @@ function moleculeEntryButton(q) {
 }
 
 /* ---------------------------------------------------------------------------
+ * 阶段 3-3：化学方程式配平入口；弹层懒加载，系数由服务端求解。
+ * ------------------------------------------------------------------------- */
+
+const CHEM_SUBJECTS = new Set(['化学']);
+
+/** 题目详情「配平方程式」按钮；非化学题返回 null。 */
+function chemBalanceEntryButton(q) {
+  const subject = String(q?.subject || '').trim();
+  if (!CHEM_SUBJECTS.has(subject)) return null;
+  return button(t('study.chem.balance.open'), () => {
+    import('../components/chemBalancer.js')
+      .then(module => module.openChemBalancer())
+      .catch(error => toast(error?.message || t('study.chem.balance.failed'), true));
+  }, 'soft small', 'atom', {
+    title: t('study.chem.balance.hint'),
+    'data-chem-balance-open': subject,
+  });
+}
+
+/* ---------------------------------------------------------------------------
  * 批次五（§6.1）：数学题「几何演示」入口；JSXGraph 首次打开时懒加载。
  * ------------------------------------------------------------------------- */
 
@@ -1736,6 +1756,8 @@ export function renderQuestion(
     sandboxEntryButton(q),
     // 批次五（§6.2）：化学题「分子模型」（懒加载 3Dmol，失败仅 toast）。
     moleculeEntryButton(q),
+    // 阶段 3-3：化学题「配平方程式」（服务端线性规划，可逆箭头保留）。
+    chemBalanceEntryButton(q),
     // 批次五（§6.1）：数学题「几何演示」（懒加载 JSXGraph，失败仅 toast）。
     geometryEntryButton(q),
     // 批次五（§6.5）：历史/政治题「时间轴」（懒加载 vis-timeline，失败仅 toast）。
