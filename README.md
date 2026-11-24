@@ -266,7 +266,8 @@ Copyright (c) 2025 Linwei**）。`scripts/build_vocab.py` 只抽取高考词优�
     - 后端 `/api/vocab`：`meta` / `items` / `cards` / `cards/due` /
       `cards/{id}/ratings` / `stats` / `export`；词汇卡复用 `study_review.schedule()`
       的四档排程，`vocab_ratings` 做幂等重放；种子缺失时模块 `available:false`，
-      不影响应用启动与其它功能。
+      不影响应用启动与其它功能。8000 词条在**首次访问词表/词汇卡时懒加载**，
+      首页统计与 meta 不触发整批写入。
     - 前端 `#/vocab`：词表筛选/搜索、加入复习、先回忆再四档评分；首页行动卡显示
       词汇总数与今日到期；`GET /api/insight/home` 新增加法键 `vocab`。
     - 导出：`GET /api/vocab/export` 生成 Anki 牌组（正面单词/音标，背面释义/标签）。

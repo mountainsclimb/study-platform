@@ -10,6 +10,23 @@ def _create_card(client, word="abandon"):
     return response.json()["card"]
 
 
+def test_vocab_seed_is_lazy_and_home_does_not_load(client):
+    from app import db
+
+    def item_count():
+        with db.connection() as con:
+            return int(con.execute("SELECT COUNT(*) FROM vocab_items").fetchone()[0])
+
+    assert item_count() == 0
+    home = client.get("/api/insight/home")
+    assert home.status_code == 200
+    assert home.json()["vocab"]["available"] is True
+    assert item_count() == 0, "首页统计不应触发 8000 词装载"
+    listed = client.get("/api/vocab/items", params={"limit": 1})
+    assert listed.status_code == 200
+    assert item_count() == 8000
+
+
 def test_vocab_meta_and_items(client):
     meta = client.get("/api/vocab/meta").json()
     assert meta["available"] is True

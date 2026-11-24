@@ -16,6 +16,7 @@ from __future__ import annotations
 import hashlib
 import json
 import re
+import threading
 import uuid
 from datetime import datetime, timezone
 from pathlib import Path
@@ -104,6 +105,16 @@ _SEED_STATE = {
     "sha": None,
     "source_commit": None,
 }
+# 进程级种子缓存：文件未变化时只解析一次；每个测试库仍按需整批写入（懒加载）。
+_SEED_CACHE: dict = {
+    "path": None,
+    "mtime_ns": None,
+    "size": None,
+    "sha": None,
+    "meta": {},
+    "rows": (),
+}
+_SEED_LOAD_LOCK = threading.Lock()
 
 
 def _iso(moment: datetime) -> str:
@@ -196,8 +207,57 @@ def _card_public(row, item=None) -> dict:
     return payload
 
 
+def _read_seed(path: Path) -> dict:
+    """读取并缓存种子（按 mtime/size 失效）；只解析，不写数据库。"""
+    stat = path.stat()
+    if (
+        _SEED_CACHE["path"] == str(path)
+        and _SEED_CACHE["mtime_ns"] == stat.st_mtime_ns
+        and _SEED_CACHE["size"] == stat.st_size
+        and _SEED_CACHE["rows"]
+    ):
+        return _SEED_CACHE
+    raw = path.read_bytes()
+    payload = json.loads(raw.decode("utf-8"))
+    items = payload.get("items")
+    if not isinstance(items, list) or not items:
+        raise ValueError("种子缺少 items")
+    meta = payload.get("meta") if isinstance(payload.get("meta"), dict) else {}
+    rows = []
+    for item in items:
+        if not isinstance(item, dict):
+            continue
+        word = str(item.get("word") or "").strip().lower()[:MAX_WORD_CHARS]
+        if not word:
+            continue
+        rows.append((
+            word,
+            str(item.get("phonetic") or "")[:100],
+            str(item.get("translation") or ""),
+            str(item.get("pos") or "")[:120],
+            str(item.get("tag") or "")[:120],
+            item.get("collins"), item.get("oxford"), item.get("bnc"), item.get("frq"),
+            str(item.get("exchange") or "")[:300],
+        ))
+    if not rows:
+        raise ValueError("种子没有有效词条")
+    _SEED_CACHE.update({
+        "path": str(path),
+        "mtime_ns": stat.st_mtime_ns,
+        "size": stat.st_size,
+        "sha": hashlib.sha256(raw).hexdigest(),
+        "meta": meta,
+        "rows": tuple(rows),
+    })
+    return _SEED_CACHE
+
+
 def init_vocab(seed_path: Path | None = None) -> None:
-    """幂等建表并装载种子；种子缺失时只把模块标为不可用，不抛异常。"""
+    """幂等建表并登记种子元信息；词条在首次访问词汇功能时整批装入（懒加载）。
+
+    这样普通测试/启动不会为每个临时数据库写入 8000 条词条；只有真正打开词表、
+    加入/复习词汇时才调用 :func:`_ensure_seed_loaded()`。
+    """
     path = Path(seed_path) if seed_path is not None else SEED_PATH
     with db.connection() as con:
         if db.postgres_enabled():
@@ -205,14 +265,8 @@ def init_vocab(seed_path: Path | None = None) -> None:
         con.executescript(_SCHEMA)
 
     try:
-        raw = path.read_bytes()
-        payload = json.loads(raw.decode("utf-8"))
-        items = payload.get("items")
-        if not isinstance(items, list) or not items:
-            raise ValueError("种子缺少 items")
-        meta = payload.get("meta") if isinstance(payload.get("meta"), dict) else {}
-        seed_sha = hashlib.sha256(raw).hexdigest()
-    except (OSError, ValueError, UnicodeError) as error:
+        seed = _read_seed(path)
+    except (OSError, ValueError, UnicodeError):
         _SEED_STATE.update({
             "available": False,
             "reason": "词汇种子缺失或无法解析，词汇模块暂不可用。",
@@ -221,57 +275,39 @@ def init_vocab(seed_path: Path | None = None) -> None:
             "source_commit": None,
         })
         return
+    _SEED_STATE.update({
+        "available": True,
+        "reason": "",
+        "count": len(seed["rows"]),
+        "sha": seed["sha"],
+        "source_commit": (seed.get("meta") or {}).get("source_commit"),
+    })
 
-    with db.connection() as con:
-        if db.postgres_enabled():
-            db.write_lock(con, "vocab")
-        row = con.execute(
-            "SELECT COUNT(*) AS total, MIN(seed_sha) AS min_sha, MAX(seed_sha) AS max_sha "
-            "FROM vocab_items"
-        ).fetchone()
-        if (row and int(row["total"] or 0) == len(items)
-                and row["min_sha"] == seed_sha and row["max_sha"] == seed_sha):
-            _SEED_STATE.update({
-                "available": True,
-                "reason": "",
-                "count": len(items),
-                "sha": seed_sha,
-                "source_commit": meta.get("source_commit"),
-            })
-            return
-        now = db.utcnow()
-        con.execute("DELETE FROM vocab_items")
-        rows = []
-        for item in items:
-            if not isinstance(item, dict):
-                continue
-            word = str(item.get("word") or "").strip().lower()[:MAX_WORD_CHARS]
-            if not word:
-                continue
-            rows.append((
-                word,
-                str(item.get("phonetic") or "")[:100],
-                str(item.get("translation") or ""),
-                str(item.get("pos") or "")[:120],
-                str(item.get("tag") or "")[:120],
-                item.get("collins"), item.get("oxford"), item.get("bnc"), item.get("frq"),
-                str(item.get("exchange") or "")[:300],
-                seed_sha,
-                now,
-            ))
-        if rows:
+
+def _ensure_seed_loaded() -> None:
+    """首次访问词汇功能时把缓存种子整批写入当前数据库（跨进程写锁保护）。"""
+    _require_available()
+    seed = _SEED_CACHE
+    if not seed["rows"]:
+        seed = _read_seed(Path(seed["path"]) if seed.get("path") else SEED_PATH)
+    with _SEED_LOAD_LOCK:
+        with db.connection() as con:
+            if db.postgres_enabled():
+                db.write_lock(con, "vocab")
+            row = con.execute(
+                "SELECT COUNT(*) AS total, MIN(seed_sha) AS min_sha, MAX(seed_sha) AS max_sha "
+                "FROM vocab_items"
+            ).fetchone()
+            if (row and int(row["total"] or 0) == len(seed["rows"])
+                    and row["min_sha"] == seed["sha"] and row["max_sha"] == seed["sha"]):
+                return
+            now = db.utcnow()
+            con.execute("DELETE FROM vocab_items")
             con.executemany(
                 "INSERT INTO vocab_items(word, phonetic, translation, pos, tag, collins, "
                 "oxford, bnc, frq, exchange, seed_sha, created_at) VALUES(?,?,?,?,?,?,?,?,?,?,?,?)",
-                rows,
+                [(*values, seed["sha"], now) for values in seed["rows"]],
             )
-    _SEED_STATE.update({
-        "available": bool(rows),
-        "reason": "" if rows else "词汇种子为空，词汇模块暂不可用。",
-        "count": len(rows),
-        "sha": seed_sha,
-        "source_commit": meta.get("source_commit"),
-    })
 
 
 def seed_status() -> dict:
@@ -347,6 +383,7 @@ def api_items(
 ):
     """词表分页：按高考/四级等标签与关键词筛选，按词频升序。"""
     _require_available()
+    _ensure_seed_loaded()
     where: list[str] = []
     params: list = []
     tag_text = str(tag or "").strip()
@@ -403,6 +440,7 @@ def api_stats(user=Depends(current_user)):
 @router.post("/cards")
 def api_create_card(payload: CardIn, user=Depends(current_user)):
     _require_available()
+    _ensure_seed_loaded()
     word = payload.word.strip().lower()
     with db.connection() as con:
         if db.postgres_enabled():
@@ -466,6 +504,7 @@ def api_due_cards(
     user=Depends(current_user),
 ):
     _require_available()
+    _ensure_seed_loaded()
     now = _iso(study_review.now_utc())
     clause = "c.user_id=? AND c.archived=0" + ("" if include_future else " AND c.due_at<=?")
     params: list = [user["id"]] + ([] if include_future else [now])
@@ -490,6 +529,7 @@ def api_due_cards(
 @router.get("/cards/{card_id}")
 def api_get_card(card_id: int, user=Depends(current_user)):
     _require_available()
+    _ensure_seed_loaded()
     with db.connection() as con:
         row = con.execute(
             "SELECT " + _CARD_JOIN_COLUMNS + " FROM vocab_cards c "
@@ -515,6 +555,7 @@ def _idempotency_key(value) -> str:
 @router.post("/cards/{card_id}/ratings")
 def api_rate_card(card_id: int, payload: RatingIn, user=Depends(current_user)):
     _require_available()
+    _ensure_seed_loaded()
     key = _idempotency_key(payload.idempotency_key)
     with db.connection() as con:
         if db.postgres_enabled():
@@ -603,6 +644,7 @@ def api_rate_card(card_id: int, payload: RatingIn, user=Depends(current_user)):
 def api_export(user=Depends(current_user)):
     """导出当前用户词汇卡为 Anki 牌组（正面单词/音标，背面释义/标签）。"""
     _require_available()
+    _ensure_seed_loaded()
     from . import anki_export
 
     items = export_items(user["id"])
