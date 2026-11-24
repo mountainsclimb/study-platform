@@ -4,19 +4,26 @@
 
 * ``STUDY_EMBEDDING_MODE=local`` 启用本地向量；``STUDY_RERANK=on`` 启用本地重排。
 * 模型由部署方预置，不进仓库与镜像：
-  - 向量 ``bge-small-zh-v1.5``（MIT，512 维）；
-  - 重排 ``bge-reranker-base``（MIT）。
+  - 向量 ``bge-small-zh-v1.5``（MIT，512 维），ONNX 来源 ``Qdrant/bge-small-zh-v1.5``，
+    目标文件 ``model_optimized.onnx``；
+  - 重排 ``bge-reranker-base``（MIT），目标文件 ``model.onnx``。
   目录默认 ``<data>/models/embeddings`` 与 ``<data>/models/rerank``，可用
   ``STUDY_LOCAL_EMBEDDING_DIR`` / ``STUDY_LOCAL_RERANK_DIR`` 覆盖；**目录在调用时读取**，
   以兼容测试夹具替换 ``db.DATA_DIR``。
+* 目录校验按模型规格执行：必须同时存在目标 ONNX 与 ``config.json`` /
+  ``tokenizer.json``；任意无关 ``*.onnx`` 不算可用。支持平铺目录、模型名子目录与
+  Hugging Face 缓存布局（``models--*/snapshots/*``），解析后通过
+  ``specific_model_path`` 交给 fastembed，不再依赖 ``cache_dir`` 猜测。
 * 同步推理由调用方经 ``asyncio.to_thread`` 执行，进程级信号量限制并发。
 * 目录缺失、依赖未安装或引擎初始化失败时一律按不可用处理；调用方回退到现有
   HTTP Embedding 或本地 TF-IDF 检索，不产生占位向量。
 """
 from __future__ import annotations
 
+from dataclasses import dataclass
 import importlib.metadata
 import importlib.util
+import inspect
 import os
 from pathlib import Path
 import threading
@@ -28,6 +35,13 @@ __all__ = [
     "ENGINE_NAME",
     "EMBEDDING_MODEL_NAME",
     "RERANK_MODEL_NAME",
+    "EMBEDDING_MODEL_SOURCE",
+    "RERANK_MODEL_SOURCE",
+    "ModelSpec",
+    "ResolvedModel",
+    "embedding_spec",
+    "rerank_spec",
+    "resolve_model_dir",
     "LocalEmbeddingError",
     "LocalEmbeddingUnavailable",
     "mode",
@@ -49,11 +63,52 @@ __all__ = [
 ENGINE_NAME = "fastembed"
 EMBEDDING_MODEL_NAME = "BAAI/bge-small-zh-v1.5"
 RERANK_MODEL_NAME = "BAAI/bge-reranker-base"
+# fastembed 0.9.1 的 BAAI/bge-small-zh-v1.5 实际由 Qdrant 仓库分发（MIT），文件名为
+# model_optimized.onnx；写成 huggingface 的 models--BAAI--... 缓存目录会加载失败。
+EMBEDDING_MODEL_SOURCE = "Qdrant/bge-small-zh-v1.5"
+RERANK_MODEL_SOURCE = "BAAI/bge-reranker-base"
 MAX_CONCURRENCY = 2
 EMBEDDING_TIMEOUT_SECONDS = 120
 NOTICE = (
     "本地向量与重排由 fastembed + ONNX Runtime 在本机 CPU 上运行；"
     "模型目录由部署方预置，不进仓库与镜像。"
+)
+
+
+@dataclass(frozen=True)
+class ModelSpec:
+    """一个可预置模型的目录契约。
+
+    ``model_files`` 按优先级列出可接受的相对路径（兼容平铺与 HF 仓库内
+    ``onnx/`` 子目录）；``required_files`` 是目标 ONNX 之外必须同时存在的文件。
+    """
+
+    family: str
+    name: str
+    sources: tuple[str, ...]
+    model_files: tuple[str, ...]
+    required_files: tuple[str, ...] = ("config.json", "tokenizer.json")
+
+
+@dataclass(frozen=True)
+class ResolvedModel:
+    """在预置目录中定位到的可用模型。"""
+
+    root: Path
+    model_file: str
+
+
+EMBEDDING_SPEC = ModelSpec(
+    family="embedding",
+    name=EMBEDDING_MODEL_NAME,
+    sources=(EMBEDDING_MODEL_SOURCE, EMBEDDING_MODEL_NAME),
+    model_files=("model_optimized.onnx", "onnx/model.onnx"),
+)
+RERANK_SPEC = ModelSpec(
+    family="rerank",
+    name=RERANK_MODEL_NAME,
+    sources=(RERANK_MODEL_SOURCE, "Qdrant/bge-reranker-base"),
+    model_files=("model.onnx", "model_optimized.onnx", "onnx/model.onnx"),
 )
 
 _engine = None
@@ -124,24 +179,105 @@ def _engine_version() -> str | None:
         return None
 
 
-def _model_files(directory: Path) -> list[str]:
+def embedding_spec() -> ModelSpec:
+    return EMBEDDING_SPEC
+
+
+def rerank_spec() -> ModelSpec:
+    return RERANK_SPEC
+
+
+def _model_files(directory: Path, spec: ModelSpec | None = None) -> list[str]:
+    """列出目录内与模型规格相关的 ONNX 名称（仅用于状态展示）。"""
     try:
-        return sorted(path.name for path in directory.glob("*.onnx"))
+        if directory.is_file():
+            return [directory.name]
+        names = set()
+        for pattern in ("*.onnx", "onnx/*.onnx"):
+            names.update(path.relative_to(directory).as_posix() for path in directory.glob(pattern))
+        return sorted(names)
     except OSError:
         return []
 
 
-def _dir_ready(directory: Path) -> bool:
-    """模型目录可用：存在且包含 ONNX 文件（或 fastembed 的 HF 缓存子目录）。"""
+def _candidate_roots(directory: Path, spec: ModelSpec) -> list[Path]:
+    """可能的模型根目录：平铺目录、模型名子目录、HF 缓存快照。"""
+    roots: list[Path] = []
+    seen: set[Path] = set()
+
+    def add(candidate: Path) -> None:
+        try:
+            resolved = candidate.resolve()
+        except OSError:
+            resolved = candidate
+        if resolved in seen or not resolved.is_dir():
+            return
+        seen.add(resolved)
+        roots.append(resolved)
+
+    add(directory)
+    add(directory / Path(spec.name).name)
+    for cache in sorted(directory.glob("models--*")):
+        snapshots = cache / "snapshots"
+        if snapshots.is_dir():
+            for snapshot in sorted(snapshots.iterdir()):
+                add(snapshot)
+    return roots
+
+
+def resolve_model_dir(directory: Path, spec: ModelSpec) -> tuple[ResolvedModel | None, list[str]]:
+    """在 ``directory`` 中定位模型，返回 ``(已解析模型, 缺失文件)``。
+
+    ``directory`` 可以是平铺模型目录、模型名子目录，或包含
+    ``models--<source>--<name>/snapshots/<rev>/`` 的缓存根目录。只有目标 ONNX
+    与 ``required_files`` 同时存在才算可用；无关的 ``*.onnx`` 不满足校验。
+    """
+    directory = Path(directory)
+    if not directory.is_dir():
+        return None, [spec.model_files[0], *spec.required_files]
+    best_missing: list[str] | None = None
+    for root in _candidate_roots(directory, spec):
+        model_file = next(
+            (name for name in spec.model_files if (root / name).is_file()),
+            None,
+        )
+        missing = [] if model_file else [spec.model_files[0]]
+        missing.extend(
+            name for name in spec.required_files if not (root / name).is_file()
+        )
+        if not missing and model_file:
+            return ResolvedModel(root=root, model_file=model_file), []
+        if model_file and best_missing is None:
+            best_missing = missing
+    if best_missing is not None:
+        return None, best_missing
+    # 没有目标 ONNX 的目录：错误信息优先指向目标文件，再列出缺少的配套文件。
+    return None, [spec.model_files[0], *spec.required_files]
+
+
+def _dir_ready(directory: Path, spec: ModelSpec = EMBEDDING_SPEC) -> bool:
+    resolved, _ = resolve_model_dir(directory, spec)
+    return resolved is not None
+
+
+def _engine_kwargs(factory, model_name: str, resolved: ResolvedModel) -> dict:
+    """按 fastembed 版本选择加载方式：优先 ``specific_model_path``。"""
     try:
-        if not directory.is_dir():
-            return False
-        if _model_files(directory):
-            return True
-        # 允许部署方按 huggingface_hub 缓存结构放置 models--... 目录。
-        return any(path.is_dir() and path.name.startswith("models--") for path in directory.iterdir())
-    except OSError:
-        return False
+        parameters = inspect.signature(factory).parameters
+    except (TypeError, ValueError):
+        parameters = {}
+    if "specific_model_path" in parameters:
+        return {
+            "model_name": model_name,
+            "specific_model_path": str(resolved.root),
+            "threads": 1,
+        }
+    return {
+        "model_name": model_name,
+        "cache_dir": str(resolved.root),
+        "local_files_only": True,
+        "threads": 1,
+    }
 
 
 def _get_engine():
@@ -153,9 +289,11 @@ def _get_engine():
         if _engine_error is not None:
             raise LocalEmbeddingUnavailable(_engine_error)
         directory = embedding_dir()
-        if not _dir_ready(directory):
+        resolved, missing = resolve_model_dir(directory, EMBEDDING_SPEC)
+        if resolved is None:
             _engine_error = (
-                f"本地向量模型目录不可用：{directory}（需预置 {EMBEDDING_MODEL_NAME}）"
+                f"本地向量模型目录不可用：{directory}"
+                f"（来源 {EMBEDDING_MODEL_SOURCE}；缺少 {', '.join(missing)}）"
             )
             raise LocalEmbeddingUnavailable(_engine_error)
         try:
@@ -166,12 +304,7 @@ def _get_engine():
             )
             raise LocalEmbeddingUnavailable(_engine_error) from None
         try:
-            engine = TextEmbedding(
-                model_name=EMBEDDING_MODEL_NAME,
-                cache_dir=str(directory),
-                local_files_only=True,
-                threads=1,
-            )
+            engine = TextEmbedding(**_engine_kwargs(TextEmbedding, EMBEDDING_MODEL_NAME, resolved))
         except Exception as error:
             _engine_error = (
                 f"本地向量引擎初始化失败（{type(error).__name__}），"
@@ -190,9 +323,11 @@ def _get_rerank_engine():
         if _rerank_error is not None:
             raise LocalEmbeddingUnavailable(_rerank_error)
         directory = rerank_dir()
-        if not _dir_ready(directory):
+        resolved, missing = resolve_model_dir(directory, RERANK_SPEC)
+        if resolved is None:
             _rerank_error = (
-                f"本地重排模型目录不可用：{directory}（需预置 {RERANK_MODEL_NAME}）"
+                f"本地重排模型目录不可用：{directory}"
+                f"（来源 {RERANK_MODEL_SOURCE}；缺少 {', '.join(missing)}）"
             )
             raise LocalEmbeddingUnavailable(_rerank_error)
         try:
@@ -203,12 +338,7 @@ def _get_rerank_engine():
             )
             raise LocalEmbeddingUnavailable(_rerank_error) from None
         try:
-            engine = TextCrossEncoder(
-                model_name=RERANK_MODEL_NAME,
-                cache_dir=str(directory),
-                local_files_only=True,
-                threads=1,
-            )
+            engine = TextCrossEncoder(**_engine_kwargs(TextCrossEncoder, RERANK_MODEL_NAME, resolved))
         except Exception as error:
             _rerank_error = (
                 f"本地重排引擎初始化失败（{type(error).__name__}），将沿用原排序"
@@ -239,7 +369,7 @@ def local_available() -> bool:
         return True
     if _engine_error is not None:
         return False
-    return _module_available() and _dir_ready(embedding_dir())
+    return _module_available() and _dir_ready(embedding_dir(), EMBEDDING_SPEC)
 
 
 def rerank_available() -> bool:
@@ -249,14 +379,16 @@ def rerank_available() -> bool:
         return True
     if _rerank_error is not None:
         return False
-    return _module_available() and _dir_ready(rerank_dir())
+    return _module_available() and _dir_ready(rerank_dir(), RERANK_SPEC)
 
 
 def _unavailable_reason() -> str:
     if _engine_error is not None:
         return _engine_error
+    _, missing = resolve_model_dir(embedding_dir(), EMBEDDING_SPEC)
     return (
-        f"本地向量不可用：未安装 fastembed 或模型目录缺失（{embedding_dir()}）"
+        f"本地向量不可用：未安装 fastembed 或模型目录缺失"
+        f"（{embedding_dir()}；来源 {EMBEDDING_MODEL_SOURCE}；缺少 {', '.join(missing)}）"
     )
 
 
@@ -268,6 +400,8 @@ def dimension() -> int | None:
 def engine_status() -> dict:
     available = local_available()
     rerank_ready = rerank_available()
+    embedding_resolved, embedding_missing = resolve_model_dir(embedding_dir(), EMBEDDING_SPEC)
+    rerank_resolved, rerank_missing = resolve_model_dir(rerank_dir(), RERANK_SPEC)
     if available:
         notice = NOTICE
         if mode() != "local":
@@ -284,10 +418,17 @@ def engine_status() -> dict:
         "rerank_loaded": _rerank_engine is not None,
         "version": _engine_version() if available else None,
         "model": EMBEDDING_MODEL_NAME,
+        "model_source": EMBEDDING_MODEL_SOURCE,
+        "model_path": str(embedding_resolved.root) if embedding_resolved else None,
+        "model_file": embedding_resolved.model_file if embedding_resolved else None,
+        "missing_files": embedding_missing,
         "rerank_model": RERANK_MODEL_NAME,
+        "rerank_model_source": RERANK_MODEL_SOURCE,
+        "rerank_model_path": str(rerank_resolved.root) if rerank_resolved else None,
+        "missing_rerank_files": rerank_missing,
         "dimension": _dimension,
-        "models": _model_files(embedding_dir()) if available else [],
-        "rerank_models": _model_files(rerank_dir()) if rerank_ready else [],
+        "models": _model_files(embedding_resolved.root) if embedding_resolved else [],
+        "rerank_models": _model_files(rerank_resolved.root) if rerank_resolved else [],
         "limits": {"concurrency": MAX_CONCURRENCY, "timeout_seconds": EMBEDDING_TIMEOUT_SECONDS},
         "directories": {
             "embeddings": str(embedding_dir()),

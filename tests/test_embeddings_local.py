@@ -54,8 +54,10 @@ def install_local(monkeypatch, root, *, dimension=2):
     rerank_dir = root / "models" / "rerank"
     embed_dir.mkdir(parents=True, exist_ok=True)
     rerank_dir.mkdir(parents=True, exist_ok=True)
-    (embed_dir / "model_optimized.onnx").write_bytes(b"fake")
-    (rerank_dir / "model.onnx").write_bytes(b"fake")
+    for directory, model_file in ((embed_dir, "model_optimized.onnx"), (rerank_dir, "model.onnx")):
+        (directory / model_file).write_bytes(b"fake")
+        (directory / "config.json").write_text("{}", encoding="utf-8")
+        (directory / "tokenizer.json").write_text("{}", encoding="utf-8")
     engine = FakeEmbedEngine(dimension)
     rerank_engine = FakeRerankEngine()
     monkeypatch.setenv("STUDY_EMBEDDING_MODE", "local")
@@ -78,6 +80,97 @@ def test_off_and_uninstalled_paths_return_none(monkeypatch):
     status = embeddings_local.engine_status()
     assert status["mode"] == "local" and status["available"] is False
     assert "fastembed" in status["notice"]
+
+
+def test_model_dir_rejects_unrelated_onnx(tmp_path):
+    directory = tmp_path / "embeddings"
+    directory.mkdir()
+    (directory / "unrelated.onnx").write_bytes(b"fake")
+    (directory / "config.json").write_text("{}", encoding="utf-8")
+    (directory / "tokenizer.json").write_text("{}", encoding="utf-8")
+    resolved, missing = embeddings_local.resolve_model_dir(
+        directory, embeddings_local.embedding_spec()
+    )
+    assert resolved is None
+    assert missing == ["model_optimized.onnx", "config.json", "tokenizer.json"]
+
+    (directory / "model_optimized.onnx").write_bytes(b"fake")
+    resolved, missing = embeddings_local.resolve_model_dir(
+        directory, embeddings_local.embedding_spec()
+    )
+    assert resolved is not None
+    assert resolved.root == directory.resolve()
+    assert resolved.model_file == "model_optimized.onnx"
+    assert missing == []
+
+
+def test_model_dir_reports_each_missing_companion_file(tmp_path):
+    directory = tmp_path / "embeddings"
+    directory.mkdir()
+    (directory / "model_optimized.onnx").write_bytes(b"fake")
+    resolved, missing = embeddings_local.resolve_model_dir(
+        directory, embeddings_local.embedding_spec()
+    )
+    assert resolved is None
+    assert missing == ["config.json", "tokenizer.json"]
+
+
+def test_hf_cache_snapshot_layout_resolves(tmp_path):
+    snapshot = (
+        tmp_path / "embeddings" / "models--Qdrant--bge-small-zh-v1.5"
+        / "snapshots" / "abc123"
+    )
+    snapshot.mkdir(parents=True)
+    (snapshot / "model_optimized.onnx").write_bytes(b"fake")
+    (snapshot / "config.json").write_text("{}", encoding="utf-8")
+    (snapshot / "tokenizer.json").write_text("{}", encoding="utf-8")
+    resolved, missing = embeddings_local.resolve_model_dir(
+        tmp_path / "embeddings", embeddings_local.embedding_spec()
+    )
+    assert resolved is not None
+    assert resolved.root == snapshot.resolve()
+    assert missing == []
+
+
+def test_model_name_subdirectory_resolves(tmp_path):
+    root = tmp_path / "embeddings" / "bge-small-zh-v1.5"
+    root.mkdir(parents=True)
+    (root / "model_optimized.onnx").write_bytes(b"fake")
+    (root / "config.json").write_text("{}", encoding="utf-8")
+    (root / "tokenizer.json").write_text("{}", encoding="utf-8")
+    resolved, _ = embeddings_local.resolve_model_dir(
+        tmp_path / "embeddings", embeddings_local.embedding_spec()
+    )
+    assert resolved is not None and resolved.root == root.resolve()
+
+
+def test_engine_kwargs_uses_specific_model_path_when_supported(tmp_path):
+    class Modern:
+        def __init__(self, model_name=None, specific_model_path=None, threads=1):
+            pass
+
+    class Legacy:
+        def __init__(self, model_name=None, cache_dir=None, local_files_only=False, threads=1):
+            pass
+
+    resolved = embeddings_local.ResolvedModel(tmp_path, "model_optimized.onnx")
+    modern = embeddings_local._engine_kwargs(Modern, "BAAI/bge-small-zh-v1.5", resolved)
+    assert modern["specific_model_path"] == str(tmp_path)
+    assert "cache_dir" not in modern
+    legacy = embeddings_local._engine_kwargs(Legacy, "BAAI/bge-small-zh-v1.5", resolved)
+    assert legacy["cache_dir"] == str(tmp_path)
+    assert legacy["local_files_only"] is True
+
+
+def test_engine_error_names_missing_files(monkeypatch, tmp_path):
+    monkeypatch.setenv("STUDY_EMBEDDING_MODE", "local")
+    monkeypatch.setattr(embeddings_local, "_module_available", lambda: True)
+    monkeypatch.setattr(embeddings_local, "embedding_dir", lambda: tmp_path / "missing")
+    with pytest.raises(embeddings_local.LocalEmbeddingUnavailable) as excinfo:
+        embeddings_local.embed(["内容"])
+    message = str(excinfo.value)
+    assert "model_optimized.onnx" in message
+    assert "Qdrant/bge-small-zh-v1.5" in message
 
 
 def test_model_dir_missing_marks_unavailable(monkeypatch, tmp_path):

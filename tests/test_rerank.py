@@ -91,6 +91,8 @@ def test_score_texts_uses_local_engine(monkeypatch, tmp_path):
     directory = tmp_path / "rerank"
     directory.mkdir()
     (directory / "model.onnx").write_bytes(b"fake")
+    (directory / "config.json").write_text("{}", encoding="utf-8")
+    (directory / "tokenizer.json").write_text("{}", encoding="utf-8")
     monkeypatch.setenv("STUDY_RERANK", "on")
     monkeypatch.setattr(embeddings_local, "_module_available", lambda: True)
     monkeypatch.setattr(embeddings_local, "rerank_dir", lambda: directory)

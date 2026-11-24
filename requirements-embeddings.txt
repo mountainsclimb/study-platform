@@ -5,11 +5,13 @@
 #   pip install -r requirements-embeddings.txt
 # 启用开关：STUDY_EMBEDDING_MODE=local；重排加 STUDY_RERANK=on（默认均关闭）。
 #
-# 模型由部署方预置，不进仓库与镜像：
-#   <data>/models/embeddings  → BAAI/bge-small-zh-v1.5（MIT，512 维）
+# 模型由部署方预置，不进仓库与镜像（来源以 fastembed 0.9.1 注册表为准）：
+#   <data>/models/embeddings  → Qdrant/bge-small-zh-v1.5（MIT，512 维）
+#                               目标文件 model_optimized.onnx，另需 config.json、tokenizer.json
 #   <data>/models/rerank      → BAAI/bge-reranker-base（MIT）
+#                               目标文件 model.onnx，另需 config.json、tokenizer.json
 # 目录可用 STUDY_LOCAL_EMBEDDING_DIR / STUDY_LOCAL_RERANK_DIR 覆盖。
-# fastembed 以 cache_dir 指向上述目录并设置 local_files_only=True；目录首选
-# huggingface_hub 缓存结构（models--BAAI--bge-small-zh-v1.5/...），与上游 snapshot_download
-# 生成的布局一致。离线目录加载的具体调用方式需在验收环境实测（方案 §5 第一个验证点）。
+# 支持三种布局：平铺目录、模型名子目录、huggingface_hub 缓存
+# （models--Qdrant--bge-small-zh-v1.5/snapshots/<rev>/）。应用会定位实际快照并通过
+# specific_model_path 加载；无关 *.onnx 不再算可用，缺文件时状态接口会列出文件名。
 fastembed==0.9.1
