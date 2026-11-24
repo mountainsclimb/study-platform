@@ -304,6 +304,8 @@ Worker 支持 `STUDY_WORKER_CONCURRENCY`（默认 8）和 `STUDY_WORKER_JOB_TIME
 
   覆盖文件把 `INSTALL_OSS=1` 传给构建层、挂载 `/data/models` 只读，并透传全部
   `STUDY_*` 开关；开关默认仍为 off。
+- **文本相似度**：`requirements-search.txt` 提供可选 RapidFuzz（MIT）；未安装时
+  `app/text_similarity.py` 自动回退 difflib，题库去重与相似题兜底不会失败。
 - **依赖冲突处置**：先按 `--no-deps` 验证单个 wheel 的运行时依赖；公式/表格与主环境冲突时
   放独立进程；ONNX Runtime 两份 DLL（`onnxruntime/capi` 与 `sherpa_onnx/lib`）同进程属于
   已知风险，`scripts/oss_env_check.py --load` 会在同一进程依次加载做 smoke，失败即把语音

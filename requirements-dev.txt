@@ -3,5 +3,5 @@
 
 pytest==9.1.1
 playwright==1.60.0
-# 题库近似去重（scripts/dedup_questions.py）；只用于开发与人工复核，不进生产镜像。
-rapidfuzz==3.14.6
+# 题库近似去重与文本相似度（可选运行依赖，未安装时回退 difflib）。
+-r requirements-search.txt

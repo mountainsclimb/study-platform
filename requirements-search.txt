@@ -1,0 +1,5 @@
+# 可选运行依赖：文本相似度与题库近似查重（app/text_similarity.py）。
+# RapidFuzz 为 MIT 许可，无 torch、体积小；未安装时自动回退标准库 difflib，
+# 主流程、入库与检索都不会失败，只是大库查重会慢一些。
+#   pip install -r requirements-search.txt
+rapidfuzz==3.14.6

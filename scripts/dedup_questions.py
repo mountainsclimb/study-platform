@@ -37,7 +37,7 @@ LENGTH_BUCKET = 30
 DEFAULT_MAX_PAIRS = 5000
 DEFAULT_MAX_PER_QUESTION = 5
 STEM_SUMMARY_CHARS = 120
-RAPIDFUZZ_REQUIRED = "rapidfuzz"
+RAPIDFUZZ_REQUIRED = "rapidfuzz（可选；缺失时回退 difflib）"
 
 # 题干预处理：NFKC 归一化（全角/半角统一）、小写、去掉空白与常见标点。
 _PUNCTUATION = frozenset(
@@ -45,15 +45,11 @@ _PUNCTUATION = frozenset(
 )
 
 
-def _fuzz():
-    """延迟导入 RapidFuzz；缺失时给出可执行的安装提示。"""
-    try:
-        from rapidfuzz import fuzz
-    except ImportError:  # pragma: no cover - 依赖已写入 requirements-dev.txt
-        raise SystemExit(
-            "缺少依赖 rapidfuzz。请先安装开发依赖：pip install -r requirements-dev.txt"
-        ) from None
-    return fuzz
+def _similarity(a: str, b: str) -> float:
+    """相似度 0–1：优先 RapidFuzz，未安装时自动回退 difflib。"""
+    from app.text_similarity import ratio
+
+    return ratio(a, b)
 
 
 def compact_stem(text: str) -> str:
@@ -161,7 +157,6 @@ def find_duplicate_pairs(
     * 每个题目最多保留 ``max_per_question`` 条（按相似度取最高），避免「重复源题」
       在清单里刷屏；总对数上限 ``max_pairs``，超出时按相似度截断并记录。
     """
-    fuzz = _fuzz()
     threshold = min(100.0, max(0.0, float(threshold)))
     by_subject: dict[str, list[dict]] = {}
     for item in questions:
@@ -187,7 +182,7 @@ def find_duplicate_pairs(
                     if pair_key in seen:
                         continue
                     seen.add(pair_key)
-                    score = float(fuzz.ratio(left["compact"], right["compact"]))
+                    score = _similarity(left["compact"], right["compact"]) * 100.0
                     if score < threshold:
                         continue
                     candidates.append({

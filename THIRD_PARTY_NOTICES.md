@@ -311,7 +311,7 @@ SOFTWARE.
 | 13 | Surya OCR（可选） | `surya-ocr`（`requirements-surya.txt`） | 代码 Apache-2.0；权重 Modified AI Pubs Open Rail-M（见 §6） | 运行时 site-packages；权重由部署方按上游下载 | `pip install -r requirements-surya.txt` | 运行时安装（可选，权重不进仓库） |
 | 14 | 题库发布包（只读） | `高考题库_按学科/releases/`，当前 `CURRENT` → `bank-20261121-r5`（26,374 题 / 538 组 / 1,873 卷） | 各来源不同，逐来源见 §17；题目版权归原命题机构 | `../../高考题库_按学科/releases/`，应用只读挂载 | `tools/ingest/build_release.py`（题库仓库内） | 不进仓库（只读挂载） |
 | 15 | axe-core（开发期无障碍扫描） | `axe-core@4.14.1` | MPL-2.0 | `scripts/vendor/axe.min.js`（来源、大小与 SHA-256 见同目录 README） | `npm pack axe-core@4.14.1`，取包内 `axe.min.js` 与 `LICENSE` | 随仓库分发（仅开发脚本）；`.dockerignore` 已排除 `scripts/vendor/`，不进镜像 |
-| 16 | RapidFuzz（开发期题库去重） | `rapidfuzz==3.14.6`（`requirements-dev.txt`） | MIT | 运行时 site-packages，不进仓库 | `pip install -r requirements-dev.txt` | 运行时安装（开发依赖），不进生产镜像 |
+| 16 | RapidFuzz（可选文本相似度/题库去重） | `rapidfuzz==3.14.6`（`requirements-search.txt`） | MIT | 运行时 site-packages，不进仓库 | `pip install -r requirements-search.txt` | 运行时可选；未安装自动回退标准库 difflib |
 | 17 | pdfplumber（文本型 PDF 表格） | `pdfplumber==0.11.10`（`requirements-pdf.txt`；0.11.11 要求 Pillow≥13，与工程锁定版本不兼容） | MIT | 运行时 site-packages，不进仓库 | `pip install -r requirements-pdf.txt`；开关 `STUDY_PDF_TABLES=on` | 运行时安装（可选），不进镜像 |
 | 18 | RapidLaTeXOCR（公式识别） | `rapid-latex-ocr==0.0.9`（`requirements-formula.txt`） | MIT / PyPI 元数据 Apache-2.0；模型源自 LaTeX-OCR（MIT） | 运行时 site-packages；模型随包下载，不进仓库 | `pip install -r requirements-formula.txt`；开关 `STUDY_FORMULA_OCR=on` | 运行时安装（可选），不进镜像 |
 | 19 | RapidTable（表格结构） | `rapid-table==3.0.2`（`requirements-formula.txt`） | Apache-2.0 | 运行时 site-packages；模型随包下载，不进仓库 | `pip install -r requirements-formula.txt`；开关 `STUDY_TABLE_OCR=on` | 运行时安装（可选），不进镜像 |
