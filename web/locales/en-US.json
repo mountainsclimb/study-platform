@@ -5532,5 +5532,13 @@
   "study.chem.balance.failed": "This equation could not be balanced",
   "study.chem.balance.requestFailed": "Balance request failed: {reason}",
   "study.tools.explore": "Explore tools",
-  "study.tools.recommended": "Recommended"
+  "study.tools.recommended": "Recommended",
+  "study.m4.notes.newDemo": "New demo",
+  "study.m4.notes.demoSaved": "Demo saved as a study artifact",
+  "study.m4.notes.demoFailed": "Failed to open the demo",
+  "study.m4.notes.empty": "No study artifacts yet. Start with “New demo”.",
+  "study.m4.classroom.newDemo": "New demo",
+  "study.m4.classroom.demoSaved": "Demo saved as a study artifact",
+  "study.m4.classroom.demoFailed": "Failed to open the demo",
+  "study.m4.classroom.newDemoHint": "New demos are saved as study artifacts and appear in the list above."
 }

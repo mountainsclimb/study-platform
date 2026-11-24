@@ -13,6 +13,7 @@ import { createPromptGrid } from '../components/promptGrid.js';
 import { renderMindmapWidget, renderInteractiveMindmap, markdownToMindmapTree } from '../components/mindmap.js';
 import { renderTopicReportsPanel, renderHandoutsPanel, m6t } from '../components/learningDocs.js';
 import { openFormulaEditor, insertFormulaAtCursor } from '../components/formulaEditor.js';
+import { createDemoCreateMenu } from '../components/demoCreateMenu.js';
 import { t } from '../core/i18n.js';
 
 /** 笔记内容框旁的「插入公式」：Markdown 正文以 `$latex$` 插入。 */
@@ -1550,7 +1551,7 @@ function renderNoteSources(note, onExcerptSaved) {
  * ---------------------------------------------------------------------------
  * - GET /api/artifacts/by-target?target_kind=note&target_key=<note id>
  *   → {items:[{artifact,revision,data,preview,link}],total,skipped}；
- * - 有附件才显示「学习附件」区；无数据隐藏；接口不可用中文降级，不伪造附件；
+ * - 始终显示「新建演示」入口；有附件时追加列表；接口不可用中文降级，不伪造附件；
  * - 打开走本地受控组件的只读模式（principleDemo / functionGraph / sketchBoard），
  *   海报用 <a download> 下载 data URL，标题/版本/时间一律 textContent 写入。
  */
@@ -1782,10 +1783,23 @@ function createNoteAttachmentPanel(note) {
   let seq = 0;
   if (!noteId) return { node: host, load: () => {} };
 
+  function newDemoMenu() {
+    return createDemoCreateMenu({
+      targetKind: 'note',
+      targetKey: noteId,
+      label: m4t('study.m4.notes.newDemo', '新建演示'),
+      savedText: m4t('study.m4.notes.demoSaved', '演示已保存为学习附件'),
+      failedText: m4t('study.m4.notes.demoFailed', '演示打开失败'),
+      onSaved: () => load(),
+    });
+  }
+
   function headNode() {
     return el('div', { class: 'cls-note-artifacts-head' },
       el('h3', {}, m4t('study.m4.notes.title', '学习附件')),
-      button(t('common.reload'), () => load(), 'ghost small', 'rotate'));
+      el('div', { class: 'row', style: 'gap:6px;flex-wrap:wrap' },
+        newDemoMenu(),
+        button(t('common.reload'), () => load(), 'ghost small', 'rotate')));
   }
 
   function cardNode(item) {
@@ -1841,8 +1855,12 @@ function createNoteAttachmentPanel(note) {
       const items = (Array.isArray(result?.items) ? result.items : [])
         .filter(item => item && typeof item === 'object' && item.artifact);
       if (!items.length) {
-        host.classList.add('hide');
-        host.replaceChildren();
+        host.classList.remove('hide');
+        host.replaceChildren(
+          headNode(),
+          el('p', { class: 'help' },
+            m4t('study.m4.notes.empty', '还没有学习附件，可从「新建演示」开始。')),
+        );
         return;
       }
       const skipped = Number(result?.skipped) || 0;

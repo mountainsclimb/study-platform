@@ -21,6 +21,7 @@ import { t } from '../core/i18n.js';
 import { current, go, renderRoute } from '../core/router.js';
 import { createWizardView } from '../components/classroomWizard.js';
 import { createPlayerView } from '../components/classroomPlayer.js';
+import { createDemoCreateMenu } from '../components/demoCreateMenu.js';
 import { createEditorView } from '../components/classroomEditor.js';
 import {
   closeCanvasEditor,
@@ -516,6 +517,14 @@ function openDemoInsertDialog({ courseId, onInserted } = {}) {
     disabled: true,
     'data-demo-insert-confirm': 'true',
   });
+  const createMenu = createDemoCreateMenu({
+    targetKind: 'classroom',
+    targetKey: courseId,
+    label: m4Text('study.m4.classroom.newDemo', '新建演示'),
+    savedText: m4Text('study.m4.classroom.demoSaved', '演示已保存为学习附件'),
+    failedText: m4Text('study.m4.classroom.demoFailed', '演示打开失败'),
+    onSaved: () => load(),
+  });
   let selected = null;
   let loadSeq = 0;
   let submitting = false;
@@ -648,7 +657,11 @@ function openDemoInsertDialog({ courseId, onInserted } = {}) {
     listHost,
     el('div', { class: 'cls-demo-insert-form' },
       field(m4Text('study.m4.classroom.titleField', '场景标题（可选）'), titleInput),
-      field(m4Text('study.m4.classroom.noteField', '插入说明（可选）'), noteInput)),
+      field(m4Text('study.m4.classroom.noteField', '插入说明（可选）'), noteInput),
+      el('div', { class: 'row', style: 'gap:8px;flex-wrap:wrap;align-items:center' },
+        createMenu,
+        el('span', { class: 'help' },
+          m4Text('study.m4.classroom.newDemoHint', '新建的演示会保存为学习附件并出现在上方列表。')))),
     status,
     el('div', { class: 'row end cls-demo-insert-actions' },
       button(t('common.cancel'), close, 'secondary'),

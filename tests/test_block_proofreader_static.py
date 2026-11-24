@@ -64,3 +64,16 @@ def test_explore_tools_menu_is_wired():
     assert "export function recommendedTool" in component
     assert "SUBJECT_ALIASES" in component
     assert "data-explore-tools" in component
+
+
+def test_demo_create_menu_is_shared_by_notes_and_classroom():
+    component = _read(ROOT / "web" / "js" / "components" / "demoCreateMenu.js")
+    assert "export function createDemoCreateMenu" in component
+    assert "target_kind" in component
+    for page in ("notes.js", "classroom.js"):
+        text = _read(ROOT / "web" / "js" / "pages" / page)
+        assert "createDemoCreateMenu" in text, page
+    notes = _read(ROOT / "web" / "js" / "pages" / "notes.js")
+    assert "targetKind: 'note'" in notes
+    classroom = _read(ROOT / "web" / "js" / "pages" / "classroom.js")
+    assert "targetKind: 'classroom'" in classroom

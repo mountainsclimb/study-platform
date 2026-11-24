@@ -5532,5 +5532,13 @@
   "study.chem.balance.failed": "无法配平该方程式",
   "study.chem.balance.requestFailed": "配平请求失败：{reason}",
   "study.tools.explore": "探究工具",
-  "study.tools.recommended": "推荐"
+  "study.tools.recommended": "推荐",
+  "study.m4.notes.newDemo": "新建演示",
+  "study.m4.notes.demoSaved": "演示已保存为学习附件",
+  "study.m4.notes.demoFailed": "演示打开失败",
+  "study.m4.notes.empty": "还没有学习附件，可从「新建演示」开始。",
+  "study.m4.classroom.newDemo": "新建演示",
+  "study.m4.classroom.demoSaved": "演示已保存为学习附件",
+  "study.m4.classroom.demoFailed": "演示打开失败",
+  "study.m4.classroom.newDemoHint": "新建的演示会保存为学习附件并出现在上方列表。"
 }

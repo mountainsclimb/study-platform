@@ -686,3 +686,33 @@
     max-height: 70vh;
   }
 }
+
+/* 笔记/课堂共用「新建演示」菜单（demoCreateMenu.js） */
+.demo-create-menu {
+  position: relative;
+  display: inline-block;
+}
+
+.demo-create-menu > summary {
+  list-style: none;
+  cursor: pointer;
+}
+
+.demo-create-menu > summary::-webkit-details-marker {
+  display: none;
+}
+
+.demo-create-list {
+  position: absolute;
+  z-index: 45;
+  left: 0;
+  top: calc(100% + 6px);
+  min-width: 190px;
+  display: grid;
+  gap: 6px;
+  padding: 8px;
+  border: 1px solid var(--line);
+  border-radius: 12px;
+  background: var(--surface);
+  box-shadow: 0 12px 32px rgba(0, 0, 0, 0.16);
+}
