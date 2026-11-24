@@ -5500,5 +5500,16 @@
   "vocab.dictation.wrongStatus": "Not quite; play the audio and try again.",
   "vocab.dictation.micDenied": "Microphone permission was denied; allow it in the address bar and retry.",
   "vocab.dictation.noDevice": "No microphone was found.",
-  "vocab.dictation.failed": "Dictation failed"
+  "vocab.dictation.failed": "Dictation failed",
+  "study.formula.review.save": "Save proofreading",
+  "study.formula.review.saved": "Proofreading saved",
+  "study.formula.review.saveFailed": "Save failed",
+  "study.formula.review.saveHint": "Saves blocks for this page only; the question bank is unchanged.",
+  "study.formula.review.readOnly": "Read-only",
+  "study.formula.review.empty": "No blocks to proofread.",
+  "study.formula.review.versionConflict": "Blocks were updated in another window; reload before saving.",
+  "paper.import.pageBlocks": "Proofread page ({count} blocks)",
+  "paper.import.pageBlockTitle": "Proofread blocks on page {page}",
+  "paper.import.pageBlocksHint": "Review text, formulas and table structure; saving updates this page only.",
+  "paper.import.pageBlocksEmpty": "No blocks on this page. Run local OCR first."
 }

@@ -9,6 +9,7 @@ import { mountJob } from '../core/jobs.js';
 import { createModelPicker } from '../components/modelPicker.js';
 import { openKpDetailDialog } from '../components/kpDetailModal.js';
 import { createVoiceInput } from '../components/voiceInput.js';
+import { formulaEditorButton } from '../components/formulaEditor.js';
 import { t } from '../core/i18n.js';
 
 // AI 助手（整合自 Oh My Paper 小纸）：会话 + 工具白名单 + 可停止的 Agent 循环。
@@ -252,7 +253,11 @@ export async function renderAssistant(container, version) {
   const composerMeta = el('div', { class: 'asst-composer-meta' },
     el('span', { class: 'asst-hint' }, t('assistant.enterToSendShiftEnterForA')),
     counter);
-  const inputRow = el('div', { class: 'asst-input-row' }, textarea, voice.node);
+  const formulaBtn = formulaEditorButton(textarea, {
+    title: t('study.oss.formula.dialogTitle'),
+  });
+  formulaBtn.classList.add('asst-formula-btn');
+  const inputRow = el('div', { class: 'asst-input-row' }, textarea, voice.node, formulaBtn);
   const actionRow = el('div', { class: 'asst-action-row' },
     scopeDetails,
     el('div', { class: 'asst-send-row' }, stopBtn, sendBtn));

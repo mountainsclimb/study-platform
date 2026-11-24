@@ -20,6 +20,7 @@ from fastapi.responses import HTMLResponse
 
 from .. import storage
 from ..auth import current_user
+from ..content_blocks import blocks_plain_text, blocks_to_html, content_blocks, table_rows
 from . import assets, db, papers
 from .db import ASSET_FOLDER, json_load
 
@@ -255,7 +256,10 @@ def _html_question(item: dict, number: int, *, user_id: int | None = None) -> st
     ]
     if material:
         blocks.append(f'<div class="material">{material}</div>')
-    blocks.append(f'<div class="stem">{stem}</div>')
+    content = snapshot.get("content") if isinstance(snapshot.get("content"), dict) else snapshot
+    stem_blocks = content_blocks(content)
+    stem_html = blocks_to_html(stem_blocks) if stem_blocks else ""
+    blocks.append(f'<div class="stem">{stem_html or stem}</div>')
     images = _html_images(snapshot, user_id=user_id)
     if images:
         blocks.append(f'<div class="q-images">{images}</div>')
@@ -568,6 +572,37 @@ def _answer_lines(document, item: dict, snapshot: dict) -> None:
         paragraph.paragraph_format.space_after = Mm(1)
 
 
+def _add_docx_blocks(document, blocks: list[dict]) -> None:
+    """把内容块写入 Word：文本/公式按段落，表格还原为可编辑表格。"""
+    from docx.shared import Pt
+
+    for block in blocks or []:
+        kind = block.get("kind")
+        if kind == "table":
+            rows = table_rows(block.get("table_html") or "")
+            columns = max((len(row) for row in rows), default=0)
+            if rows and columns and len(rows) <= 30 and columns <= 12:
+                table = document.add_table(rows=len(rows), cols=columns)
+                table.autofit = True
+                for row_index, row in enumerate(rows):
+                    for column_index in range(columns):
+                        cell = table.cell(row_index, column_index)
+                        cell.text = row[column_index] if column_index < len(row) else ""
+                        for paragraph in cell.paragraphs:
+                            for run in paragraph.runs:
+                                run.font.size = Pt(9)
+                continue
+            text = blocks_plain_text([block], latex_delimiters=False)
+            if text:
+                document.add_paragraph(text)
+        elif kind == "math":
+            latex = str(block.get("latex") or "").strip()
+            if latex:
+                document.add_paragraph(latex_to_text(latex))
+        elif str(block.get("text") or "").strip():
+            document.add_paragraph(str(block["text"]))
+
+
 def build_docx(paper: dict, items: list[dict], *, include_answers: bool = True,
                columns: int | None = None) -> bytes:
     from docx import Document
@@ -610,13 +645,23 @@ def build_docx(paper: dict, items: list[dict], *, include_answers: bool = True,
             material = _material_text(snapshot)
             if material:
                 document.add_paragraph("材料：" + material)
-            stem_paragraph = document.add_paragraph()
-            stem_paragraph.add_run(f"{number}. ").bold = True
-            stem_paragraph.add_run(_item_text(snapshot, "stem"))
-            score = _score_text(item)
-            if score:
-                score_run = stem_paragraph.add_run(f"（{score}）")
-                score_run.font.size = Pt(9)
+            stem_blocks = content_blocks(snapshot.get("content") or snapshot)
+            if stem_blocks:
+                number_paragraph = document.add_paragraph()
+                number_paragraph.add_run(f"{number}. ").bold = True
+                score = _score_text(item)
+                if score:
+                    score_run = number_paragraph.add_run(f"（{score}）")
+                    score_run.font.size = Pt(9)
+                _add_docx_blocks(document, stem_blocks)
+            else:
+                stem_paragraph = document.add_paragraph()
+                stem_paragraph.add_run(f"{number}. ").bold = True
+                stem_paragraph.add_run(_item_text(snapshot, "stem"))
+                score = _score_text(item)
+                if score:
+                    score_run = stem_paragraph.add_run(f"（{score}）")
+                    score_run.font.size = Pt(9)
             options = _item_options(snapshot)
             if options:
                 _option_table(document, options)

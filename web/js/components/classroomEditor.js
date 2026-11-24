@@ -19,6 +19,7 @@
 import { api } from '../core/api.js';
 import { el, button, notice, loading, toast } from '../core/dom.js';
 import { current, go } from '../core/router.js';
+import { formulaEditorButton } from './formulaEditor.js';
 import {
   SLIDE_HEIGHT, SLIDE_WIDTH, escapeHtml, latexNode, slideTextNode,
   typeLabel as sharedTypeLabel,
@@ -1563,9 +1564,16 @@ export function createEditorView({ container, version: renderVersion, courseId, 
       applyMutation(() => { item.latex = textarea.value.slice(0, 2000); });
       refreshElementNode(item);
     });
+    const visualEdit = formulaEditorButton(textarea, {
+      title: '可视化公式编辑',
+      wrap: false,
+      variant: 'secondary small',
+    });
+    visualEdit.classList.add('cls-editor-latex-visual');
     return el('div', { class: 'cls-editor-section' },
       el('h4', {}, '公式（LaTeX）'),
-      compactField('LaTeX 文本', textarea),
+      compactField('LaTeX 文本', el('div', { class: 'cls-editor-latex-field' },
+        textarea, visualEdit)),
       el('div', { class: 'cls-editor-grid-2' },
         compactField('颜色', colorControl(item.color, (value) => {
           applyMutation(() => { item.color = value; });

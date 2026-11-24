@@ -1,7 +1,7 @@
 {
   "version": 1,
   "generated_from": "app.main:app",
-  "count": 392,
+  "count": 394,
   "routes": [
     {
       "method": "GET",
@@ -894,6 +894,14 @@
     {
       "method": "PUT",
       "path": "/api/paperlab/imports/{import_id}/pages/{page_no}/annotation"
+    },
+    {
+      "method": "GET",
+      "path": "/api/paperlab/imports/{import_id}/pages/{page_no}/blocks"
+    },
+    {
+      "method": "PUT",
+      "path": "/api/paperlab/imports/{import_id}/pages/{page_no}/blocks"
     },
     {
       "method": "GET",

@@ -580,3 +580,46 @@
     transform: none;
   }
 }
+
+/* 通用识别块校对组件（blockProofreader.js）：拍题 / 知识清单 / 工坊逐页共用。 */
+.block-proofreader {
+  display: grid;
+  gap: 10px;
+}
+
+.block-proofreader-footer {
+  align-items: center;
+}
+
+.pl-block-proof-dialog {
+  width: min(960px, 94vw);
+  max-height: 90vh;
+  overflow: auto;
+}
+
+.pl-block-proof-preview {
+  position: relative;
+  max-height: 36vh;
+  overflow: auto;
+  margin-bottom: 12px;
+  border: 1px solid var(--line);
+  border-radius: 10px;
+  background: var(--surface-2, rgba(0, 0, 0, 0.02));
+}
+
+.pl-block-proof-preview .pl-page-image {
+  display: block;
+  max-width: 100%;
+  height: auto;
+}
+
+.formula-field-with-action,
+.cls-editor-latex-field {
+  display: grid;
+  gap: 8px;
+}
+
+.formula-field-with-action textarea,
+.cls-editor-latex-field textarea {
+  width: 100%;
+}

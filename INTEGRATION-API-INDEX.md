@@ -2027,3 +2027,10 @@ bottleneck_station/bottleneck_reason/dropped/blocked`。
 
 课堂 `code` 场景只把代码文本链接到该页面，不在课堂 iframe 内执行任意脚本；
 主站 CSP 保持 `script-src 'self'`，不因实验台放宽。
+
+### 31.5 工坊逐页块校对（`app/paperlab/digitize.py`）
+
+| 方法/路径 | 请求 | 响应要点 |
+| --- | --- | --- |
+| `GET /api/paperlab/imports/{id}/pages/{page_no}/blocks` | — | `{page_no,blocks,version,engine,has_blocks,ocr_block_count}`；归属校验 404。 |
+| `PUT /api/paperlab/imports/{id}/pages/{page_no}/blocks` | `{blocks:[...],expected_version}` | 乐观锁：版本不符 409；保存后 `version+1`；表格 HTML 走白名单清洗，其余字段沿用 `intake-blocks-v1`。 |

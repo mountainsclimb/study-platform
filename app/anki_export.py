@@ -22,6 +22,8 @@ import re
 import tempfile
 import zlib
 
+from .content_blocks import blocks_to_html, content_blocks
+
 MAX_FIELD_CHARS = 20000
 MAX_CARDS = 200
 
@@ -326,7 +328,11 @@ def _wrong_card(user_id: int, item: dict) -> dict | None:
 
     meta = _wrong_meta({**item, **{k: detail.get(k) or item.get(k) for k in ("subject", "year", "paper_name", "number_label", "type_label")}})
     front = f'<div class="zx-meta">{_escape(meta)}</div>'
-    front += f'<div class="zx-stem">{text_to_html(stem)}</div>'
+    stem_blocks = content_blocks(detail) or content_blocks(question)
+    if stem_blocks:
+        front += f'<div class="zx-stem">{blocks_to_html(stem_blocks)}</div>'
+    else:
+        front += f'<div class="zx-stem">{text_to_html(stem)}</div>'
     front += _option_lines(detail.get("options") or question.get("options"))
 
     answer = detail.get("answer_text") or (question.get("answer_text") if question.get("has_answer") else "") or ""

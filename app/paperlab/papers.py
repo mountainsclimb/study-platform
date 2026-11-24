@@ -385,6 +385,9 @@ def snapshot_app(user_id: int, question_id: int) -> dict:
         },
         "frozen_at": utcnow(),
     }
+    blocks = content.get("blocks")
+    if isinstance(blocks, list) and blocks:
+        snapshot["content"]["blocks"] = _deepcopy(blocks[:200])
     return snapshot
 
 

@@ -12,6 +12,7 @@ import { filePicker } from '../components/filePicker.js';
 import { renderAiResult } from '../components/aiResultCard.js';
 import { openKpDetailDialog } from '../components/kpDetailModal.js';
 import { openPresentationMode } from '../components/presentationMode.js';
+import { formulaEditorButton } from '../components/formulaEditor.js';
 import { t } from '../core/i18n.js';
 import { markdown } from '../core/markdown.js';
 
@@ -2165,7 +2166,10 @@ export function renderQuestion(
   const aiControls = createModelPicker('explain', { showModeToggle: true, showJudge: true });
   aiSection.append(aiControls.node);
   const custom = el('textarea', { placeholder: t('question.optionalAddYourExplanationRequirementsEG'), rows: 2 });
-  aiSection.append(el('div', { style: 'margin-top:12px' }, field(t('question.additionalRequirements'), custom)));
+  const customFormula = formulaEditorButton(custom, { variant: 'ghost small' });
+  aiSection.append(el('div', { style: 'margin-top:12px' },
+    field(t('question.additionalRequirements'),
+      el('div', { class: 'formula-field-with-action' }, custom, customFormula))));
   const jobMount = el('div');
   const modes = state.explainModes || [
     { id: 'detailed', name: t('upload.mode.detailed.name'), short: t('upload.mode.detailed.short') },

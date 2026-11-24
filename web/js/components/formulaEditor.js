@@ -39,6 +39,42 @@ export function normalizeLatex(value) {
   return text;
 }
 
+/** 把 LaTeX 片段插入任意 input/textarea 的光标处，并触发 input 事件。 */
+export function insertFormulaIntoField(target, latex, { wrap = true } = {}) {
+  if (!target || typeof target.value !== 'string') return false;
+  const snippet = wrap ? `$${normalizeLatex(latex)}$` : normalizeLatex(latex);
+  const source = target.value;
+  let start = Number.isInteger(target.selectionStart) ? target.selectionStart : source.length;
+  let end = Number.isInteger(target.selectionEnd) ? target.selectionEnd : start;
+  start = Math.min(Math.max(0, start), source.length);
+  end = Math.min(Math.max(start, end), source.length);
+  target.value = `${source.slice(0, start)}${snippet}${source.slice(end)}`;
+  const caret = Math.min(target.value.length, start + snippet.length);
+  try { target.setSelectionRange(caret, caret); } catch { /* 个别控件不支持选区 */ }
+  target.dispatchEvent(new Event('input', { bubbles: true }));
+  target.focus();
+  return true;
+}
+
+/** 生成「插入公式」按钮：绑定到目标输入框，失败时保持原文本。 */
+export function formulaEditorButton(target, {
+  title = '', initialLatex = '', label = '', variant = 'ghost small', wrap = true,
+} = {}) {
+  return button(
+    label || t('study.oss.formula.insert'),
+    async () => {
+      if (!target) return;
+      const latex = await openFormulaEditor({
+        initialLatex,
+        title: title || t('study.oss.formula.dialogTitle'),
+      });
+      if (latex === null) return;
+      insertFormulaIntoField(target, latex, { wrap });
+    },
+    variant,
+  );
+}
+
 function ensureStyle() {
   if (document.querySelector(`link[data-oss="${STYLE_MARK}"]`)) return;
   const link = document.createElement('link');

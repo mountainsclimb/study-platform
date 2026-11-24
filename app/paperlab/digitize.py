@@ -401,6 +401,13 @@ def _normalize_ocr_blocks(raw) -> list[dict]:
             "norm": item.get("norm") if isinstance(item.get("norm"), dict) else None,
             "source": str(item.get("source") or "local_ocr")[:32],
         }
+        for field in ("latex_engine", "table_engine"):
+            value = item.get(field)
+            if isinstance(value, str) and value.strip():
+                block[field] = value.strip()[:32]
+        span = schema.safe_int(item.get("table_span"))
+        if span is not None and 1 <= span <= 50:
+            block["table_span"] = span
         table_html = item.get("table_html")
         if isinstance(table_html, str) and table_html.strip():
             try:
@@ -1069,6 +1076,67 @@ def import_detail(import_id: int, user=Depends(current_user)):
     }
 
 
+@router.get("/imports/{import_id}/pages/{page_no}/blocks")
+def page_blocks(import_id: int, page_no: int, user=Depends(current_user)):
+    """读取单页识别块与版本号，供工坊逐页校对。"""
+    page = db.fetch_page(import_id, page_no, user["id"])
+    blocks = _normalize_ocr_blocks(json_load(page.get("ocr_blocks_json"), []))
+    return {
+        "page_no": page_no,
+        "blocks": blocks,
+        "version": int(page.get("ocr_blocks_version") or 0),
+        "engine": page.get("ocr_engine") or "",
+        "has_blocks": bool(blocks),
+        "ocr_block_count": len(blocks),
+    }
+
+
+@router.put("/imports/{import_id}/pages/{page_no}/blocks")
+def save_page_blocks(
+    import_id: int, page_no: int, data: PageBlocksInput,
+    user=Depends(current_user),
+):
+    """保存人工校对后的单页识别块（乐观锁；只改 pl_pages，不动题库）。"""
+    db.fetch_page(import_id, page_no, user["id"])
+    if len(data.blocks) > MAX_OCR_BLOCKS:
+        raise HTTPException(422, f"识别块最多 {MAX_OCR_BLOCKS} 个，请精简后再保存")
+    from ..ai.upload_pipeline import _validate_confirm_blocks
+
+    notices: list[str] = []
+    validated = _validate_confirm_blocks(data.blocks, notices)
+    blocks = _normalize_ocr_blocks(validated)
+    now = utcnow()
+    with connection() as con:
+        write_lock(con, "paperlab-page-blocks")
+        row = con.execute(
+            "SELECT ocr_blocks_version FROM pl_pages "
+            "WHERE import_id=? AND page_no=? AND user_id=?",
+            (import_id, page_no, user["id"]),
+        ).fetchone()
+        if row is None:
+            raise HTTPException(404, "未找到该页")
+        current = int(row["ocr_blocks_version"] or 0)
+        if data.expected_version != current:
+            raise HTTPException(
+                409,
+                f"识别块已被其他窗口更新（版本 {current}），请重新载入后再保存",
+            )
+        con.execute(
+            "UPDATE pl_pages SET ocr_blocks_json=?, ocr_blocks_version=?, updated_at=? "
+            "WHERE import_id=? AND page_no=? AND user_id=?",
+            (json_dump(blocks), current + 1, now, import_id, page_no, user["id"]),
+        )
+        db.touch_import(con, import_id, user["id"])
+    return {
+        "page_no": page_no,
+        "blocks": blocks,
+        "version": current + 1,
+        "notices": notices,
+        "has_blocks": bool(blocks),
+        "ocr_block_count": len(blocks),
+    }
+
+
 @router.get("/imports/{import_id}/pages/{page_no}/image")
 def page_image(import_id: int, page_no: int, user=Depends(current_user)):
     page = db.fetch_page(import_id, page_no, user["id"])
@@ -1093,6 +1161,11 @@ class OcrInput(BaseModel):
 class OcrDraftInput(BaseModel):
     pages: list[int] | None = Field(default=None, max_length=MAX_IMPORT_PAGES)
     split: str = Field(default="blank_line", max_length=20)
+
+
+class PageBlocksInput(BaseModel):
+    blocks: list[dict] = Field(default_factory=list)
+    expected_version: int = Field(default=0, ge=0)
 
 
 @router.get("/ocr/info")
@@ -1832,6 +1905,9 @@ def _question_fields_from_draft(draft: dict, import_row: dict, *, job_id: int | 
         content["ocr"] = ocr_meta
     if ai_meta:
         content["ai"] = ai_meta
+    blocks = draft.get("blocks")
+    if isinstance(blocks, list) and blocks:
+        content["blocks"] = blocks[:MAX_OCR_BLOCKS]
     return {
         "type": qtype,
         "subject": (draft.get("subject") or import_row.get("subject") or "")[:40],

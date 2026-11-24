@@ -5500,5 +5500,16 @@
   "vocab.dictation.wrongStatus": "本题未通过，可播放发音后再试。",
   "vocab.dictation.micDenied": "麦克风权限被拒绝，请在地址栏允许后重试。",
   "vocab.dictation.noDevice": "没有找到可用的麦克风。",
-  "vocab.dictation.failed": "听写练习失败"
+  "vocab.dictation.failed": "听写练习失败",
+  "study.formula.review.save": "保存校对",
+  "study.formula.review.saved": "校对已保存",
+  "study.formula.review.saveFailed": "保存失败",
+  "study.formula.review.saveHint": "保存后写入本页识别块，不修改题库。",
+  "study.formula.review.readOnly": "只读",
+  "study.formula.review.empty": "暂无可校对的识别块。",
+  "study.formula.review.versionConflict": "识别块已被其他窗口更新，请重新载入。",
+  "paper.import.pageBlocks": "逐页校对（{count} 块）",
+  "paper.import.pageBlockTitle": "第 {page} 页识别块校对",
+  "paper.import.pageBlocksHint": "核对文字、公式与表格结构；保存只更新本页识别块，不修改题库。",
+  "paper.import.pageBlocksEmpty": "本页没有识别块，可先运行本地 OCR。"
 }

@@ -16,6 +16,7 @@ import { current, go } from '../core/router.js';
 import { mountJob } from '../core/jobs.js';
 import { createModelPicker } from '../components/modelPicker.js';
 import { openQuestionEditor, typeLabel } from '../components/paperQuestionForm.js';
+import { createBlockProofreader } from '../components/blockProofreader.js';
 import { filePicker } from '../components/filePicker.js';
 import { renderPageAnnotator } from './pageAnnotator.js';
 import { markdown } from '../core/markdown.js';
@@ -405,6 +406,76 @@ export async function renderImportDetail({
       pageHint.append(el('span', { class: 'pl-page-ocr-hint' },
         t('paper.import.localOcrExtractedCharactersUsedAsA', { v1: page.ocr_chars || 0 })));
     }
+    if (page.has_blocks) {
+      pageHint.append(button(
+        t('paper.import.pageBlocks', { count: page.ocr_block_count || 0 }),
+        () => openPageBlockProofreader(page),
+        'secondary small',
+      ));
+    }
+  }
+
+  /** 工坊逐页块校对：读取本页块 → 通用组件编辑 → 乐观锁保存。 */
+  async function openPageBlockProofreader(page) {
+    if (!page || !page.has_blocks) return;
+    let data;
+    try {
+      data = await api(`/paperlab/imports/${importId}/pages/${page.page_no}/blocks`);
+    } catch (error) {
+      toast(error && error.message ? error.message : t('paper.import.pageBlocksEmpty'), true);
+      return;
+    }
+    if (!Array.isArray(data.blocks) || !data.blocks.length) {
+      toast(t('paper.import.pageBlocksEmpty'), true);
+      return;
+    }
+    let version = Number(data.version) || 0;
+    const dialog = el('dialog', { class: 'modal-dialog pl-block-proof-dialog' });
+    const title = el('h2', {}, t('paper.import.pageBlockTitle', { page: page.page_no }));
+    const preview = page.image_url ? el('div', { class: 'pl-block-proof-preview' }) : null;
+    const image = page.image_url
+      ? el('img', {
+        class: 'pl-page-image',
+        src: page.image_url,
+        alt: t('paper.import.pageOriginalImage', { v1: page.page_no }),
+      })
+      : null;
+    const shell = page.image_url ? el('div', { class: 'pl-page-overlay' }) : null;
+    if (preview) preview.append(image, shell);
+    const reader = createBlockProofreader({
+      blocks: data.blocks,
+      previews: preview ? [{ img: image, shell, pageIndex: 0 }] : [],
+      showOverlays: Boolean(preview),
+      statusText: t('paper.import.pageBlocksHint'),
+      onSave: async blocks => {
+        const saved = await api(
+          `/paperlab/imports/${importId}/pages/${page.page_no}/blocks`,
+          { method: 'PUT', data: { blocks, expected_version: version } },
+        );
+        version = Number(saved.version) || version + 1;
+        page.has_blocks = Boolean(saved.has_blocks);
+        page.ocr_block_count = Number(saved.ocr_block_count) || 0;
+        page.ocr_blocks_version = version;
+        toast(t('study.formula.review.saved'));
+        dialog.close();
+        renderPageViewer();
+      },
+    });
+    dialog.append(
+      title,
+      el('p', { class: 'help' }, t('paper.import.pageBlocksHint')),
+      ...(preview ? [preview] : []),
+      reader.element,
+      el('div', { class: 'row', style: 'justify-content:flex-end' },
+        button(t('common.close'), () => dialog.close(), 'ghost')),
+    );
+    dialog.addEventListener('close', () => {
+      reader.destroy();
+      dialog.remove();
+    });
+    document.body.append(dialog);
+    if (typeof dialog.showModal === 'function') dialog.showModal();
+    else dialog.setAttribute('open', '');
   }
 
   function renderOverlay() {

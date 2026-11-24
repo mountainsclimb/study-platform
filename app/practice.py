@@ -1291,7 +1291,12 @@ def _app_question_dict(row: dict) -> dict:
     objective = ftype in ("SINGLE", "MULTIPLE") and bool(options)
     auto_gradeable = (objective or ftype == "BLANK") and bool(answers)
     images = _app_question_images(question_id, content)
-    stem_blocks: list[dict] = [{"kind": "text", "text": stem}] if stem else []
+    stored_blocks = content.get("blocks") if isinstance(content.get("blocks"), list) else []
+    stem_blocks: list[dict] = [
+        {key: block[key] for key in ("kind", "text", "latex", "table_html", "order", "page")
+         if key in block}
+        for block in stored_blocks[:200] if isinstance(block, dict)
+    ] if stored_blocks else ([{"kind": "text", "text": stem}] if stem else [])
     for image in images:
         stem_blocks.append({
             "kind": "image",

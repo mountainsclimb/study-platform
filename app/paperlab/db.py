@@ -188,6 +188,7 @@ CREATE TABLE IF NOT EXISTS pl_pages (
     ocr_text TEXT NOT NULL DEFAULT '',
     ocr_lines_json TEXT NOT NULL DEFAULT '[]',
     ocr_blocks_json TEXT NOT NULL DEFAULT '[]',
+    ocr_blocks_version INTEGER NOT NULL DEFAULT 0,
     ocr_engine TEXT NOT NULL DEFAULT '',
     ocr_at TEXT,
     status TEXT NOT NULL DEFAULT 'pending',
@@ -283,6 +284,7 @@ _PAGE_EXTRA_COLUMNS = (
     ("ocr_text", "TEXT NOT NULL DEFAULT ''"),
     ("ocr_lines_json", "TEXT NOT NULL DEFAULT '[]'"),
     ("ocr_blocks_json", "TEXT NOT NULL DEFAULT '[]'"),
+    ("ocr_blocks_version", "INTEGER NOT NULL DEFAULT 0"),
     ("ocr_engine", "TEXT NOT NULL DEFAULT ''"),
     ("ocr_at", "TEXT"),
 )
@@ -575,7 +577,11 @@ def public_page(row, import_id: int) -> dict:
         "ocr_line_count": len(ocr_lines),
         "ocr_preview": (ocr_text[:120] + "…") if len(ocr_text) > 120 else ocr_text,
         # 公式/表格后处理需要的块；没有块时不出现该键（旧页面 JSON 保持不变）。
-        **({"has_blocks": True, "ocr_block_count": len(ocr_blocks)} if ocr_blocks else {}),
+        **({
+            "has_blocks": True,
+            "ocr_block_count": len(ocr_blocks),
+            "ocr_blocks_version": int(row.get("ocr_blocks_version") or 0),
+        } if ocr_blocks else {}),
     }
 
 
