@@ -304,6 +304,11 @@ Worker 支持 `STUDY_WORKER_CONCURRENCY`（默认 8）和 `STUDY_WORKER_JOB_TIME
 
   覆盖文件把 `INSTALL_OSS=1` 传给构建层、挂载 `/data/models` 只读，并透传全部
   `STUDY_*` 开关；开关默认仍为 off。
+- **依赖冲突处置**：先按 `--no-deps` 验证单个 wheel 的运行时依赖；公式/表格与主环境冲突时
+  放独立进程；ONNX Runtime 两份 DLL（`onnxruntime/capi` 与 `sherpa_onnx/lib`）同进程属于
+  已知风险，`scripts/oss_env_check.py --load` 会在同一进程依次加载做 smoke，失败即把语音
+  引擎移到独立进程。`--pip-check` 输出 `pip check` 结果，`runtime` 字段同时报告重复发行包
+  （如 Pillow 12/13 元数据并存）与 DLL 共存情况。
 - **模型**：`deploy/models.lock.json` 是唯一清单。首次下载后运行
   `python scripts/fetch_models.py --record` 回填 SHA-256 并提交；之后
   `python scripts/fetch_models.py --check` 校验。未固定哈希时用 `--allow-unpinned` 先做存在性检查。

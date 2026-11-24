@@ -92,6 +92,80 @@ def _packages(engine: str) -> list[dict]:
     return [_package_status(module, dist) for module, dist in ENGINE_PACKAGES[engine]]
 
 
+def _duplicate_distributions(items) -> dict[str, list[str]]:
+    """``(name, version)`` 序列中同名多版本的分组（Pillow 残留等）。"""
+    grouped: dict[str, set[str]] = {}
+    for name, version in items:
+        if not name:
+            continue
+        key = str(name).strip().lower().replace("_", "-").replace(".", "-")
+        grouped.setdefault(key, set()).add(str(version or "?"))
+    return {
+        name: sorted(versions)
+        for name, versions in grouped.items() if len(versions) > 1
+    }
+
+
+def _distribution_versions() -> list[tuple[str, str]]:
+    items: list[tuple[str, str]] = []
+    try:
+        for distribution in importlib.metadata.distributions():
+            name = distribution.metadata.get("Name")
+            if name:
+                items.append((str(name), str(distribution.version or "")))
+    except Exception:
+        return []
+    return items
+
+
+def _module_path(module: str) -> Path | None:
+    try:
+        spec = importlib.util.find_spec(module)
+    except (ImportError, ValueError):
+        return None
+    origin = getattr(spec, "origin", None)
+    if origin:
+        return Path(origin).resolve().parent
+    locations = list(getattr(spec, "submodule_search_locations", None) or [])
+    return Path(locations[0]).resolve() if locations else None
+
+
+def runtime_report(*, pip_check: bool = False) -> dict:
+    """运行环境共存检查：重复发行包、ONNX DLL 与 pip check。"""
+    dlls = []
+    for module, relative in (
+        ("onnxruntime", "capi/onnxruntime.dll"),
+        ("sherpa_onnx", "lib/onnxruntime.dll"),
+    ):
+        root = _module_path(module)
+        if root is not None and (root / relative).is_file():
+            dlls.append(str(root / relative))
+    check: dict = {"ok": None, "detail": "未执行（--pip-check）"}
+    if pip_check:
+        import subprocess
+
+        try:
+            completed = subprocess.run(
+                [sys.executable, "-m", "pip", "check"],
+                capture_output=True, text=True, encoding="utf-8",
+                errors="replace", timeout=120,
+            )
+            detail = (completed.stdout or completed.stderr or "").strip()
+            check = {"ok": completed.returncode == 0,
+                     "detail": detail[-2000:] or "无输出"}
+        except (OSError, subprocess.TimeoutExpired) as error:
+            check = {"ok": False, "detail": f"{type(error).__name__}: {error}"}
+    duplicates = _duplicate_distributions(_distribution_versions())
+    return {
+        "python": sys.version.split()[0],
+        "platform": sys.platform,
+        "duplicate_distributions": duplicates,
+        "onnx_runtime_dlls": dlls,
+        "onnx_dll_coexistence": len(dlls) > 1,
+        "pip_check": check,
+    }
+
+
 def _packages_ok(packages: list[dict]) -> bool:
     return all(item["installed"] for item in packages)
 
@@ -368,7 +442,7 @@ LOADERS = {
 
 
 def build_report(engines: list[str], *, with_sha: bool, load: bool,
-                 load_timeout: float, lock_path: Path) -> dict:
+                 load_timeout: float, lock_path: Path, pip_check: bool = False) -> dict:
     lock = load_lock(lock_path)
     report_engines: dict[str, dict] = {}
     for engine in engines:
@@ -389,6 +463,7 @@ def build_report(engines: list[str], *, with_sha: bool, load: bool,
         "python": sys.version.split()[0],
         "platform": sys.platform,
         "lock": {"path": str(lock_path), "error": lock.get("error")},
+        "runtime": runtime_report(pip_check=pip_check),
         "engines": report_engines,
     }
 
@@ -431,6 +506,8 @@ def main(argv: list[str] | None = None) -> int:
     parser.add_argument("--load", action="store_true", help="真实加载并推理一次（较慢）")
     parser.add_argument("--load-timeout", type=float, default=120.0)
     parser.add_argument("--no-sha", action="store_true", help="跳过文件哈希")
+    parser.add_argument("--pip-check", action="store_true",
+                        help="运行 pip check 检查依赖冲突（较慢）")
     parser.add_argument("--strict-lock", action="store_true",
                         help="锁文件未固定哈希时视为失败")
     parser.add_argument("--json", nargs="?", const="-", default=None,
@@ -442,6 +519,7 @@ def main(argv: list[str] | None = None) -> int:
     report = build_report(
         engines, with_sha=not args.no_sha, load=args.load,
         load_timeout=args.load_timeout, lock_path=args.lock,
+        pip_check=args.pip_check,
     )
     if args.strict_lock:
         unpinned = [
@@ -464,6 +542,14 @@ def main(argv: list[str] | None = None) -> int:
     else:
         for engine in engines:
             print(_human_line(engine, report["engines"][engine]))
+        runtime = report.get("runtime") or {}
+        if runtime.get("duplicate_distributions"):
+            print(f"[warn] 重复发行包：{runtime['duplicate_distributions']}")
+        if runtime.get("onnx_dll_coexistence"):
+            print("[warn] 检测到两份 onnxruntime.dll（onnxruntime 与 sherpa_onnx）；"
+                  "同进程加载失败时应把语音引擎放到独立进程")
+        if runtime.get("pip_check", {}).get("ok") is False:
+            print(f"[warn] pip check 未通过：{runtime['pip_check'].get('detail')}")
         print(f"[{'ok' if report['ok'] else '--'}] 自检{'通过' if report['ok'] else '未通过'}")
     if report["ok"] or args.soft:
         return 0

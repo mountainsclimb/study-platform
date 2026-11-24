@@ -30,7 +30,7 @@ def build_acceptance(*, with_sha: bool, load_timeout: float,
     started = time.monotonic()
     report = oss_env_check.build_report(
         list(oss_env_check.ENGINES), with_sha=with_sha, load=False,
-        load_timeout=load_timeout, lock_path=lock_path,
+        load_timeout=load_timeout, lock_path=lock_path, pip_check=True,
     )
     activated = [
         engine for engine, entry in report["engines"].items()

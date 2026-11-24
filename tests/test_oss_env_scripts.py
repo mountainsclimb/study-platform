@@ -116,6 +116,23 @@ def test_lock_file_schema_is_complete():
         assert models[key]["required_files"]
 
 
+def test_duplicate_distributions_groups_same_package():
+    duplicates = oss_env_check._duplicate_distributions([
+        ("Pillow", "12.2.0"),
+        ("pillow", "13.0.0"),
+        ("numpy", "2.2.6"),
+    ])
+    assert duplicates == {"pillow": ["12.2.0", "13.0.0"]}
+
+
+def test_runtime_report_has_coexistence_fields():
+    report = oss_env_check.runtime_report()
+    assert "duplicate_distributions" in report
+    assert isinstance(report["onnx_runtime_dlls"], list)
+    assert isinstance(report["onnx_dll_coexistence"], bool)
+    assert report["pip_check"]["ok"] is None
+
+
 def test_package_status_missing_module():
     status = oss_env_check._package_status(
         "module_that_does_not_exist_for_env_check", "missing-dist"
