@@ -1,7 +1,7 @@
 {
   "version": 1,
   "generated_from": "app.main:app",
-  "count": 396,
+  "count": 398,
   "routes": [
     {
       "method": "GET",
@@ -494,6 +494,14 @@
     {
       "method": "POST",
       "path": "/api/classroom/courses/{course_id}/video"
+    },
+    {
+      "method": "GET",
+      "path": "/api/classroom/demo/schema"
+    },
+    {
+      "method": "POST",
+      "path": "/api/classroom/demo/validate"
     },
     {
       "method": "POST",

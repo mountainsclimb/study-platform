@@ -450,6 +450,46 @@ class DemoSceneCreate(BaseModel):
     source_note: str | None = Field(default=None, max_length=schema.MAX_DEMO_SOURCE_NOTE_CHARS)
 
 
+class DemoValidateInput(BaseModel):
+    """助手/外部工具产出的演示参数：只接受 JSON 对象，由服务端归一化。"""
+
+    content: dict = Field(default_factory=dict)
+
+
+@router.get("/demo/schema")
+def demo_schema(user=Depends(current_user)):
+    """返回演示参数白名单与限额（供助手/前端在生成前约束输出）。"""
+    return {
+        "kinds": [
+            {"kind": kind, "label": schema.DEMO_ARTIFACT_KIND_LABELS.get(kind, kind)}
+            for kind in schema.DEMO_ARTIFACT_KINDS
+        ],
+        "limits": {
+            "data_bytes": schema.MAX_DEMO_DATA_BYTES,
+            "content_bytes": schema.MAX_DEMO_CONTENT_BYTES,
+            "preview_png_bytes": schema.MAX_DEMO_PNG_BYTES,
+            "preview_svg_chars": schema.MAX_DEMO_SVG_CHARS,
+            "source_note_chars": schema.MAX_DEMO_SOURCE_NOTE_CHARS,
+            "assumptions": schema.MAX_DEMO_ASSUMPTIONS,
+            "assumption_chars": schema.MAX_DEMO_ASSUMPTION_CHARS,
+            "step_count": schema.MAX_DEMO_STEP_COUNT,
+            "revision": schema.MAX_DEMO_REVISION,
+        },
+        "normalizer": "normalize_demo_content",
+        "note": "只接受参数 JSON，不接受任意 HTML/脚本；校验通过后由课堂/附件接口落库。",
+    }
+
+
+@router.post("/demo/validate")
+def validate_demo(data: DemoValidateInput, user=Depends(current_user)):
+    """校验并归一化演示参数；非法时 422，供助手生成后先验收再落库。"""
+    try:
+        content, warnings = schema.normalize_demo_content(data.content)
+    except schema.ClassroomSchemaError as exc:
+        raise HTTPException(422, str(exc)) from None
+    return {"ok": True, "content": content, "warnings": warnings}
+
+
 def _demo_snapshot_hints(data: dict) -> tuple[list[str], int]:
     """从附件 data 提取可展示的假设与步骤数（只读取既有字段，不编造内容）。"""
     assumptions: list[str] = []

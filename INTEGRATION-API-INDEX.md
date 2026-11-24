@@ -2046,3 +2046,10 @@ bottleneck_station/bottleneck_reason/dropped/blocked`。
 | 方法/路径 | 请求 | 响应要点 |
 | --- | --- | --- |
 | `POST /api/admin/kp-tag-local` | `{subject?,limit?,threshold?,high_confidence?,dry_run?}` | 按当前 Embedding 配置给题干与知识点描述算余弦；高置信写 `local_ai`，低置信写 `local_ai_pending_review`；已有 `admin`/`reviewed_by` 关联的题目跳过，`ai*` 关联不覆盖。未配置向量时 `available:false` 且零写入。复核沿用 `GET /api/admin/kp-review-queue` 与 `POST /api/admin/question-kp/review`。 |
+
+### 31.8 课堂演示参数 schema（`app/classroom/api.py`，阶段 3-4）
+
+| 方法/路径 | 请求 | 响应要点 |
+| --- | --- | --- |
+| `GET /api/classroom/demo/schema` | — | 演示附件白名单（含 `geometry_demo`/`timeline`/`molecule_3d`/`physics_sandbox`）与全部限额；供助手/前端生成前约束。 |
+| `POST /api/classroom/demo/validate` | `{content:object}` | 调用 `normalize_demo_content` 归一化；合法返回 `{ok,content,warnings}`，非法 422 中文原因。只接受参数 JSON，不执行任意 HTML/脚本。 |
