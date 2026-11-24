@@ -271,6 +271,9 @@ Copyright (c) 2025 Linwei**）。`scripts/build_vocab.py` 只抽取高考词优�
     - 前端 `#/vocab`：词表筛选/搜索、加入复习、先回忆再四档评分；首页行动卡显示
       词汇总数与今日到期；`GET /api/insight/home` 新增加法键 `vocab`。
     - 导出：`GET /api/vocab/export` 生成 Anki 牌组（正面单词/音标，背面释义/标签）。
+    - 听写练习（依赖批次三本地语音 `STUDY_LOCAL_SPEECH=on`）：服务端 TTS 发音
+      （不把单词返回前端），浏览器录音转 16k WAV，本地 ASR 转写后按编辑距离评分；
+      未启用/模型缺失时明确显示不可用，不伪造音频或分数。
 
 18. **进阶项 · RDKit 化学信息（可选依赖，方案 §9）**：
     - `requirements-chem.txt`（rdkit 2025.3.5，BSD-3-Clause）；**仅服务端可选依赖**，
@@ -365,8 +368,8 @@ python -m pytest tests/test_demo_kinds.py tests/test_oss_vendor_assets.py -v
 python -m pytest tests/test_demo_kinds.py tests/test_oss_vendor_assets.py -v
 # 知识图谱接口与 vendor 资产（sigma.js + graphology）
 python -m pytest tests/test_insight_kp_graph.py tests/test_oss_vendor_assets.py -v
-# 词汇模块（ECDICT 种子 + 四档复习卡 + Anki 牌组）
-python -m pytest tests/test_vocab_seed.py tests/test_vocab.py -v
+# 词汇模块（ECDICT 种子 + 四档复习卡 + Anki 牌组 + 听写评分）
+python -m pytest tests/test_vocab_seed.py tests/test_vocab.py tests/test_vocab_dictation.py -v
 python scripts/build_vocab.py --check   # 需本地 ECDICT 缓存；手动运行
 # RDKit 分子信息（可选依赖；未安装时接口 503、测试自动跳过功能断言）
 pip install -r requirements-chem.txt

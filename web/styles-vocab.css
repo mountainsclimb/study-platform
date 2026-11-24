@@ -210,3 +210,134 @@ html[data-theme="dark"] .vb-translation {
     justify-content: flex-start;
   }
 }
+
+/* 词汇听写（批次六后续）：本地语音练习区。 */
+.vb-dictation-entry .vb-dictation-mount:empty {
+  display: none;
+}
+
+.vb-dictation {
+  display: grid;
+  gap: 14px;
+  padding: 18px;
+  border: 1px solid var(--line, #e2e9ec);
+  border-radius: 16px;
+  background: var(--surface, #fff);
+}
+
+.vb-dictation-head {
+  display: flex;
+  justify-content: space-between;
+  align-items: flex-start;
+  gap: 12px;
+}
+
+.vb-dictation-title {
+  margin: 0;
+  font-size: 1.2rem;
+}
+
+.vb-dictation-status {
+  margin: 0;
+}
+
+.vb-dictation-status[data-state="ready"] { color: var(--accent, #1f7a5c); }
+.vb-dictation-status[data-state="error"] { color: var(--wrong, #a63b2a); }
+
+.vb-dictation-main {
+  min-height: 120px;
+}
+
+.vb-dictation-start {
+  display: grid;
+  gap: 10px;
+  justify-items: start;
+}
+
+.vb-dictation-question {
+  display: grid;
+  gap: 12px;
+}
+
+.vb-dictation-listen {
+  display: grid;
+  gap: 6px;
+  padding: 14px;
+  border-radius: 12px;
+  background: var(--tint, #eef4ff);
+}
+
+.vb-dictation-meaning {
+  margin: 0;
+  font-size: 1rem;
+  line-height: 1.6;
+}
+
+.vb-dictation-phonetic {
+  margin: 0;
+  color: var(--muted, #5b6b7a);
+  font-size: 0.875rem;
+}
+
+.vb-dictation-controls {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+}
+
+.vb-dictation-controls .button {
+  min-height: 44px;
+}
+
+.vb-dictation-result {
+  display: grid;
+  gap: 8px;
+  padding: 14px;
+  border-radius: 12px;
+  border: 1px solid var(--line, #e2e9ec);
+}
+
+.vb-dictation-verdict {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+}
+
+.vb-dictation-verdict.is-correct { border-left: 4px solid var(--accent, #1f7a5c); padding-left: 10px; }
+.vb-dictation-verdict.is-wrong { border-left: 4px solid var(--warm, #b46e2d); padding-left: 10px; }
+
+.vb-dictation-transcript,
+.vb-dictation-answer {
+  margin: 0;
+  line-height: 1.6;
+}
+
+.vb-dictation-answer {
+  font-weight: 600;
+}
+
+.vb-dictation-counter {
+  margin: 0;
+  color: var(--muted, #5b6b7a);
+  font-size: 0.8125rem;
+}
+
+.vb-dictation-unavailable,
+.vb-dictation-done {
+  padding: 12px;
+  margin: 0;
+}
+
+html[data-theme="dark"] .vb-dictation {
+  background: var(--surface);
+}
+
+html[data-theme="dark"] .vb-dictation-listen {
+  background: var(--rail);
+}
+
+@media (max-width: 640px) {
+  .vb-dictation-head {
+    flex-direction: column;
+  }
+}

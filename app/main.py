@@ -31,6 +31,8 @@ from . import handout, topic_report
 from . import vocab
 # §9 进阶项：RDKit 可选化学信息（未安装时接口 503，不影响既有配平/渲染）。
 from . import chem_info
+# 批次六后续：词汇听写（本地 TTS + ASR 可选依赖，未启用时明确降级）。
+from . import vocab_dictation
 
 WEB_DIR = Path(__file__).resolve().parents[1] / "web"
 health_log = logging.getLogger("zhixu.health")
@@ -780,6 +782,8 @@ app.include_router(chem_balance.router)
 app.include_router(vocab.router)
 # §9 进阶项：RDKit 分子信息（可选依赖）。
 app.include_router(chem_info.router)
+# 批次六后续：词汇听写（本地语音可选依赖）。
+app.include_router(vocab_dictation.router)
 
 app.mount("/static", StaticFiles(directory=str(WEB_DIR)), name="static")
 

@@ -206,7 +206,8 @@ export async function renderVocab(container, version, params = null) {
   }, 'secondary small');
 
   const exportButton = button(t('vocab.exportAnki'), async event => {
-    event.currentTarget.disabled = true;
+    const node = event.currentTarget;
+    node.disabled = true;
     try {
       const response = await fetch('/api/vocab/export', { credentials: 'same-origin' });
       if (!response.ok) {
@@ -217,9 +218,23 @@ export async function renderVocab(container, version, params = null) {
     } catch (error) {
       toast(error?.message || t('vocab.exportFailed', { reason: '' }), true);
     } finally {
-      event.currentTarget.disabled = false;
+      node.disabled = false;
     }
   }, 'ghost small', 'download');
+
+  const dictationMount = el('div', { class: 'vb-dictation-mount' });
+  const startDictation = button(t('vocab.dictation.start'), async event => {
+    const node = event.currentTarget;
+    node.disabled = true;
+    try {
+      const module = await import('../components/dictationPractice.js');
+      module.createDictationPractice({ container: dictationMount });
+      node.hidden = true;
+    } catch (error) {
+      node.disabled = false;
+      toast(error?.message || t('vocab.dictation.failed'), true);
+    }
+  }, 'soft small', 'message');
 
   const pageNode = el('section', { class: 'vb-page' },
     heading('VOCABULARY', t('vocab.title'), t('vocab.sub'),
@@ -228,6 +243,12 @@ export async function renderVocab(container, version, params = null) {
     el('div', { class: 'vb-source' }, t('vocab.sourceNote', {
       count: number(meta.count || 0), commit: String(meta.source_commit || '').slice(0, 8),
     })),
+    el('section', { class: 'vb-section vb-dictation-entry' },
+      el('div', { class: 'vb-section-head' },
+        el('h2', {}, t('vocab.dictation.entryTitle')),
+        el('p', { class: 'help' }, t('vocab.dictation.entrySub'))),
+      startDictation,
+      dictationMount),
     el('section', { class: 'vb-section' },
       el('div', { class: 'vb-section-head' },
         el('h2', {}, t('vocab.sectionDue')),
