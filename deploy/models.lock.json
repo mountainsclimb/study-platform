@@ -1,0 +1,98 @@
+{
+  "version": 1,
+  "note": "可选引擎模型清单。Hugging Face 条目首次下载后运行 python scripts/fetch_models.py --record 回填 sha256/sizes 并提交；哈希为空时 --check 默认拒绝（可用 --allow-unpinned 仅做存在性检查）。manual 条目由部署方按 hint 获取，脚本只校验 required 文件是否齐全。",
+  "models": {
+    "embeddings": {
+      "engine": "fastembed",
+      "provider": "huggingface",
+      "source": "Qdrant/bge-small-zh-v1.5",
+      "revision": "main",
+      "license": "MIT",
+      "target_dir": "models/embeddings",
+      "files": [
+        "config.json",
+        "tokenizer.json",
+        "tokenizer_config.json",
+        "special_tokens_map.json",
+        "vocab.txt",
+        "model_optimized.onnx"
+      ],
+      "required_files": [
+        "config.json",
+        "tokenizer.json",
+        "model_optimized.onnx"
+      ],
+      "sha256": {},
+      "sizes": {}
+    },
+    "rerank": {
+      "engine": "fastembed",
+      "provider": "fastembed",
+      "source": "BAAI/bge-reranker-base",
+      "revision": "main",
+      "license": "MIT",
+      "target_dir": "models/rerank",
+      "auxiliary_files": [
+        "config.json",
+        "tokenizer.json",
+        "tokenizer_config.json",
+        "special_tokens_map.json",
+        "sentencepiece.bpe.model"
+      ],
+      "required_files": [
+        "config.json",
+        "tokenizer.json",
+        "model.onnx"
+      ],
+      "hint": "provider=fastembed 时由 fastembed 注册表解析真实来源仓库与 ONNX 文件名（可能是 onnx/model.onnx），避免写死过期路径。",
+      "sha256": {},
+      "sizes": {}
+    },
+    "speech_tts": {
+      "engine": "sherpa-onnx",
+      "provider": "manual",
+      "source": "kokoro-multi-lang-v1_1",
+      "license": "Apache-2.0",
+      "target_dir": "models/speech/kokoro-multi-lang-v1_1",
+      "required_files": [
+        "model.onnx",
+        "tokens.txt",
+        "voices.bin"
+      ],
+      "optional_files": [
+        "lexicon-us-en.txt",
+        "lexicon-zh.txt",
+        "espeak-ng-data"
+      ],
+      "hint": "从 sherpa-onnx 官方发布包获取 kokoro-multi-lang-v1_1，解压到 target_dir；保留 espeak-ng-data 目录。"
+    },
+    "speech_asr": {
+      "engine": "sherpa-onnx",
+      "provider": "manual",
+      "source": "paraformer-zh",
+      "license": "Apache-2.0",
+      "target_dir": "models/speech/paraformer-zh",
+      "required_files": [
+        "model.onnx",
+        "tokens.txt"
+      ],
+      "hint": "从 sherpa-onnx 官方发布包获取 paraformer 中文模型（默认目录名 paraformer-zh），解压到 target_dir。"
+    },
+    "formula": {
+      "engine": "rapid-latex-ocr",
+      "provider": "python-package",
+      "source": "rapid-latex-ocr==0.0.9",
+      "license": "MIT",
+      "target_dir": "site-packages/rapid_latex_ocr/models",
+      "hint": "模型随 pip 包在首次初始化时下载；离线部署需预置到 rapid_latex_ocr/models。"
+    },
+    "table": {
+      "engine": "rapid-table",
+      "provider": "python-package",
+      "source": "rapid-table==3.0.2",
+      "license": "Apache-2.0",
+      "target_dir": "site-packages/rapid_table/models",
+      "hint": "模型随 pip 包在首次初始化时下载；离线部署需预置到 rapid_table/models。"
+    }
+  }
+}

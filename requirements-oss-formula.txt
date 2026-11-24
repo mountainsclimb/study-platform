@@ -1,0 +1,13 @@
+# 公式图片识别 + 表格结构的隔离安装清单。
+#
+# 这两个引擎（rapid-latex-ocr / rapid-table）声明 numpy<2.0.0 与 tokenizers 0.21，
+# 与主环境的 numpy 2.x / tokenizers 0.22 冲突。把本清单装进主环境会降级主依赖，
+# 因此只允许二选一：
+#   1. 独立 venv：python -m venv .venv-formula && .venv-formula/bin/pip install -r requirements-oss-formula.txt
+#      再由独立进程/服务承载识别，主站通过进程边界调用；
+#   2. 接受降级：确认主环境没有 numpy 2 依赖后，直接安装本清单，
+#      安装后运行 `pip check` 与 `pytest tests/test_formula_ocr.py tests/test_table_structure.py`。
+#
+# 不要与 requirements-oss.txt 一起安装。模型随 pip 包在首次初始化时下载；
+# 离线部署需预置到 site-packages 内 rapid_latex_ocr/models 与 rapid_table/models。
+-r requirements-formula.txt

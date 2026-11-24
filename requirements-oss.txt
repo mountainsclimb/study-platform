@@ -1,0 +1,24 @@
+# 可选引擎联合安装清单（可共存组合）。
+# 只包含能在同一 Python 环境里并存的引擎：
+#   * 本地向量与重排（fastembed）
+#   * 离线语音（sherpa-onnx）
+#   * PDF 文本表格（pdfplumber）
+#   * RDKit 化学信息（rdkit）
+# 公式图片识别（rapid-latex-ocr）与表格结构（rapid-table）会钉住 numpy<2 与
+# tokenizers 0.21，和主环境（numpy 2.x）冲突，单独放 requirements-oss-formula.txt，
+# 安装到独立 venv 或独立进程，不要与本清单装进同一环境。
+#
+# 安装：
+#   pip install -r requirements-oss.txt -c constraints-oss.txt
+# 版本自检：
+#   python scripts/oss_env_check.py
+# 模型预置：
+#   python scripts/fetch_models.py --check    # 校验已预置模型
+#   python scripts/fetch_models.py            # 按 deploy/models.lock.json 下载
+#
+# 主站默认全部关闭；启用开关见 deploy/README.md §6。
+-c constraints-oss.txt
+-r requirements-embeddings.txt
+-r requirements-speech.txt
+-r requirements-pdf.txt
+-r requirements-chem.txt
