@@ -829,9 +829,25 @@ export function createPlayerView({ container, version, courseId }) {
     return panel;
   }
 
+  /** 从 code 交互场景的沙箱 HTML 中提取示例代码（只读文本，不执行）。 */
+  function interactiveCodeText(scene) {
+    const html = String(scene?.content?.html || '');
+    if (!html) return '';
+    try {
+      const doc = new DOMParser().parseFromString(html, 'text/html');
+      const node = doc.querySelector('pre code, pre, textarea');
+      return String(node?.textContent || '').trim().slice(0, 6000);
+    } catch {
+      return '';
+    }
+  }
+
   function renderInteractiveStage(scene) {
     const frameWrap = el('div', { class: 'cls-interactive-wrap' });
     const height = clamp(Number(scene.content?.height) || 480, 280, 900);
+    const isCodeWidget = String(scene.content?.widget || '').toLowerCase() === 'code';
+    const codeText = isCodeWidget ? interactiveCodeText(scene) : '';
+    const labHref = `/lab/python${codeText ? `#code=${encodeURIComponent(codeText)}` : ''}`;
     if (scene.meta?.placeholder) {
       frameWrap.append(notice('该交互场景内容尚未生成（占位）：可点击「重新生成该场景」让 AI 生成真实交互页面。', 'warning'));
     }
@@ -862,6 +878,15 @@ export function createPlayerView({ container, version, courseId }) {
       if (!frameReady) status.textContent = '交互页面加载较慢：如长时间空白，可点击「重新加载」。';
     }, 8000);
     frameWrap.append(el('div', { class: 'row cls-interactive-actions' },
+      isCodeWidget
+        ? el('a', {
+          class: 'button secondary small',
+          href: labHref,
+          target: '_blank',
+          rel: 'noopener',
+          title: '在独立 CSP 的 Python 实验台中运行这段代码（不会自动执行）',
+        }, '在 Python 实验台运行')
+        : null,
       button('重新加载', reload, 'secondary small', 'repeat'),
       button('重新生成该场景', event => busy(event.currentTarget, () => regenerateInteractiveScene(scene)),
         'secondary small', 'rotate'),

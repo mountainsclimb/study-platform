@@ -86,3 +86,15 @@ def test_pyodide_lab_assets_and_wiring(client):
     assert "runPythonAsync" in script
     assert "textContent" in script
     assert "eval(" not in script and "new Function" not in script
+    assert "URLSearchParams" in script and "get('code')" in script
+    assert "#code=" in script
+
+
+def test_classroom_code_widget_links_to_pyodide_lab():
+    player = (ROOT / "web" / "js" / "components" / "classroomPlayer.js").read_text(encoding="utf-8")
+    assert "interactiveCodeText" in player
+    assert "widget" in player and "=== 'code'" in player
+    assert "/lab/python" in player and "#code=" in player
+    assert "target: '_blank'" in player
+    assert "DOMParser" in player
+

@@ -41,6 +41,21 @@ function clearOutput() {
   outputNode.replaceChildren();
 }
 
+// 课堂 code 交互场景通过 #code= 传入示例代码（hash 不进请求行，避免长代码超 URL 限制）；
+// 同时兼容旧的 ?code=。只预填、不自动执行。
+function sharedCodeParam() {
+  const hash = String(window.location.hash || '');
+  if (hash.startsWith('#code=')) {
+    try { return decodeURIComponent(hash.slice(6)); } catch { return ''; }
+  }
+  return new URLSearchParams(window.location.search).get('code') || '';
+}
+const sharedCode = sharedCodeParam();
+if (sharedCode && sharedCode.trim()) {
+  codeNode.value = sharedCode.slice(0, 8000);
+  setStatus('已从课堂载入代码，点击「运行」在独立沙箱中执行。', 'ready');
+}
+
 function loadRuntime() {
   if (runtime) return Promise.resolve(runtime);
   if (runtimePromise) return runtimePromise;

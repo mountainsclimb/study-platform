@@ -284,6 +284,8 @@ Copyright (c) 2025 Linwei**）。`scripts/build_vocab.py` 只抽取高考词优�
     - `GET /lab/python`（登录）：编辑器 + 输出 + 运行；该路由单独下发
       `script-src 'self' 'wasm-unsafe-eval'` 的 CSP，**主站与课堂交互沙箱不放宽**。
     - 首次运行需加载约 12MB；加载失败/超时有中文提示，输出一律按纯文本显示。
+    - 课堂 `code` 交互场景提供「在 Python 实验台运行」：从沙箱 HTML 提取示例代码，
+      经 `#code=` 预填到专用页，**不自动执行**；课堂沙箱本身仍不执行任意代码。
 
 ## 验证
 
