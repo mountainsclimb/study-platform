@@ -290,6 +290,32 @@ Worker 支持 `STUDY_WORKER_CONCURRENCY`（默认 8）和 `STUDY_WORKER_JOB_TIME
 | `COMMUNITY_EXPLANATIONS_ENABLED=1` | 开启社区讲解。满足分享条件的题库讲解由生成者主动分享，可撤回。管理员可设为平台精选。部署默认关闭社区讲解。 |
 | `STUDY_REVIEW_SCHEDULER=fsrs-lite` | 达到全站 2,000 条由原卷或 AI 交叉核验判定的题库作答后启用 FSRS-lite。默认使用掌握度规则。 |
 
+### 6.1 可选引擎镜像与模型预置（2026-11-24）
+
+- **联合依赖**：`requirements-oss.txt` 汇总可共存的 fastembed / sherpa-onnx / pdfplumber /
+  rdkit，配合 `constraints-oss.txt` 防止降级主环境。公式与表格引擎会钉住 numpy<2，
+  单独放在 `requirements-oss-formula.txt`，只允许独立 venv/镜像/进程。
+- **镜像**：基础 `Dockerfile` 默认 `INSTALL_OSS=0`；使用覆盖文件按需构建：
+
+  ```bash
+  docker compose -f deploy/docker-compose.yml -f deploy/docker-compose.oss.yml build
+  HOST_MODELS_DIR=../data/models     docker compose -f deploy/docker-compose.yml -f deploy/docker-compose.oss.yml up -d
+  ```
+
+  覆盖文件把 `INSTALL_OSS=1` 传给构建层、挂载 `/data/models` 只读，并透传全部
+  `STUDY_*` 开关；开关默认仍为 off。
+- **模型**：`deploy/models.lock.json` 是唯一清单。首次下载后运行
+  `python scripts/fetch_models.py --record` 回填 SHA-256 并提交；之后
+  `python scripts/fetch_models.py --check` 校验。未固定哈希时用 `--allow-unpinned` 先做存在性检查。
+- **自检与验收**：`python scripts/oss_env_check.py` 逐引擎报告依赖、模型目录、缺失文件、
+  哈希与加载耗时；验收 runner 增加 `--oss` 阶段，真实引擎缺失时该阶段显式记为 SKIP，
+  而不是假成功：
+
+  ```bash
+  python scripts/accept_runner.py --oss --stages oss
+  python scripts/integration/oss_accept.py --require embeddings,speech
+  ```
+
 ## 7. 依赖与镜像
 
 - 生产依赖锁定在 `requirements.txt`，开发/验收依赖拆到 `requirements-dev.txt`（不进入镜像）。

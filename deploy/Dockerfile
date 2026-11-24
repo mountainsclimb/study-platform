@@ -15,6 +15,15 @@ COPY requirements.txt .
 COPY deploy/requirements.txt requirements-deploy.txt
 RUN pip install --no-cache-dir -r requirements.txt -r requirements-deploy.txt
 
+# 可选引擎构建层：默认 0，不把 fastembed / sherpa-onnx / pdfplumber / rdkit 装进生产镜像。
+# 构建时用 --build-arg INSTALL_OSS=1（或 compose 覆盖文件 deploy/docker-compose.oss.yml）。
+# 公式/表格引擎会钉住 numpy<2，不在本层安装；需要时用独立镜像/进程，见 requirements-oss-formula.txt。
+ARG INSTALL_OSS=0
+COPY requirements-oss.txt constraints-oss.txt requirements-embeddings.txt requirements-speech.txt requirements-pdf.txt requirements-chem.txt ./
+RUN if [ "$INSTALL_OSS" = "1" ]; then \
+      pip install --no-cache-dir -r requirements-oss.txt -c constraints-oss.txt; \
+    fi
+
 COPY app ./app
 COPY web ./web
 COPY eval ./eval

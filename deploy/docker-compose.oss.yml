@@ -1,0 +1,34 @@
+# 可选引擎覆盖文件：在基础 compose 之上构建带 OSS 依赖的镜像，并挂载预置模型。
+#
+# 用法（仓库根目录）：
+#   docker compose -f deploy/docker-compose.yml -f deploy/docker-compose.oss.yml build
+#   HOST_MODELS_DIR=../data/models \
+#     docker compose -f deploy/docker-compose.yml -f deploy/docker-compose.oss.yml up -d
+#
+# 模型目录结构见 deploy/models.lock.json，可用 scripts/fetch_models.py 预置与校验。
+# 默认仍关闭所有可选引擎；按需把 STUDY_* 开关设为 on/local。
+# 公式/表格引擎（rapid-latex-ocr / rapid-table）会降级 numpy，需独立镜像或独立进程，
+# 本覆盖文件不安装它们。
+services:
+  app:
+    build:
+      args:
+        INSTALL_OSS: "1"
+    environment: &oss_env
+      STUDY_EMBEDDING_MODE: "${STUDY_EMBEDDING_MODE:-off}"
+      STUDY_RERANK: "${STUDY_RERANK:-off}"
+      STUDY_LOCAL_EMBEDDING_DIR: "/data/models/embeddings"
+      STUDY_LOCAL_RERANK_DIR: "/data/models/rerank"
+      STUDY_LOCAL_SPEECH: "${STUDY_LOCAL_SPEECH:-off}"
+      STUDY_LOCAL_SPEECH_DIR: "/data/models/speech"
+      STUDY_PDF_TABLES: "${STUDY_PDF_TABLES:-off}"
+      STUDY_FORMULA_OCR: "${STUDY_FORMULA_OCR:-off}"
+      STUDY_TABLE_OCR: "${STUDY_TABLE_OCR:-off}"
+      STUDY_ENRICH_TIMEOUT: "${STUDY_ENRICH_TIMEOUT:-20}"
+    volumes:
+      - "${HOST_MODELS_DIR:-../data/models}:/data/models:ro"
+
+  worker:
+    environment: *oss_env
+    volumes:
+      - "${HOST_MODELS_DIR:-../data/models}:/data/models:ro"

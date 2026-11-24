@@ -84,6 +84,7 @@ STAGE_LABELS = {
     "m4": "M4 课堂版本化演示与固定版本导出端到端（临时数据目录）",
     "m5": "M5 机械/工厂演示模板与固定种子仿真端到端（临时数据目录）",
     "m6": "M6 专题报告/互动讲义/逐步提示工具/pyKT 协议端到端（临时数据目录）",
+    "oss": "可选引擎真实验收（依赖与模型就绪时加载推理，缺失显式跳过）",
     "pytest": "pytest（全量）",
     "ui-server": "UI 服务器可达性",
     "ui-plaza": "广场端到端（投稿→评审→发布→撤回）",
@@ -381,6 +382,7 @@ def build_stages(
     skip_pytest: bool = False,
     selected: list[str] | None = None,
     editor_build: bool = False,
+    oss: bool = False,
     pytest_args: list[str] | None = None,
 ) -> list[Stage]:
     """按参数构造阶段计划；未选择/显式跳过/工具缺失都保留为 SKIP 阶段（漏跑≠成功）。"""
@@ -462,6 +464,14 @@ def build_stages(
         cwd=root,
         description="M6 端到端：规则汇编文档、讲义导出、逐步提示工具与 pyKT 协议（隔离数据目录）",
     )
+    if oss:
+        candidates["oss"] = Stage(
+            key="oss", name=STAGE_LABELS["oss"],
+            command=[python, "scripts/integration/oss_accept.py"],
+            cwd=root,
+            skip_returncodes={3: "可选引擎未安装或模型未预置（阶段未验证）"},
+            description="可选引擎真实验收：依赖、模型、加载与首载耗时（exit 3=未启用）",
+        )
     candidates["pytest"] = Stage(
         key="pytest", name=STAGE_LABELS["pytest"],
         command=[python, "-m", "pytest", "-q", *(pytest_args or [])],
@@ -777,6 +787,8 @@ def _parse_args(argv: list[str] | None) -> argparse.Namespace:
     parser.add_argument("--stages", default="", help="只跑部分阶段，逗号分隔（如 bank,compileall）")
     parser.add_argument("--editor-build", action="store_true",
                         help="追加编辑器构建产物一致性检查（默认关闭，避免无 Node 环境无法验收）")
+    parser.add_argument("--oss", action="store_true",
+                        help="追加可选引擎真实验收（默认关闭；未安装依赖/模型时该阶段记为 SKIP）")
     parser.add_argument("--report-path", default=str(DEFAULT_REPORT_PATH), help="验收报告 JSON 落盘路径")
     parser.add_argument("--plan-json", action="store_true", help="只输出执行计划（含基线解析），不执行")
     parser.add_argument("--list-stages", action="store_true", help="列出阶段键与说明")
@@ -806,7 +818,7 @@ def main(argv: list[str] | None = None) -> int:
         stages = build_stages(
             root=root, bank=bank, ui=args.ui, base_url=args.base_url,
             skip_pytest=args.skip_pytest, selected=selected or None,
-            editor_build=args.editor_build,
+            editor_build=args.editor_build, oss=args.oss,
         )
     except UsageError as exc:
         print(f"[error] {exc}", file=sys.stderr)
