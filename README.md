@@ -250,6 +250,9 @@ python -m uvicorn app.main:app --host 127.0.0.1 --port 8765
       提供历史、政治题的「时间轴」入口：中国近代史 / 世界近现代史 / 新中国史 / 科技史
       四个专题（71 条人工校对事件），可切换专题、自建事件并保存为 `timeline` 学习附件；
       日期严格校验，课堂只读播放、离线仅海报，首次打开时懒加载。
+    - **知识图谱**：`web/vendor/graph/`（sigma 4.0.6 + graphology 0.26.0）为学情页
+      提供知识点图谱：节点为知识点，边为同题共现与从属关系，薄弱点红色高亮；
+      点击节点直达对应练习；首次点击才加载。
 
 ## 验证
 
@@ -327,6 +330,8 @@ python -m pytest tests/test_chem_balance.py tests/test_demo_kinds.py tests/test_
 python -m pytest tests/test_demo_kinds.py tests/test_oss_vendor_assets.py -v
 # 历史时间轴（vis-timeline vendor 资产 + 预设校验）
 python -m pytest tests/test_demo_kinds.py tests/test_oss_vendor_assets.py -v
+# 知识图谱接口与 vendor 资产（sigma.js + graphology）
+python -m pytest tests/test_insight_kp_graph.py tests/test_oss_vendor_assets.py -v
 # markmap 交互脑图构建产物的字节级复现校验（需网络，手动运行）
 node scripts/build_markmap_bundle.mjs --check
 # 课堂全链路验收（本机假模型，无需真实 Key；详见 scripts/integration/README.md）

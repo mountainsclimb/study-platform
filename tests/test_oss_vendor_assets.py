@@ -71,6 +71,15 @@ ASSETS = {
             "LICENSE.MIT.txt": "507e7e91e0a385c9de0464889068fada0620e327d23f1d64605a7d046490ec97",
         },
     },
+    "graph": {
+        "version": "4.0.6",
+        "files": {
+            "sigma.min.js": "4c7a2b7e717393717ffac2dd8736e92d77aeafae39ac40a9c4a83c5f78d1d4d0",
+            "graphology.umd.min.js": "dc337efa23903f61e064c8e7e7f93a429e6855dccfc2458802b4ed30c621c087",
+            "SIGMA-LICENSE.txt": "7036bbeb954c1220102cced5a608198a54f4a19b2d81d96f67997dbb9d7a51f1",
+            "GRAPHOLOGY-LICENSE.txt": "9d396b4882c329077f32861c0d6822dcee48f2d0ff6196d8459af70844196275",
+        },
+    },
 }
 
 
@@ -373,6 +382,33 @@ def test_timeline_vendor_bundle_and_wiring():
     assert "kind === 'timeline'" in player
     offline = (ROOT / "web" / "js" / "offline" / "offlineDemo.js").read_text(encoding="utf-8")
     assert "timeline: true" in offline and 'timeline: "时间轴"' in offline
+
+
+def test_graph_vendor_bundle_and_wiring():
+    """sigma/graphology 产物无字符串求值；知识图谱组件与学情页接线齐全。"""
+    for filename in ("sigma.min.js", "graphology.umd.min.js"):
+        bundle = (VENDOR / "graph" / filename).read_text(encoding="utf-8", errors="ignore")
+        for pattern in (r"new\s+Function", r"\beval\s*\("):
+            assert not re.search(pattern, bundle), f"graph/{filename} 不允许 {pattern}"
+    directory = VENDOR / "graph"
+    assert sorted(item.name for item in directory.iterdir()) == [
+        "GRAPHOLOGY-LICENSE.txt", "README.md", "SIGMA-LICENSE.txt",
+        "graphology.umd.min.js", "sigma.min.js",
+    ]
+    component = (ROOT / "web" / "js" / "components" / "knowledgeGraph.js").read_text(encoding="utf-8")
+    for needle in (
+        "renderKnowledgeGraph", "normalizeKnowledgeGraph",
+        "/static/vendor/graph/sigma.min.js",
+        "/static/vendor/graph/graphology.umd.min.js",
+        "insight.graph", "renderer.kill",
+    ):
+        assert needle in component, needle
+    page = (ROOT / "web" / "js" / "pages" / "insight.js").read_text(encoding="utf-8")
+    assert "knowledgeGraphSection" in page
+    assert "/insight/kp-graph" in page
+    endpoint = (ROOT / "app" / "insight.py").read_text(encoding="utf-8")
+    assert '@router.get("/kp-graph")' in endpoint
+    assert "KP_GRAPH_MAX_EDGES = 300" in endpoint
 
 
 def test_vendor_static_assets_served(client):

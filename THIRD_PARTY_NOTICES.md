@@ -272,6 +272,15 @@ SOFTWARE.
 | 用途 | `web/js/components/timelineDemo.js`：历史/政治题「时间轴」与学习附件 `timeline` 的交互渲染；预设与数据校验收敛在 `web/vendor/timeline/` |
 | 分发 | `web/vendor/vis-timeline/` 随仓库分发（vis-timeline-graph2d.min.js、.min.css、两份许可、README）；不带 esnext/types/peer 与 source map |
 
+| 项目 | 内容 |
+|---|---|
+| 名称 | sigma.js + graphology（知识图谱） |
+| 版权 | sigma © 2012-2026 Alexis Jacomy, Guillaume Plique, Benoît Simard（MIT）；graphology © 2016-2021 Guillaume Plique (Yomguithereal)（MIT） |
+| 仓库 | <https://github.com/jacomyal/sigma.js>、<https://github.com/graphology/graphology> |
+| 许可证 | 均为 MIT（全文见 `web/vendor/graph/SIGMA-LICENSE.txt` 与 `GRAPHOLOGY-LICENSE.txt`） |
+| 用途 | `web/js/components/knowledgeGraph.js`：学情页「知识图谱」的绘制与确定性分级布局；首次点击时懒加载 |
+| 分发 | `web/vendor/graph/` 随仓库分发（sigma.min.js、graphology.umd.min.js、两份许可、README）；不带 esnext/types/peer 与 source map |
+
 ## 13. 数据边界与免责声明
 
 
@@ -315,6 +324,7 @@ SOFTWARE.
 | 26 | JSXGraph（交互几何） | `jsxgraph@1.14.3` | MIT 或 LGPL-3.0（按 MIT 使用） | `web/vendor/jsxgraph/`（版本、大小与 SHA-256 见同目录 README） | `npm pack jsxgraph@1.14.3`，取 `distrib/jsxgraphcore.js`、`jsxgraph.css` 与 `LICENSE.MIT`；不带 JessieScript/geogebra 等独立模块 | 随仓库分发 |
 | 27 | markmap 交互脑图（构建产物） | `markmap-view@0.18.13` + `markmap-common@0.18.9` + `d3@7.9.2`（另解析 30 个 d3-* 子包；`@babel/runtime` 仅安装、未入产物） | MIT / MIT / ISC | `web/vendor/markmap/`（版本、大小与 SHA-256 见同目录 README；LICENSE 逐包聚合 33 个实际打入包） | `node scripts/build_markmap_bundle.mjs`（`scripts/markmap-bundle/package-lock.json` 钉死全部依赖、`npm ci`；esbuild 0.28.2 仅构建期；`--check` 校验字节一致） | 构建产物随仓库分发 |
 | 28 | vis-timeline（历史时间轴） | `vis-timeline@8.5.6` | Apache-2.0 或 MIT（按 MIT 使用） | `web/vendor/vis-timeline/`（版本、大小与 SHA-256 见同目录 README） | `npm pack vis-timeline@8.5.6`，取 `dist/vis-timeline-graph2d.min.js`、`.min.css` 与两份许可；不带 esnext/types/peer/source map | 随仓库分发 |
+| 29 | sigma.js + graphology（知识图谱） | `sigma@4.0.6` + `graphology@0.26.0` | MIT / MIT | `web/vendor/graph/`（版本、大小与 SHA-256 见同目录 README） | `npm pack sigma@4.0.6`、`npm pack graphology@0.26.0`，取 `dist/sigma.min.js`、`dist/graphology.umd.min.js` 与 LICENSE.txt；不带 esnext/types/peer/source map | 随仓库分发 |
 
 ## 15. 素材、语料与模型权重
 
@@ -364,6 +374,7 @@ SOFTWARE.
 | 交互几何演示（JSXGraph） | 默认可用 | `web/vendor/jsxgraph/` 随仓库分发；预设为自有代码（`web/vendor/geometry/`） | 十个高中几何预设，纯函数/数值入参，按保存参数可完全重建；保存为 `geometry_demo` 学习附件；离线仅海报 |
 | 笔记交互脑图（markmap） | 默认可用 | `web/vendor/markmap/` 构建产物随仓库分发 | 笔记详情「交互 / 静态」切换，默认静态；交互视图可折叠缩放，懒加载；`.mmd`/SVG 导出不变 |
 | 历史时间轴（vis-timeline） | 默认可用 | `web/vendor/vis-timeline/` 随仓库分发；预设为自有代码（`web/vendor/timeline/`） | 四个历史专题、可自建事件；日期严格校验后按参数重建；保存为 `timeline` 学习附件；课堂只读、离线仅海报 |
+| 知识图谱（sigma.js） | 默认可用 | `web/vendor/graph/` 随仓库分发 | 学情页知识点共现/从属图谱，弱项红色高亮，点击直达练习；首次点击懒加载 |
 | fsrs-lite 复习排程 | 实验 | `STUDY_REVIEW_SCHEDULER=fsrs-lite` | 默认 `rules`；先积累复习反馈再替换 |
 | 社区解析精选 | 可选服务 | `COMMUNITY_EXPLANATIONS_ENABLED=1` | 登录用户的既有题目 AI 解析分享 |
 | PostgreSQL / Redis Worker / 对象存储 | 可选服务（生产推荐） | `DATABASE_URL`、`REDIS_URL`、`S3_*`；公网部署校验见 `scripts/check_public_config.py` | SQLite 单机开发可用 |

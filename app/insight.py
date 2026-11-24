@@ -36,6 +36,9 @@ router = APIRouter(prefix="/api/insight", tags=["Learning insight"])
 DEFAULT_DAYS = 90
 MAX_DAYS = 3650
 WEAK_ACCURACY = 70.0
+#: 知识图谱的展示上限（方案 §6.6：边数上限 300；节点再设一个首屏上限）。
+KP_GRAPH_MAX_EDGES = 300
+KP_GRAPH_MAX_NODES = 120
 STRONG_ACCURACY = 85.0
 STRONG_MIN_ATTEMPTS = 3
 MASTERY_LEVELS = ("未掌握", "初步掌握", "比较掌握", "熟练掌握")
@@ -1157,6 +1160,114 @@ def knowledge(
 ):
     """知识点掌握：按 question_kp 关联统计，正确率升序（最弱在前），<70% 标为薄弱。"""
     return _knowledge_payload(_collect(user["id"], days, subject))
+
+
+@router.get("/kp-graph")
+def kp_graph(
+    subject: str | None = Query(default=None, max_length=40),
+    days: int = Query(default=DEFAULT_DAYS, ge=1, le=MAX_DAYS),
+    user=Depends(current_user),
+):
+    """知识图谱：节点为知识点，边为同题共现与章/节/知识点从属（§6.6）。
+
+    - 节点字段：``kp_id/title/level/path/attempts/accuracy/weak/weight``；
+    - 共现边来自当前时间窗内有作答的 ``question_kp``；从属边来自 `parent_id`；
+    - 边上限 300、节点上限 120（按作答量取主分支，避免首屏过密）；
+    - 没有知识点数据或没有任何可展示关联时返回 ``available: false`` 与中文说明。
+    """
+    data = _collect(user["id"], days, subject)
+    kp_map, _ = _load_kp_maps()
+    allowed = {
+        kp_id for kp_id, kp in kp_map.items()
+        if not subject or kp.get("subject") == subject
+    }
+    if not allowed:
+        return {
+            "available": False,
+            "subject": subject,
+            "days": data["days"],
+            "nodes": [],
+            "edges": [],
+            "note": "尚未导入该学科的知识点数据，暂时无法生成知识图谱。",
+        }
+
+    attempts = data["attempts"]
+    stats_by_kp: dict[int, dict] = {}
+    if attempts:
+        stats_by_kp = {
+            item["kp_id"]: item for item in _knowledge_payload(data)["items"]
+        }
+    qid_kps = _qid_kp_map([item["qid"] for item in attempts], subject) if attempts else {}
+
+    pair_weights: dict[tuple[int, int], int] = {}
+    for kp_ids in qid_kps.values():
+        unique = sorted({kp_id for kp_id in kp_ids if kp_id in allowed})
+        for index, left in enumerate(unique):
+            for right in unique[index + 1:]:
+                pair_weights[(left, right)] = pair_weights.get((left, right), 0) + 1
+
+    edges: list[dict] = []
+    for (left, right), weight in sorted(
+        pair_weights.items(), key=lambda item: (-item[1], item[0])
+    ):
+        edges.append({
+            "source": left, "target": right, "type": "cooccur", "weight": weight,
+        })
+    for kp_id in sorted(allowed):
+        parent = kp_map[kp_id].get("parent_id")
+        if parent and parent in allowed:
+            edges.append({
+                "source": parent, "target": kp_id, "type": "hierarchy", "weight": 1,
+            })
+    edges = edges[:KP_GRAPH_MAX_EDGES]
+
+    node_ids = {kp_id for edge in edges for kp_id in (edge["source"], edge["target"])}
+    node_ids |= {kp_id for kp_id in stats_by_kp if kp_id in allowed}
+    node_ids = sorted(
+        node_ids,
+        key=lambda kp_id: (-int(stats_by_kp.get(kp_id, {}).get("attempts", 0)), kp_id),
+    )[:KP_GRAPH_MAX_NODES]
+    keep = set(node_ids)
+    edges = [
+        edge for edge in edges
+        if edge["source"] in keep and edge["target"] in keep
+    ]
+
+    nodes = []
+    for kp_id in node_ids:
+        kp = kp_map[kp_id]
+        stats = stats_by_kp.get(kp_id, {})
+        nodes.append({
+            "kp_id": kp_id,
+            "title": kp["name"],
+            "level": kp["level"],
+            "path": _kp_path(kp_map, kp_id),
+            "attempts": int(stats.get("attempts", 0)),
+            "accuracy": stats.get("accuracy"),
+            "weak": bool(stats.get("weak", False)),
+            "weight": int(stats.get("attempts", 0)) or 1,
+        })
+
+    if not nodes:
+        return {
+            "available": False,
+            "subject": subject,
+            "days": data["days"],
+            "nodes": [],
+            "edges": [],
+            "note": "尚未有可展示的知识点关联，先去练习几道题再回来看看。",
+        }
+    note = None
+    if not attempts:
+        note = "所选时间范围内还没有作答记录，当前只展示知识点的从属关系。"
+    return {
+        "available": True,
+        "subject": subject,
+        "days": data["days"],
+        "nodes": nodes,
+        "edges": edges,
+        "note": note,
+    }
 
 
 @router.get("/mistakes")

@@ -561,6 +561,28 @@ function knowledgeSection(knowledge, selection = null) {
       notStartedDetails(knowledge)));
 }
 
+/** 批次五（§6.6）：知识图谱。首次点击时才拉取数据并懒加载 sigma/graphology。 */
+function knowledgeGraphSection(subject, days) {
+  const mount = el('div', { class: 'ins-kp-graph-mount' });
+  let controller = null;
+  const loadButton = button(t('insight.graph.load'), event => busy(event.currentTarget, async () => {
+    const qs = query({ subject: subject || undefined, days });
+    const data = await api(`/insight/kp-graph?${qs}`);
+    const module = await import('../components/knowledgeGraph.js');
+    if (controller) { try { controller.destroy(); } catch { /* 忽略 */ } }
+    controller = module.renderKnowledgeGraph(mount, data, {
+      onSelect: node => go('practice', null, {
+        subject: data.subject || subject || '',
+        kp_id: String(node.kp_id),
+      }),
+    });
+    loadButton.hidden = true;
+  }), 'soft small', 'layers');
+  const note = el('p', { class: 'help ins-kp-graph-note' }, t('insight.graph.hint'));
+  return sectionCard(t('insight.graph.title'), t('insight.graph.sub'),
+    el('div', { class: 'ins-kp-graph-body' }, loadButton, note, mount));
+}
+
 function recommendationAction(item) {
   const action = String(item?.action || '');
   const preset = {
