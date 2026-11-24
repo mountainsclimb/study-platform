@@ -1,11 +1,15 @@
 {
   "version": 1,
   "generated_from": "app.main:app",
-  "count": 395,
+  "count": 396,
   "routes": [
     {
       "method": "GET",
       "path": "/"
+    },
+    {
+      "method": "POST",
+      "path": "/admin/kp-tag-local"
     },
     {
       "method": "GET",

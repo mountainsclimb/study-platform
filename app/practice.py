@@ -5492,7 +5492,7 @@ def kp_review_queue(subject: str | None = None, limit: int = Query(50, ge=1, le=
             "FROM question_kp qk "
             "JOIN knowledge_points kp ON kp.id=qk.kp_id "
             f"JOIN {_bank_table(con, 'questions')} q ON q.qid=qk.qid "
-            "WHERE qk.source IN ('ai','ai_pending_review')"
+            "WHERE qk.source IN ('ai','ai_pending_review','local_ai','local_ai_pending_review')"
         )
         params = []
         if subject:

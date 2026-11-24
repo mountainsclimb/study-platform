@@ -1800,7 +1800,7 @@ export function renderQuestion(
   // ---- 知识点与解法标签
   const kpRow = el('div', { class: 'row', style: 'margin:0 0 10px' });
   for (const kp of q.knowledge_points || []) {
-    const tagLabel = kp.source === 'ai' || kp.source === 'ai_pending_review'
+    const tagLabel = ['ai', 'ai_pending_review', 'local_ai', 'local_ai_pending_review'].includes(kp.source)
       ? t('question.aiTagged', { v1: kp.name })
       : kp.source === 'ai_reviewed' ? t('question.reviewed', { v1: kp.name }) : kp.name;
     kpRow.append(el('button', {

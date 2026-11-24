@@ -33,6 +33,8 @@ from . import vocab
 from . import chem_info
 # 批次六后续：词汇听写（本地 TTS + ASR 可选依赖，未启用时明确降级）。
 from . import vocab_dictation
+# 阶段 2：知识点本地向量打标（人工确认关联不覆盖，低置信进复核队列）。
+from . import kp_tagging
 
 WEB_DIR = Path(__file__).resolve().parents[1] / "web"
 health_log = logging.getLogger("zhixu.health")
@@ -787,6 +789,8 @@ app.include_router(vocab.router)
 app.include_router(chem_info.router)
 # 批次六后续：词汇听写（本地语音可选依赖）。
 app.include_router(vocab_dictation.router)
+# 阶段 2：知识点本地向量打标（管理员触发；人工确认关联不覆盖）。
+app.include_router(kp_tagging.router)
 
 app.mount("/static", StaticFiles(directory=str(WEB_DIR)), name="static")
 

@@ -412,6 +412,14 @@ async def _embed(config: EmbeddingConfig, texts: list[str]) -> list[list[float]]
 # 对外能力
 # ---------------------------------------------------------------------------
 
+async def embed_texts(texts: list[str], *, user_id: int | None = None) -> list[list[float]]:
+    """按当前账号配置计算任意文本向量；未配置或失败时返回空列表（不伪造向量）。"""
+    config = embedding_config(user_id)
+    if not config or not texts:
+        return []
+    return await _embed(config, [str(text or "") for text in texts])
+
+
 async def document_vectors(chunks: list[dict], *, user_id: int | None = None) -> list[tuple[str, str, str]]:
     config = embedding_config(user_id)
     if not config or not chunks:
@@ -588,7 +596,7 @@ async def test_embedding_config(
 
 __all__ = [
     "EMBEDDING_MODES", "EmbeddingConfig", "MAX_RESPONSE_BYTES", "current_embedding_user",
-    "document_vectors", "embedding_config", "embedding_status", "embedding_user",
+    "document_vectors", "embed_texts", "embedding_config", "embedding_status", "embedding_user",
     "env_embedding_config", "read_embedding_config", "retrieve_document_chunks",
     "save_embedding_config", "store_document_vectors", "test_embedding_config",
 ]

@@ -5513,5 +5513,7 @@
   "paper.import.pageBlocksHint": "Review text, formulas and table structure; saving updates this page only.",
   "paper.import.pageBlocksEmpty": "No blocks on this page. Run local OCR first.",
   "notes.rebuildStaleIndexes": "Rebuild stale indexes",
-  "notes.batchReindexDone": "Rebuilt indexes for {ready} documents"
+  "notes.batchReindexDone": "Rebuilt indexes for {ready} documents",
+  "admin.localVectorTagging": "Local vector tagging",
+  "admin.localVectorTaggingDone": "Local vector tagging finished"
 }

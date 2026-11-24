@@ -464,6 +464,14 @@ function taggingCard(catalog, onJobComplete) {
         });
         tagEstMount.replaceChildren(notice(est.notice));
       }), 'secondary small', 'chart'),
+      button(t('admin.localVectorTagging'), e => busy(e.currentTarget, async () => {
+        const res = await api('/admin/kp-tag-local', {
+          method: 'POST',
+          data: { subject: tagSubj.value, limit: Number(tagLimit.value) || 50 },
+        });
+        toast(res.notice || t('admin.localVectorTaggingDone'));
+        onJobComplete?.();
+      }), 'secondary small', 'tag'),
       button(t('admin.confirmStartingBatchTagging'), e => busy(e.currentTarget, async () => {
         const est = await api('/admin/tagging/estimate', {
           method: 'POST', data: { subject: tagSubj.value, limit: Number(tagLimit.value) || 50 },

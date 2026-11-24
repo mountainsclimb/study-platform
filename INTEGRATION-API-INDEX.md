@@ -2040,3 +2040,9 @@ bottleneck_station/bottleneck_reason/dropped/blocked`。
 | 方法/路径 | 请求 | 响应要点 |
 | --- | --- | --- |
 | `POST /api/documents/reindex-batch` | `{mode:"stale"\|"all", document_ids?}` | 按过期/全部重建，单批最多 50 份；返回 `attempted/ready/stale/skipped/failed[]`；未配置 Embedding 时 `skipped` 且继续本地全文检索。 |
+
+### 31.7 知识点本地向量打标（`app/kp_tagging.py`，阶段 2）
+
+| 方法/路径 | 请求 | 响应要点 |
+| --- | --- | --- |
+| `POST /api/admin/kp-tag-local` | `{subject?,limit?,threshold?,high_confidence?,dry_run?}` | 按当前 Embedding 配置给题干与知识点描述算余弦；高置信写 `local_ai`，低置信写 `local_ai_pending_review`；已有 `admin`/`reviewed_by` 关联的题目跳过，`ai*` 关联不覆盖。未配置向量时 `available:false` 且零写入。复核沿用 `GET /api/admin/kp-review-queue` 与 `POST /api/admin/question-kp/review`。 |
