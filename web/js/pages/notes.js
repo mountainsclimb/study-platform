@@ -531,7 +531,16 @@ export async function renderNotes(container, version, params = null) {
   docPicker.style.padding = '16px 12px';
 
   const docsArea = el('section', { class: 'card', style: 'margin-bottom:20px' },
-    el('div', { class: 'card-header' }, el('h3', {}, t('notes.myMaterials')), docCountBadge),
+    el('div', { class: 'card-header' }, el('h3', {}, t('notes.myMaterials')),
+      el('div', { class: 'row', style: 'gap:8px;flex-wrap:wrap' },
+        docCountBadge,
+        button(t('notes.rebuildStaleIndexes'), event => busy(event.currentTarget, async () => {
+          const res = await api('/documents/reindex-batch', {
+            method: 'POST', data: { mode: 'stale' },
+          });
+          toast(res.notice || t('notes.batchReindexDone', { ready: res.ready || 0 }));
+          await refreshDocsInPlace();
+        }), 'ghost small', 'rotate'))),
     docsRes.embedding_enabled ? notice(t('notes.semanticSearchIsEnabledOnThisSite')) : null,
     docList, docPicker, uploadFeedback);
 

@@ -720,6 +720,73 @@ async def reindex_document(document_id: int, user=Depends(current_user)):
             "index_status": "ready"}
 
 
+class BatchReindexInput(BaseModel):
+    mode: str = Field(default="stale", max_length=10)
+    document_ids: list[int] | None = Field(default=None, max_length=100)
+
+
+@router.post("/documents/reindex-batch")
+async def reindex_documents_batch(
+    data: BatchReindexInput | None = None, user=Depends(current_user),
+):
+    """批量重建资料向量：切换本地/远程 Embedding 后按 stale/all 收口。"""
+    payload = data or BatchReindexInput()
+    if payload.mode not in ("stale", "all"):
+        raise HTTPException(422, "mode 仅支持 stale（未就绪/过期）或 all（全部资料）")
+    with db.connection() as con:
+        rows = con.execute(
+            "SELECT id, vector_status FROM ai_documents WHERE user_id=? ORDER BY id",
+            (user["id"],),
+        ).fetchall()
+    known = {int(row["id"]) for row in rows}
+    selected = [int(row["id"]) for row in rows]
+    if payload.document_ids:
+        missing = [doc_id for doc_id in payload.document_ids if doc_id not in known]
+        if missing:
+            raise HTTPException(404, f"未找到资料：{', '.join(str(item) for item in missing)}")
+        wanted = set(payload.document_ids)
+        selected = [doc_id for doc_id in selected if doc_id in wanted]
+    if payload.mode == "stale":
+        by_id = {int(row["id"]): str(row["vector_status"] or "pending") for row in rows}
+        selected = [doc_id for doc_id in selected if by_id[doc_id] != "ready"]
+    if not selected:
+        return {
+            "attempted": 0, "ready": 0, "stale": 0, "skipped": 0, "failed": [],
+            "index_enabled": embedding_config(user["id"]) is not None,
+            "notice": "没有需要重建索引的资料。",
+        }
+    if not embedding_config(user["id"]):
+        return {
+            "attempted": 0, "ready": 0, "stale": 0, "skipped": len(selected),
+            "failed": [], "index_enabled": False,
+            "notice": "未配置 Embedding 服务，继续使用本地全文检索。",
+        }
+    limit = 50
+    items: list[dict] = []
+    failed: list[dict] = []
+    for doc_id in selected[:limit]:
+        try:
+            outcome = await reindex_document(doc_id, user=user)
+        except HTTPException as error:
+            failed.append({"document_id": doc_id, "error": str(error.detail)})
+            continue
+        items.append({
+            "document_id": doc_id,
+            "index_status": str(outcome.get("index_status") or "unknown"),
+        })
+    ready = sum(1 for item in items if item["index_status"] == "ready")
+    return {
+        "attempted": len(items) + len(failed),
+        "ready": ready,
+        "stale": sum(1 for item in items if item["index_status"] == "stale"),
+        "skipped": max(0, len(selected) - limit),
+        "failed": failed,
+        "index_enabled": True,
+        "items": items,
+        "notice": f"已重建 {ready} 份资料的向量索引。",
+    }
+
+
 @router.delete("/documents/{document_id}")
 def delete_document(document_id: int, user=Depends(current_user)):
     row = _owned("ai_documents", document_id, user["id"])

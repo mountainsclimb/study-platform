@@ -5511,5 +5511,7 @@
   "paper.import.pageBlocks": "Proofread page ({count} blocks)",
   "paper.import.pageBlockTitle": "Proofread blocks on page {page}",
   "paper.import.pageBlocksHint": "Review text, formulas and table structure; saving updates this page only.",
-  "paper.import.pageBlocksEmpty": "No blocks on this page. Run local OCR first."
+  "paper.import.pageBlocksEmpty": "No blocks on this page. Run local OCR first.",
+  "notes.rebuildStaleIndexes": "Rebuild stale indexes",
+  "notes.batchReindexDone": "Rebuilt indexes for {ready} documents"
 }

@@ -1,7 +1,7 @@
 {
   "version": 1,
   "generated_from": "app.main:app",
-  "count": 394,
+  "count": 395,
   "routes": [
     {
       "method": "GET",
@@ -574,6 +574,10 @@
     {
       "method": "POST",
       "path": "/api/documents"
+    },
+    {
+      "method": "POST",
+      "path": "/api/documents/reindex-batch"
     },
     {
       "method": "DELETE",

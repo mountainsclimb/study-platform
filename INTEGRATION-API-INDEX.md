@@ -2034,3 +2034,9 @@ bottleneck_station/bottleneck_reason/dropped/blocked`。
 | --- | --- | --- |
 | `GET /api/paperlab/imports/{id}/pages/{page_no}/blocks` | — | `{page_no,blocks,version,engine,has_blocks,ocr_block_count}`；归属校验 404。 |
 | `PUT /api/paperlab/imports/{id}/pages/{page_no}/blocks` | `{blocks:[...],expected_version}` | 乐观锁：版本不符 409；保存后 `version+1`；表格 HTML 走白名单清洗，其余字段沿用 `intake-blocks-v1`。 |
+
+### 31.6 资料向量批量重建（`app/ai/notes_agent.py`）
+
+| 方法/路径 | 请求 | 响应要点 |
+| --- | --- | --- |
+| `POST /api/documents/reindex-batch` | `{mode:"stale"\|"all", document_ids?}` | 按过期/全部重建，单批最多 50 份；返回 `attempted/ready/stale/skipped/failed[]`；未配置 Embedding 时 `skipped` 且继续本地全文检索。 |
