@@ -559,3 +559,20 @@ Phase 3 起任务中心/管理台另消费 AI 用量与配额（`app/ai/usage.py
 - 新样式 `web/index.html` 引入；`study.formula/review/demo` locale 中英各 4,785 键对齐；
 - `scripts/integration/ui_static_accept.py` 新增「第五轮组件与页面接线静态契约」步骤（组件齐全、页面接入点、
   播放器降级分支、本地 three.js、无 CDN、样式与关键键）。
+
+### 8.6 2026-11-24 增量契约：词汇 / 化学 / 实验台
+
+- **词汇与听写**：`/api/vocab` 的列表、建卡、到期、评分、导出与 `/api/vocab/dictation` 的
+  status/next/answer 均要求登录；卡片评分请求体为
+  `{rating:1-4, card_version, idempotency_key}`，版本冲突 409、幂等重放 `replayed=true`。
+  听写 `next` 不返回目标词；`answer` 返回 `correct/score/distance/expected` 并复用同一评分函数。
+- **化学**：`/api/chem/info` 在 RDKit 缺失时 503；`/api/chem/balance` 保持原有系数/守恒字段，
+  可逆方程使用 `⇌`。前端不得在接口失败时展示假系数。
+- **知识图谱**：`/api/insight/kp-graph` 只读既有 `question_kp` 与掌握度聚合，返回
+  `nodes[{id,label,mastery,weak}]` 与 `edges[{source,target,kind}]`，不新增数据表。
+- **实验台**：`/lab/python` 使用独立 CSP（`script-src 'self' 'wasm-unsafe-eval'`、
+  `worker-src 'none'`），主站 CSP 不放宽；课堂 `code` 场景只通过 `#code=` 片段跳转，不在
+  classroom iframe 内执行任意代码。
+- **演示附件**：新增 `geometry_demo`、`timeline`、`molecule_3d`、`physics_sandbox` 四类
+  附件数据；服务端只接受白名单参数，统一经 `normalize_demo_content` 规整后落库，禁止内联
+  任意 HTML/脚本。

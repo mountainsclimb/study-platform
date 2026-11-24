@@ -129,3 +129,15 @@ P0 文档曾把以下项列为「未实现」；P1 已全部实现且接口可�
 仍未实现（不返回假成功）：扫描 OMR 读卡（定位点检测/页面码校验/气泡识别）、试卷 PDF 服务端渲染
 （`format=pdf` 未提供，前端用浏览器打印）、题目切图独立导出/OSS 上传。完整路由索引见
 仓库根 `INTEGRATION-API-INDEX.md`。
+
+## 7. OCR 块与演示附件（2026-11-24）
+
+- 识别结果页（`pl_pages.ocr_blocks_json`）保存统一内容块：`id/kind/text/latex/table_html/
+  row_count/col_count/confidence/bbox/norm/page/order/needs_review`；列表接口同时返回
+  `has_blocks`、`ocr_block_count` 与 `block_notices`，前端据此显示「待校对/已校对」。
+- 结构化字段只做加法：`kind` 仍为 `text|math|table|image`；公式后处理写 `latex`/
+  `latex_engine`，表格后处理写 `table_html`/`table_engine`/`table_span`，均需人工校对。
+- 学习附件新增 `geometry_demo`、`timeline`、`molecule_3d`、`physics_sandbox` 四类演示数据。
+  写入前统一经 `normalize_demo_content` 白名单校验；只存参数，不存任意 HTML/脚本。
+- 导出（Word/Anki/讲义/离线包）遇到 `table_html`/`latex` 时按结构渲染；字段缺失时回退纯文本，
+  不报错、不伪造结构。

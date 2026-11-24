@@ -1,0 +1,1575 @@
+{
+  "version": 1,
+  "generated_from": "app.main:app",
+  "count": 392,
+  "routes": [
+    {
+      "method": "GET",
+      "path": "/"
+    },
+    {
+      "method": "GET",
+      "path": "/api/admin/ai/quotas"
+    },
+    {
+      "method": "POST",
+      "path": "/api/admin/ai/quotas"
+    },
+    {
+      "method": "GET",
+      "path": "/api/admin/ai/usage"
+    },
+    {
+      "method": "GET",
+      "path": "/api/admin/allowed-hosts"
+    },
+    {
+      "method": "POST",
+      "path": "/api/admin/allowed-hosts"
+    },
+    {
+      "method": "DELETE",
+      "path": "/api/admin/allowed-hosts/{hostname}"
+    },
+    {
+      "method": "POST",
+      "path": "/api/admin/backup"
+    },
+    {
+      "method": "GET",
+      "path": "/api/admin/community-explanations"
+    },
+    {
+      "method": "PUT",
+      "path": "/api/admin/community-explanations/{exp_id}/feature"
+    },
+    {
+      "method": "GET",
+      "path": "/api/admin/content-issues"
+    },
+    {
+      "method": "GET",
+      "path": "/api/admin/content-issues/export"
+    },
+    {
+      "method": "POST",
+      "path": "/api/admin/content-issues/{issue_id}/transition"
+    },
+    {
+      "method": "GET",
+      "path": "/api/admin/eval-runs"
+    },
+    {
+      "method": "POST",
+      "path": "/api/admin/knowledge-points"
+    },
+    {
+      "method": "POST",
+      "path": "/api/admin/knowledge-points/import"
+    },
+    {
+      "method": "DELETE",
+      "path": "/api/admin/knowledge-points/{kp_id}"
+    },
+    {
+      "method": "GET",
+      "path": "/api/admin/kp-review-queue"
+    },
+    {
+      "method": "GET",
+      "path": "/api/admin/monitor"
+    },
+    {
+      "method": "GET",
+      "path": "/api/admin/overview"
+    },
+    {
+      "method": "GET",
+      "path": "/api/admin/prompt-templates"
+    },
+    {
+      "method": "POST",
+      "path": "/api/admin/question-kp"
+    },
+    {
+      "method": "POST",
+      "path": "/api/admin/question-kp/review"
+    },
+    {
+      "method": "POST",
+      "path": "/api/admin/question-method"
+    },
+    {
+      "method": "POST",
+      "path": "/api/admin/questions/{qid:path}/isolation"
+    },
+    {
+      "method": "GET",
+      "path": "/api/admin/revisions"
+    },
+    {
+      "method": "POST",
+      "path": "/api/admin/tagging/estimate"
+    },
+    {
+      "method": "GET",
+      "path": "/api/admission/control-lines"
+    },
+    {
+      "method": "GET",
+      "path": "/api/admission/filters"
+    },
+    {
+      "method": "GET",
+      "path": "/api/admission/gaps"
+    },
+    {
+      "method": "GET",
+      "path": "/api/admission/majors"
+    },
+    {
+      "method": "GET",
+      "path": "/api/admission/meta"
+    },
+    {
+      "method": "GET",
+      "path": "/api/admission/overview"
+    },
+    {
+      "method": "GET",
+      "path": "/api/admission/plans"
+    },
+    {
+      "method": "GET",
+      "path": "/api/admission/school"
+    },
+    {
+      "method": "GET",
+      "path": "/api/admission/schools"
+    },
+    {
+      "method": "GET",
+      "path": "/api/admission/score-rank"
+    },
+    {
+      "method": "GET",
+      "path": "/api/admission/suggest"
+    },
+    {
+      "method": "GET",
+      "path": "/api/admission/trend"
+    },
+    {
+      "method": "GET",
+      "path": "/api/ai/explain-modes"
+    },
+    {
+      "method": "GET",
+      "path": "/api/ai/jobs"
+    },
+    {
+      "method": "POST",
+      "path": "/api/ai/jobs"
+    },
+    {
+      "method": "GET",
+      "path": "/api/ai/jobs/{job_id}"
+    },
+    {
+      "method": "POST",
+      "path": "/api/ai/jobs/{job_id}/cancel"
+    },
+    {
+      "method": "POST",
+      "path": "/api/ai/jobs/{job_id}/confirm-outline"
+    },
+    {
+      "method": "POST",
+      "path": "/api/ai/jobs/{job_id}/resume"
+    },
+    {
+      "method": "GET",
+      "path": "/api/ai/jobs/{job_id}/stream"
+    },
+    {
+      "method": "POST",
+      "path": "/api/ai/ocr"
+    },
+    {
+      "method": "GET",
+      "path": "/api/ai/ocr/info"
+    },
+    {
+      "method": "GET",
+      "path": "/api/ai/search/info"
+    },
+    {
+      "method": "GET",
+      "path": "/api/ai/task-defaults"
+    },
+    {
+      "method": "PUT",
+      "path": "/api/ai/task-defaults"
+    },
+    {
+      "method": "GET",
+      "path": "/api/ai/usage"
+    },
+    {
+      "method": "GET",
+      "path": "/api/ai/usage/me"
+    },
+    {
+      "method": "GET",
+      "path": "/api/ai/web-search"
+    },
+    {
+      "method": "GET",
+      "path": "/api/artifacts"
+    },
+    {
+      "method": "POST",
+      "path": "/api/artifacts"
+    },
+    {
+      "method": "GET",
+      "path": "/api/artifacts/by-target"
+    },
+    {
+      "method": "DELETE",
+      "path": "/api/artifacts/{artifact_id}"
+    },
+    {
+      "method": "GET",
+      "path": "/api/artifacts/{artifact_id}"
+    },
+    {
+      "method": "PATCH",
+      "path": "/api/artifacts/{artifact_id}"
+    },
+    {
+      "method": "DELETE",
+      "path": "/api/artifacts/{artifact_id}/links"
+    },
+    {
+      "method": "POST",
+      "path": "/api/artifacts/{artifact_id}/links"
+    },
+    {
+      "method": "GET",
+      "path": "/api/artifacts/{artifact_id}/revisions"
+    },
+    {
+      "method": "GET",
+      "path": "/api/assistant/conversations"
+    },
+    {
+      "method": "POST",
+      "path": "/api/assistant/conversations"
+    },
+    {
+      "method": "DELETE",
+      "path": "/api/assistant/conversations/{conversation_id}"
+    },
+    {
+      "method": "GET",
+      "path": "/api/assistant/conversations/{conversation_id}"
+    },
+    {
+      "method": "PATCH",
+      "path": "/api/assistant/conversations/{conversation_id}"
+    },
+    {
+      "method": "POST",
+      "path": "/api/assistant/conversations/{conversation_id}/confirm"
+    },
+    {
+      "method": "POST",
+      "path": "/api/assistant/conversations/{conversation_id}/messages"
+    },
+    {
+      "method": "POST",
+      "path": "/api/assistant/conversations/{conversation_id}/stop"
+    },
+    {
+      "method": "GET",
+      "path": "/api/assistant/skills"
+    },
+    {
+      "method": "POST",
+      "path": "/api/assistant/skills"
+    },
+    {
+      "method": "DELETE",
+      "path": "/api/assistant/skills/{skill_id}"
+    },
+    {
+      "method": "PATCH",
+      "path": "/api/assistant/skills/{skill_id}"
+    },
+    {
+      "method": "GET",
+      "path": "/api/assistant/tools"
+    },
+    {
+      "method": "GET",
+      "path": "/api/attempt-image/{id}"
+    },
+    {
+      "method": "POST",
+      "path": "/api/attempts"
+    },
+    {
+      "method": "GET",
+      "path": "/api/attempts/history"
+    },
+    {
+      "method": "GET",
+      "path": "/api/auth/admin/registration"
+    },
+    {
+      "method": "POST",
+      "path": "/api/auth/admin/registration"
+    },
+    {
+      "method": "POST",
+      "path": "/api/auth/change-password"
+    },
+    {
+      "method": "POST",
+      "path": "/api/auth/init-admin"
+    },
+    {
+      "method": "POST",
+      "path": "/api/auth/login"
+    },
+    {
+      "method": "POST",
+      "path": "/api/auth/logout"
+    },
+    {
+      "method": "GET",
+      "path": "/api/auth/me"
+    },
+    {
+      "method": "POST",
+      "path": "/api/auth/recovery-codes"
+    },
+    {
+      "method": "POST",
+      "path": "/api/auth/register"
+    },
+    {
+      "method": "GET",
+      "path": "/api/auth/registration-policy"
+    },
+    {
+      "method": "POST",
+      "path": "/api/auth/reset-password"
+    },
+    {
+      "method": "GET",
+      "path": "/api/bank-image"
+    },
+    {
+      "method": "GET",
+      "path": "/api/catalog"
+    },
+    {
+      "method": "POST",
+      "path": "/api/chem/balance"
+    },
+    {
+      "method": "POST",
+      "path": "/api/chem/info"
+    },
+    {
+      "method": "POST",
+      "path": "/api/classroom/asr"
+    },
+    {
+      "method": "GET",
+      "path": "/api/classroom/asr/info"
+    },
+    {
+      "method": "GET",
+      "path": "/api/classroom/assets/{asset_id}"
+    },
+    {
+      "method": "GET",
+      "path": "/api/classroom/courses"
+    },
+    {
+      "method": "POST",
+      "path": "/api/classroom/courses"
+    },
+    {
+      "method": "POST",
+      "path": "/api/classroom/courses/import"
+    },
+    {
+      "method": "DELETE",
+      "path": "/api/classroom/courses/{course_id}"
+    },
+    {
+      "method": "GET",
+      "path": "/api/classroom/courses/{course_id}"
+    },
+    {
+      "method": "PATCH",
+      "path": "/api/classroom/courses/{course_id}"
+    },
+    {
+      "method": "GET",
+      "path": "/api/classroom/courses/{course_id}/agents"
+    },
+    {
+      "method": "PATCH",
+      "path": "/api/classroom/courses/{course_id}/agents"
+    },
+    {
+      "method": "POST",
+      "path": "/api/classroom/courses/{course_id}/agents/generate"
+    },
+    {
+      "method": "GET",
+      "path": "/api/classroom/courses/{course_id}/export"
+    },
+    {
+      "method": "POST",
+      "path": "/api/classroom/courses/{course_id}/generate"
+    },
+    {
+      "method": "POST",
+      "path": "/api/classroom/courses/{course_id}/images"
+    },
+    {
+      "method": "GET",
+      "path": "/api/classroom/courses/{course_id}/narration"
+    },
+    {
+      "method": "POST",
+      "path": "/api/classroom/courses/{course_id}/narration"
+    },
+    {
+      "method": "POST",
+      "path": "/api/classroom/courses/{course_id}/scenes/demo"
+    },
+    {
+      "method": "DELETE",
+      "path": "/api/classroom/courses/{course_id}/scenes/{scene_id}"
+    },
+    {
+      "method": "GET",
+      "path": "/api/classroom/courses/{course_id}/scenes/{scene_id}/content"
+    },
+    {
+      "method": "PATCH",
+      "path": "/api/classroom/courses/{course_id}/scenes/{scene_id}/content"
+    },
+    {
+      "method": "POST",
+      "path": "/api/classroom/courses/{course_id}/scenes/{scene_id}/duplicate"
+    },
+    {
+      "method": "POST",
+      "path": "/api/classroom/courses/{course_id}/scenes/{scene_id}/regenerate"
+    },
+    {
+      "method": "POST",
+      "path": "/api/classroom/courses/{course_id}/sessions"
+    },
+    {
+      "method": "POST",
+      "path": "/api/classroom/courses/{course_id}/tts"
+    },
+    {
+      "method": "GET",
+      "path": "/api/classroom/courses/{course_id}/video"
+    },
+    {
+      "method": "POST",
+      "path": "/api/classroom/courses/{course_id}/video"
+    },
+    {
+      "method": "POST",
+      "path": "/api/classroom/import"
+    },
+    {
+      "method": "GET",
+      "path": "/api/classroom/meta"
+    },
+    {
+      "method": "GET",
+      "path": "/api/classroom/scenes/{scene_id}/html"
+    },
+    {
+      "method": "POST",
+      "path": "/api/classroom/scenes/{scene_id}/interactive-event"
+    },
+    {
+      "method": "GET",
+      "path": "/api/classroom/sessions/{session_id}"
+    },
+    {
+      "method": "PATCH",
+      "path": "/api/classroom/sessions/{session_id}"
+    },
+    {
+      "method": "POST",
+      "path": "/api/classroom/sessions/{session_id}/discussion"
+    },
+    {
+      "method": "POST",
+      "path": "/api/classroom/sessions/{session_id}/interject"
+    },
+    {
+      "method": "POST",
+      "path": "/api/classroom/sessions/{session_id}/quiz"
+    },
+    {
+      "method": "POST",
+      "path": "/api/classroom/sessions/{session_id}/tutor"
+    },
+    {
+      "method": "GET",
+      "path": "/api/classroom/voices"
+    },
+    {
+      "method": "POST",
+      "path": "/api/demos/build"
+    },
+    {
+      "method": "POST",
+      "path": "/api/demos/simulate"
+    },
+    {
+      "method": "GET",
+      "path": "/api/demos/simulate/{run_id}"
+    },
+    {
+      "method": "GET",
+      "path": "/api/demos/templates"
+    },
+    {
+      "method": "GET",
+      "path": "/api/doc-annotations"
+    },
+    {
+      "method": "POST",
+      "path": "/api/doc-annotations"
+    },
+    {
+      "method": "DELETE",
+      "path": "/api/doc-annotations/{annotation_id}"
+    },
+    {
+      "method": "POST",
+      "path": "/api/doc-annotations/{annotation_id}/refresh"
+    },
+    {
+      "method": "GET",
+      "path": "/api/documents"
+    },
+    {
+      "method": "POST",
+      "path": "/api/documents"
+    },
+    {
+      "method": "DELETE",
+      "path": "/api/documents/{document_id}"
+    },
+    {
+      "method": "POST",
+      "path": "/api/documents/{document_id}/locate"
+    },
+    {
+      "method": "POST",
+      "path": "/api/documents/{document_id}/ocr"
+    },
+    {
+      "method": "PATCH",
+      "path": "/api/documents/{document_id}/ocr-text"
+    },
+    {
+      "method": "POST",
+      "path": "/api/documents/{document_id}/reindex"
+    },
+    {
+      "method": "GET",
+      "path": "/api/evidence/question/{ref:path}"
+    },
+    {
+      "method": "POST",
+      "path": "/api/evidence/self-report"
+    },
+    {
+      "method": "GET",
+      "path": "/api/evidence/summary"
+    },
+    {
+      "method": "GET",
+      "path": "/api/explanations"
+    },
+    {
+      "method": "DELETE",
+      "path": "/api/explanations/{exp_id}"
+    },
+    {
+      "method": "PUT",
+      "path": "/api/explanations/{exp_id}/share"
+    },
+    {
+      "method": "GET",
+      "path": "/api/focus/sessions"
+    },
+    {
+      "method": "POST",
+      "path": "/api/focus/sessions"
+    },
+    {
+      "method": "DELETE",
+      "path": "/api/focus/sessions/{session_id}"
+    },
+    {
+      "method": "GET",
+      "path": "/api/focus/summary"
+    },
+    {
+      "method": "GET",
+      "path": "/api/groups/{group_id:path}"
+    },
+    {
+      "method": "GET",
+      "path": "/api/guided-hints"
+    },
+    {
+      "method": "POST",
+      "path": "/api/guided-hints"
+    },
+    {
+      "method": "GET",
+      "path": "/api/guided-hints/by-ref"
+    },
+    {
+      "method": "GET",
+      "path": "/api/guided-hints/{hint_id}"
+    },
+    {
+      "method": "POST",
+      "path": "/api/guided-hints/{hint_id}/advance"
+    },
+    {
+      "method": "POST",
+      "path": "/api/guided-hints/{hint_id}/attempt"
+    },
+    {
+      "method": "GET",
+      "path": "/api/handouts"
+    },
+    {
+      "method": "POST",
+      "path": "/api/handouts"
+    },
+    {
+      "method": "DELETE",
+      "path": "/api/handouts/{handout_id}"
+    },
+    {
+      "method": "GET",
+      "path": "/api/handouts/{handout_id}"
+    },
+    {
+      "method": "GET",
+      "path": "/api/handouts/{handout_id}/export"
+    },
+    {
+      "method": "GET",
+      "path": "/api/health"
+    },
+    {
+      "method": "GET",
+      "path": "/api/health/live"
+    },
+    {
+      "method": "GET",
+      "path": "/api/health/ready"
+    },
+    {
+      "method": "GET",
+      "path": "/api/insight/home"
+    },
+    {
+      "method": "GET",
+      "path": "/api/insight/knowledge"
+    },
+    {
+      "method": "GET",
+      "path": "/api/insight/kp-graph"
+    },
+    {
+      "method": "GET",
+      "path": "/api/insight/mistakes"
+    },
+    {
+      "method": "POST",
+      "path": "/api/insight/narrative"
+    },
+    {
+      "method": "GET",
+      "path": "/api/insight/overview"
+    },
+    {
+      "method": "GET",
+      "path": "/api/insight/report"
+    },
+    {
+      "method": "GET",
+      "path": "/api/issue-image/{issue_id}"
+    },
+    {
+      "method": "GET",
+      "path": "/api/knowledge-points"
+    },
+    {
+      "method": "GET",
+      "path": "/api/knowledge-points/{kp_id}/detail"
+    },
+    {
+      "method": "POST",
+      "path": "/api/mastery"
+    },
+    {
+      "method": "GET",
+      "path": "/api/mastery-paths"
+    },
+    {
+      "method": "POST",
+      "path": "/api/mastery-paths"
+    },
+    {
+      "method": "GET",
+      "path": "/api/mastery-paths/{path_id}"
+    },
+    {
+      "method": "POST",
+      "path": "/api/mastery-paths/{path_id}/archive"
+    },
+    {
+      "method": "POST",
+      "path": "/api/mastery-paths/{path_id}/nodes/{node_id}/refresh"
+    },
+    {
+      "method": "POST",
+      "path": "/api/mastery-paths/{path_id}/nodes/{node_id}/restate"
+    },
+    {
+      "method": "GET",
+      "path": "/api/methods"
+    },
+    {
+      "method": "PATCH",
+      "path": "/api/models/{model_row_id}"
+    },
+    {
+      "method": "GET",
+      "path": "/api/notes"
+    },
+    {
+      "method": "POST",
+      "path": "/api/notes"
+    },
+    {
+      "method": "DELETE",
+      "path": "/api/notes/{note_id}"
+    },
+    {
+      "method": "GET",
+      "path": "/api/notes/{note_id}"
+    },
+    {
+      "method": "PATCH",
+      "path": "/api/notes/{note_id}"
+    },
+    {
+      "method": "GET",
+      "path": "/api/notes/{note_id}/export"
+    },
+    {
+      "method": "POST",
+      "path": "/api/notes/{note_id}/publish"
+    },
+    {
+      "method": "POST",
+      "path": "/api/notes/{note_id}/rollback/{version_id}"
+    },
+    {
+      "method": "GET",
+      "path": "/api/notes/{note_id}/versions"
+    },
+    {
+      "method": "GET",
+      "path": "/api/paperlab/attempts"
+    },
+    {
+      "method": "GET",
+      "path": "/api/paperlab/attempts/{attempt_id}"
+    },
+    {
+      "method": "PATCH",
+      "path": "/api/paperlab/attempts/{attempt_id}/answers"
+    },
+    {
+      "method": "GET",
+      "path": "/api/paperlab/attempts/{attempt_id}/items/{item_position}/images/{image_index}"
+    },
+    {
+      "method": "POST",
+      "path": "/api/paperlab/attempts/{attempt_id}/submit"
+    },
+    {
+      "method": "DELETE",
+      "path": "/api/paperlab/cards/{card_id}"
+    },
+    {
+      "method": "GET",
+      "path": "/api/paperlab/cards/{card_id}"
+    },
+    {
+      "method": "PATCH",
+      "path": "/api/paperlab/cards/{card_id}"
+    },
+    {
+      "method": "GET",
+      "path": "/api/paperlab/cards/{card_id}/export"
+    },
+    {
+      "method": "GET",
+      "path": "/api/paperlab/cards/{card_id}/svg"
+    },
+    {
+      "method": "GET",
+      "path": "/api/paperlab/imports"
+    },
+    {
+      "method": "POST",
+      "path": "/api/paperlab/imports"
+    },
+    {
+      "method": "GET",
+      "path": "/api/paperlab/imports/{import_id}"
+    },
+    {
+      "method": "POST",
+      "path": "/api/paperlab/imports/{import_id}/commit"
+    },
+    {
+      "method": "PATCH",
+      "path": "/api/paperlab/imports/{import_id}/items/{item_id}"
+    },
+    {
+      "method": "POST",
+      "path": "/api/paperlab/imports/{import_id}/items/{item_id}/accept-verify"
+    },
+    {
+      "method": "POST",
+      "path": "/api/paperlab/imports/{import_id}/items/{item_id}/answer-box"
+    },
+    {
+      "method": "POST",
+      "path": "/api/paperlab/imports/{import_id}/ocr"
+    },
+    {
+      "method": "POST",
+      "path": "/api/paperlab/imports/{import_id}/ocr-draft"
+    },
+    {
+      "method": "GET",
+      "path": "/api/paperlab/imports/{import_id}/pages"
+    },
+    {
+      "method": "GET",
+      "path": "/api/paperlab/imports/{import_id}/pages/{page_no}/annotation"
+    },
+    {
+      "method": "PUT",
+      "path": "/api/paperlab/imports/{import_id}/pages/{page_no}/annotation"
+    },
+    {
+      "method": "GET",
+      "path": "/api/paperlab/imports/{import_id}/pages/{page_no}/image"
+    },
+    {
+      "method": "POST",
+      "path": "/api/paperlab/imports/{import_id}/publish"
+    },
+    {
+      "method": "POST",
+      "path": "/api/paperlab/imports/{import_id}/recognize"
+    },
+    {
+      "method": "POST",
+      "path": "/api/paperlab/imports/{import_id}/resegment"
+    },
+    {
+      "method": "GET",
+      "path": "/api/paperlab/meta"
+    },
+    {
+      "method": "GET",
+      "path": "/api/paperlab/ocr/info"
+    },
+    {
+      "method": "GET",
+      "path": "/api/paperlab/papers"
+    },
+    {
+      "method": "POST",
+      "path": "/api/paperlab/papers"
+    },
+    {
+      "method": "POST",
+      "path": "/api/paperlab/papers/compose"
+    },
+    {
+      "method": "DELETE",
+      "path": "/api/paperlab/papers/{paper_id}"
+    },
+    {
+      "method": "GET",
+      "path": "/api/paperlab/papers/{paper_id}"
+    },
+    {
+      "method": "PATCH",
+      "path": "/api/paperlab/papers/{paper_id}"
+    },
+    {
+      "method": "GET",
+      "path": "/api/paperlab/papers/{paper_id}/attempts"
+    },
+    {
+      "method": "POST",
+      "path": "/api/paperlab/papers/{paper_id}/attempts"
+    },
+    {
+      "method": "GET",
+      "path": "/api/paperlab/papers/{paper_id}/cards"
+    },
+    {
+      "method": "POST",
+      "path": "/api/paperlab/papers/{paper_id}/cards"
+    },
+    {
+      "method": "GET",
+      "path": "/api/paperlab/papers/{paper_id}/export"
+    },
+    {
+      "method": "POST",
+      "path": "/api/paperlab/papers/{paper_id}/items/reorder"
+    },
+    {
+      "method": "GET",
+      "path": "/api/paperlab/papers/{paper_id}/items/{item_position}/images/{image_index}"
+    },
+    {
+      "method": "POST",
+      "path": "/api/paperlab/papers/{paper_id}/publish"
+    },
+    {
+      "method": "POST",
+      "path": "/api/paperlab/papers/{paper_id}/scan"
+    },
+    {
+      "method": "GET",
+      "path": "/api/paperlab/papers/{paper_id}/scans"
+    },
+    {
+      "method": "GET",
+      "path": "/api/paperlab/questions"
+    },
+    {
+      "method": "POST",
+      "path": "/api/paperlab/questions"
+    },
+    {
+      "method": "POST",
+      "path": "/api/paperlab/questions/collect"
+    },
+    {
+      "method": "POST",
+      "path": "/api/paperlab/questions/enrich"
+    },
+    {
+      "method": "GET",
+      "path": "/api/paperlab/questions/export"
+    },
+    {
+      "method": "POST",
+      "path": "/api/paperlab/questions/import"
+    },
+    {
+      "method": "GET",
+      "path": "/api/paperlab/questions/stats"
+    },
+    {
+      "method": "DELETE",
+      "path": "/api/paperlab/questions/{question_id}"
+    },
+    {
+      "method": "GET",
+      "path": "/api/paperlab/questions/{question_id}"
+    },
+    {
+      "method": "PATCH",
+      "path": "/api/paperlab/questions/{question_id}"
+    },
+    {
+      "method": "GET",
+      "path": "/api/paperlab/questions/{question_id}/images/{image_index}"
+    },
+    {
+      "method": "GET",
+      "path": "/api/paperlab/questions/{question_id}/source-status"
+    },
+    {
+      "method": "POST",
+      "path": "/api/paperlab/questions/{question_id}/update-from-source"
+    },
+    {
+      "method": "POST",
+      "path": "/api/paperlab/questions/{question_id}/verify"
+    },
+    {
+      "method": "GET",
+      "path": "/api/paperlab/questions/{question_id}/versions"
+    },
+    {
+      "method": "POST",
+      "path": "/api/paperlab/revision"
+    },
+    {
+      "method": "GET",
+      "path": "/api/paperlab/revision/options"
+    },
+    {
+      "method": "GET",
+      "path": "/api/paperlab/scan/meta"
+    },
+    {
+      "method": "GET",
+      "path": "/api/paperlab/scans/{scan_id}"
+    },
+    {
+      "method": "POST",
+      "path": "/api/paperlab/scans/{scan_id}/confirm"
+    },
+    {
+      "method": "GET",
+      "path": "/api/plaza/admin/appeals"
+    },
+    {
+      "method": "POST",
+      "path": "/api/plaza/admin/appeals/batch"
+    },
+    {
+      "method": "PATCH",
+      "path": "/api/plaza/admin/appeals/{appeal_id}"
+    },
+    {
+      "method": "GET",
+      "path": "/api/plaza/admin/identity/queue"
+    },
+    {
+      "method": "POST",
+      "path": "/api/plaza/admin/identity/{identity_id}/review"
+    },
+    {
+      "method": "GET",
+      "path": "/api/plaza/admin/issues"
+    },
+    {
+      "method": "POST",
+      "path": "/api/plaza/admin/issues/batch"
+    },
+    {
+      "method": "PATCH",
+      "path": "/api/plaza/admin/issues/{issue_id}"
+    },
+    {
+      "method": "GET",
+      "path": "/api/plaza/admin/metrics"
+    },
+    {
+      "method": "POST",
+      "path": "/api/plaza/admin/quality/checks"
+    },
+    {
+      "method": "GET",
+      "path": "/api/plaza/admin/quality/gate"
+    },
+    {
+      "method": "PUT",
+      "path": "/api/plaza/admin/quality/gate"
+    },
+    {
+      "method": "GET",
+      "path": "/api/plaza/admin/quality/queue"
+    },
+    {
+      "method": "GET",
+      "path": "/api/plaza/admin/reports"
+    },
+    {
+      "method": "POST",
+      "path": "/api/plaza/admin/reports/batch"
+    },
+    {
+      "method": "PATCH",
+      "path": "/api/plaza/admin/reports/{report_id}"
+    },
+    {
+      "method": "POST",
+      "path": "/api/plaza/admin/roles"
+    },
+    {
+      "method": "GET",
+      "path": "/api/plaza/admin/submissions"
+    },
+    {
+      "method": "GET",
+      "path": "/api/plaza/assets/{asset_id}"
+    },
+    {
+      "method": "GET",
+      "path": "/api/plaza/favorites"
+    },
+    {
+      "method": "POST",
+      "path": "/api/plaza/identity/apply"
+    },
+    {
+      "method": "GET",
+      "path": "/api/plaza/me"
+    },
+    {
+      "method": "GET",
+      "path": "/api/plaza/notifications"
+    },
+    {
+      "method": "POST",
+      "path": "/api/plaza/notifications/read"
+    },
+    {
+      "method": "GET",
+      "path": "/api/plaza/notifications/unread-count"
+    },
+    {
+      "method": "GET",
+      "path": "/api/plaza/questions"
+    },
+    {
+      "method": "GET",
+      "path": "/api/plaza/questions/{public_id}"
+    },
+    {
+      "method": "DELETE",
+      "path": "/api/plaza/questions/{public_id}/favorite"
+    },
+    {
+      "method": "POST",
+      "path": "/api/plaza/questions/{public_id}/favorite"
+    },
+    {
+      "method": "GET",
+      "path": "/api/plaza/questions/{public_id}/images/{index}"
+    },
+    {
+      "method": "POST",
+      "path": "/api/plaza/questions/{public_id}/issues"
+    },
+    {
+      "method": "POST",
+      "path": "/api/plaza/questions/{public_id}/reports"
+    },
+    {
+      "method": "GET",
+      "path": "/api/plaza/releases"
+    },
+    {
+      "method": "POST",
+      "path": "/api/plaza/releases/{public_id}/restore"
+    },
+    {
+      "method": "POST",
+      "path": "/api/plaza/releases/{public_id}/withdraw"
+    },
+    {
+      "method": "GET",
+      "path": "/api/plaza/review/mine"
+    },
+    {
+      "method": "GET",
+      "path": "/api/plaza/review/queue"
+    },
+    {
+      "method": "POST",
+      "path": "/api/plaza/submissions"
+    },
+    {
+      "method": "GET",
+      "path": "/api/plaza/submissions/mine"
+    },
+    {
+      "method": "GET",
+      "path": "/api/plaza/submissions/{submission_id}"
+    },
+    {
+      "method": "PATCH",
+      "path": "/api/plaza/submissions/{submission_id}"
+    },
+    {
+      "method": "GET",
+      "path": "/api/plaza/submissions/{submission_id}/appeals"
+    },
+    {
+      "method": "POST",
+      "path": "/api/plaza/submissions/{submission_id}/appeals"
+    },
+    {
+      "method": "GET",
+      "path": "/api/plaza/submissions/{submission_id}/events"
+    },
+    {
+      "method": "POST",
+      "path": "/api/plaza/submissions/{submission_id}/initial-review"
+    },
+    {
+      "method": "POST",
+      "path": "/api/plaza/submissions/{submission_id}/publish"
+    },
+    {
+      "method": "POST",
+      "path": "/api/plaza/submissions/{submission_id}/reviews"
+    },
+    {
+      "method": "POST",
+      "path": "/api/plaza/submissions/{submission_id}/revise"
+    },
+    {
+      "method": "POST",
+      "path": "/api/plaza/submissions/{submission_id}/rollback"
+    },
+    {
+      "method": "POST",
+      "path": "/api/plaza/submissions/{submission_id}/submit"
+    },
+    {
+      "method": "POST",
+      "path": "/api/plaza/submissions/{submission_id}/withdraw"
+    },
+    {
+      "method": "GET",
+      "path": "/api/preferences"
+    },
+    {
+      "method": "PATCH",
+      "path": "/api/preferences"
+    },
+    {
+      "method": "GET",
+      "path": "/api/prompt-grid"
+    },
+    {
+      "method": "POST",
+      "path": "/api/prompt-grid/preview"
+    },
+    {
+      "method": "GET",
+      "path": "/api/prompt-templates"
+    },
+    {
+      "method": "POST",
+      "path": "/api/prompt-templates"
+    },
+    {
+      "method": "DELETE",
+      "path": "/api/prompt-templates/{tpl_id}"
+    },
+    {
+      "method": "POST",
+      "path": "/api/prompt-templates/{tpl_id}/recommend"
+    },
+    {
+      "method": "PUT",
+      "path": "/api/prompt-templates/{tpl_id}/share"
+    },
+    {
+      "method": "GET",
+      "path": "/api/providers"
+    },
+    {
+      "method": "POST",
+      "path": "/api/providers"
+    },
+    {
+      "method": "GET",
+      "path": "/api/providers/embeddings-config"
+    },
+    {
+      "method": "PUT",
+      "path": "/api/providers/embeddings-config"
+    },
+    {
+      "method": "POST",
+      "path": "/api/providers/embeddings-test"
+    },
+    {
+      "method": "POST",
+      "path": "/api/providers/fetch-models-preview"
+    },
+    {
+      "method": "POST",
+      "path": "/api/providers/probe"
+    },
+    {
+      "method": "DELETE",
+      "path": "/api/providers/{provider_id}"
+    },
+    {
+      "method": "PATCH",
+      "path": "/api/providers/{provider_id}"
+    },
+    {
+      "method": "POST",
+      "path": "/api/providers/{provider_id}/fetch-models"
+    },
+    {
+      "method": "GET",
+      "path": "/api/providers/{provider_id}/models"
+    },
+    {
+      "method": "POST",
+      "path": "/api/providers/{provider_id}/test"
+    },
+    {
+      "method": "POST",
+      "path": "/api/question-metadata"
+    },
+    {
+      "method": "GET",
+      "path": "/api/questions"
+    },
+    {
+      "method": "GET",
+      "path": "/api/questions/{qid:path}"
+    },
+    {
+      "method": "GET",
+      "path": "/api/questions/{qid:path}/issues"
+    },
+    {
+      "method": "POST",
+      "path": "/api/questions/{qid:path}/issues"
+    },
+    {
+      "method": "GET",
+      "path": "/api/reveal"
+    },
+    {
+      "method": "GET",
+      "path": "/api/review-cards/compare"
+    },
+    {
+      "method": "GET",
+      "path": "/api/review-cards/due"
+    },
+    {
+      "method": "GET",
+      "path": "/api/review-cards/stats"
+    },
+    {
+      "method": "POST",
+      "path": "/api/review-cards/sync"
+    },
+    {
+      "method": "GET",
+      "path": "/api/review-cards/{card_id}"
+    },
+    {
+      "method": "POST",
+      "path": "/api/review-cards/{card_id}/ratings"
+    },
+    {
+      "method": "GET",
+      "path": "/api/review/queue"
+    },
+    {
+      "method": "GET",
+      "path": "/api/reviews"
+    },
+    {
+      "method": "GET",
+      "path": "/api/stats"
+    },
+    {
+      "method": "GET",
+      "path": "/api/templates"
+    },
+    {
+      "method": "GET",
+      "path": "/api/topic-reports"
+    },
+    {
+      "method": "POST",
+      "path": "/api/topic-reports"
+    },
+    {
+      "method": "DELETE",
+      "path": "/api/topic-reports/{report_id}"
+    },
+    {
+      "method": "GET",
+      "path": "/api/topic-reports/{report_id}"
+    },
+    {
+      "method": "PATCH",
+      "path": "/api/topic-reports/{report_id}"
+    },
+    {
+      "method": "GET",
+      "path": "/api/topic-reports/{report_id}/markdown"
+    },
+    {
+      "method": "POST",
+      "path": "/api/topic-reports/{report_id}/save-note"
+    },
+    {
+      "method": "POST",
+      "path": "/api/uploads/question"
+    },
+    {
+      "method": "GET",
+      "path": "/api/uploads/{upload_id}"
+    },
+    {
+      "method": "POST",
+      "path": "/api/uploads/{upload_id}/ai-answer"
+    },
+    {
+      "method": "PATCH",
+      "path": "/api/uploads/{upload_id}/confirm"
+    },
+    {
+      "method": "GET",
+      "path": "/api/uploads/{upload_id}/extra/{index}"
+    },
+    {
+      "method": "GET",
+      "path": "/api/uploads/{upload_id}/intake"
+    },
+    {
+      "method": "POST",
+      "path": "/api/uploads/{upload_id}/ocr-draft"
+    },
+    {
+      "method": "POST",
+      "path": "/api/uploads/{upload_id}/save-to-bank"
+    },
+    {
+      "method": "POST",
+      "path": "/api/uploads/{upload_id}/similar"
+    },
+    {
+      "method": "POST",
+      "path": "/api/vocab/cards"
+    },
+    {
+      "method": "GET",
+      "path": "/api/vocab/cards/due"
+    },
+    {
+      "method": "GET",
+      "path": "/api/vocab/cards/{card_id}"
+    },
+    {
+      "method": "POST",
+      "path": "/api/vocab/cards/{card_id}/ratings"
+    },
+    {
+      "method": "POST",
+      "path": "/api/vocab/dictation/answer"
+    },
+    {
+      "method": "GET",
+      "path": "/api/vocab/dictation/next"
+    },
+    {
+      "method": "GET",
+      "path": "/api/vocab/dictation/status"
+    },
+    {
+      "method": "GET",
+      "path": "/api/vocab/export"
+    },
+    {
+      "method": "GET",
+      "path": "/api/vocab/items"
+    },
+    {
+      "method": "GET",
+      "path": "/api/vocab/meta"
+    },
+    {
+      "method": "GET",
+      "path": "/api/vocab/stats"
+    },
+    {
+      "method": "GET",
+      "path": "/api/wrongbook"
+    },
+    {
+      "method": "POST",
+      "path": "/api/wrongbook"
+    },
+    {
+      "method": "GET",
+      "path": "/api/wrongbook/by-kp"
+    },
+    {
+      "method": "GET",
+      "path": "/api/wrongbook/export"
+    },
+    {
+      "method": "POST",
+      "path": "/api/wrongbook/restore"
+    },
+    {
+      "method": "GET",
+      "path": "/api/wrongbook/session"
+    },
+    {
+      "method": "POST",
+      "path": "/api/wrongbook/tags"
+    },
+    {
+      "method": "POST",
+      "path": "/api/wrongbook/upload"
+    },
+    {
+      "method": "GET",
+      "path": "/api/wrongbook/uploads"
+    },
+    {
+      "method": "DELETE",
+      "path": "/api/wrongbook/uploads/{upload_id}"
+    },
+    {
+      "method": "DELETE",
+      "path": "/api/wrongbook/{qid:path}"
+    },
+    {
+      "method": "GET",
+      "path": "/lab/python"
+    }
+  ]
+}

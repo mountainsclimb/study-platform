@@ -1984,3 +1984,46 @@ bottleneck_station/bottleneck_reason/dropped/blocked`。
 - 专项测试：`tests/test_classroom_offline_demo_player.py`（13）、`tests/test_topic_report_note.py`（9）、
   `tests/test_m7_integration.py`（5）；直连回归 68 passed。
 - 来源变更后需重跑 `python scripts/build_offline_demo_bundle.py`（ui_static 已校验产物一致性）。
+
+## 31. 2026-11-24 增量：词汇、化学信息、知识图谱与 Python 实验台
+
+本节补齐前几轮未登记到索引的端点与页面；端点总数以 `docs/api-index.json` 为准，
+`tests/test_contract_drift.py` 会在应用路由变化时失败，要求重新生成索引。
+
+### 31.1 词汇 `/api/vocab`（`app/vocab.py`）
+
+| 方法/路径 | 请求 | 响应要点 |
+| --- | --- | --- |
+| `GET /api/vocab/meta` | — | 词表版本、词数、触发标签（`gk`）、四档标签与到期口径。 |
+| `GET /api/vocab/stats` | — | 总词数、已建卡数、今日到期、四档分布、近 7 日评分。 |
+| `GET /api/vocab/items` | `q/tag/limit/offset`（≤200） | 分页词条；首次访问时才加载 8000 词种子。 |
+| `GET /api/vocab/cards/due` | `limit`（≤100） | 到期卡（复用四档排程）；无卡时按触发词惰性建卡。 |
+| `POST /api/vocab/cards` | `{word_ids:[...]}`（≤200） | 幂等建卡，返回 `created/existing` 计数。 |
+| `GET /api/vocab/cards/{card_id}` | — | 单卡详情；非本人 404。 |
+| `POST /api/vocab/cards/{card_id}/ratings` | `{rating:1-4, card_version, idempotency_key, elapsed_ms?}` | 版本不符 409；同幂等键重放 `replayed=true`；评分写入 `vocab_ratings`。 |
+| `GET /api/vocab/export` | `format=anki` | Anki 可导入的 TSV（`#separator:tab`），公式与换行转义。 |
+
+### 31.2 词汇听写 `/api/vocab/dictation`（`app/vocab_dictation.py`）
+
+| 方法/路径 | 请求 | 响应要点 |
+| --- | --- | --- |
+| `GET /api/vocab/dictation/status` | — | 本地 TTS/ASR 可用性、模型目录与降级原因；不触发模型加载。 |
+| `GET /api/vocab/dictation/next` | `level?` | 返回题目 id、音频（WAV data URL）与提示，**不返回单词本身**；本地语音不可用时 503。 |
+| `POST /api/vocab/dictation/answer` | `{item_id, transcript, elapsed_ms?}` | `correct/score/distance/expected`；归一化 Levenshtein，≥80 且长度 ≥4 视为近似正确。 |
+
+### 31.3 化学与知识图谱
+
+| 方法/路径 | 请求 | 响应要点 |
+| --- | --- | --- |
+| `POST /api/chem/balance` | `{equation, reversible?}` | 配平系数、元素守恒校验、中文错误原因；可逆箭头输出 `⇌`。 |
+| `POST /api/chem/info` | `{smiles}` | RDKit 规范 SMILES、分子式、相对分子质量；未安装 RDKit 时 503，不返回占位数据。 |
+| `GET /api/insight/kp-graph` | `subject?` | 知识点节点/边（掌握度、薄弱点、先修关系），供学情页图谱视图。 |
+
+### 31.4 Python 实验台
+
+| 方法/路径 | 请求 | 响应要点 |
+| --- | --- | --- |
+| `GET /lab/python` | `#code=<urlencoded>` 可选 | 专用 Pyodide 页面；CSP 仅 `script-src 'self' 'wasm-unsafe-eval'`、`worker-src 'none'`，不自动执行 `#code`。 |
+
+课堂 `code` 场景只把代码文本链接到该页面，不在课堂 iframe 内执行任意脚本；
+主站 CSP 保持 `script-src 'self'`，不因实验台放宽。
