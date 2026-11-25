@@ -668,7 +668,7 @@ def test_jobs_ocr_contract_probe(client):
     """stream-core 交付后，JobInput/submit_job 必须支持 OCR 异步任务契约。"""
     submit = getattr(ai_jobs, "submit_job", None)
     if not callable(submit):
-        pytest.skip("jobs.submit_job 尚未交付（stream-core 并行开发中），端点侧已用 monkeypatch 兜底")
+        pytest.skip("jobs.submit_job 不可用（防御性兼容分支；已交付，正常不应触发）")
     job_input_cls = getattr(ai_jobs, "JobInput", None)
     fields = getattr(job_input_cls, "model_fields", {}) or {}
     assert "page_from" in fields and "page_to" in fields, "JobInput 缺少 page_from/page_to"
@@ -690,7 +690,7 @@ def test_real_submit_job_creates_ocr_job_and_keeps_page_range(client, monkeypatc
     """与 jobs.submit_job 的真实联调：创建 task="ocr" 任务、保留页范围、走调度。"""
     submit = getattr(ai_jobs, "submit_job", None)
     if not callable(submit):
-        pytest.skip("jobs.submit_job 尚未交付（stream-core 并行开发中），端点侧已用 monkeypatch 兜底")
+        pytest.skip("jobs.submit_job 不可用（防御性兼容分支；已交付，正常不应触发）")
     provider = save_provider(client)
     uploaded = upload_scanned(client, page_count=6)
     FakeVision().install(monkeypatch)  # 即使误派发也不会联网
@@ -723,7 +723,7 @@ def test_run_job_dispatches_ocr_and_completes(client, monkeypatch):
     import inspect
 
     if "ocr" not in inspect.getsource(ai_jobs._run_job):
-        pytest.skip("jobs._run_job 尚未接线 task=ocr（stream-core 并行开发中）")
+        pytest.skip("jobs._run_job 未接线 task=ocr（防御性检查；已接线，正常不应触发）")
     provider = save_provider(client)
     uploaded = upload_scanned(client, page_count=3)
     uid = user_id_of(client)
@@ -753,7 +753,7 @@ def test_dispatched_ocr_job_completes_with_real_dispatch_token(client, monkeypat
     import inspect
 
     if "ocr" not in inspect.getsource(ai_jobs._run_job):
-        pytest.skip("jobs._run_job 尚未接线 task=ocr（stream-core 并行开发中）")
+        pytest.skip("jobs._run_job 未接线 task=ocr（防御性检查；已接线，正常不应触发）")
     provider = save_provider(client)
     uploaded = upload_scanned(client, page_count=3)
     uid = user_id_of(client)
@@ -797,7 +797,7 @@ def test_dispatched_cancel_settles_cancelled_and_keeps_saved_pages(client, monke
     import inspect
 
     if "ocr" not in inspect.getsource(ai_jobs._run_job):
-        pytest.skip("jobs._run_job 尚未接线 task=ocr（stream-core 并行开发中）")
+        pytest.skip("jobs._run_job 未接线 task=ocr（防御性检查；已接线，正常不应触发）")
     provider = save_provider(client)
     uploaded = upload_scanned(client, page_count=4)
     uid = user_id_of(client)
@@ -832,7 +832,7 @@ def test_run_job_reports_range_validation_as_failure_message(client, monkeypatch
     import inspect
 
     if "ocr" not in inspect.getsource(ai_jobs._run_job):
-        pytest.skip("jobs._run_job 尚未接线 task=ocr（stream-core 并行开发中）")
+        pytest.skip("jobs._run_job 未接线 task=ocr（防御性检查；已接线，正常不应触发）")
     provider = save_provider(client)
     uploaded = upload_scanned(client, page_count=35)
     uid = user_id_of(client)
@@ -857,7 +857,7 @@ def test_run_job_resume_from_checkpoint_retries_only_failed_pages(client, monkey
     import inspect
 
     if "ocr" not in inspect.getsource(ai_jobs._run_job):
-        pytest.skip("jobs._run_job 尚未接线 task=ocr（stream-core 并行开发中）")
+        pytest.skip("jobs._run_job 未接线 task=ocr（防御性检查；已接线，正常不应触发）")
     provider = save_provider(client)
     uploaded = upload_scanned(client, page_count=3)
     uid = user_id_of(client)

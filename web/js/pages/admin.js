@@ -604,6 +604,76 @@ function hostsCard(initial) {
     customMount);
 }
 
+function admissionCard() {
+  let seq = 0;
+  const card = el('section', { class: 'card admin-admission-card', style: 'margin-top:22px' });
+  const mount = el('div');
+
+  function render(data) {
+    const ready = Boolean(data.ready);
+    card.replaceChildren(
+      el('div', { class: 'card-header' },
+        el('h2', {}, t('admin.admission.section')),
+        el('div', { class: 'row' },
+          badge(ready ? t('admin.admission.ready') : t('admin.admission.notImported'),
+            ready ? 'teal' : 'amber'),
+          button(t('admin.admission.refresh'), e => busy(e.currentTarget, () => load(true)),
+            'secondary small', 'repeat'))),
+      mount);
+    if (data.error) {
+      mount.replaceChildren(notice(t('admin.admission.readFailed', { v1: data.error }), 'warning'));
+      return;
+    }
+    if (!ready) {
+      mount.replaceChildren(
+        notice(t('admin.admission.notImportedHint'), 'warning'),
+        el('pre', { class: 'help', style: 'white-space:pre-wrap;margin:8px 0 0' },
+          'python scripts/import_admission.py'));
+      return;
+    }
+    const rows = data.rows || {};
+    const tableLabels = {
+      'score-range': t('admin.admission.table.scoreRange'),
+      'school-admission': t('admin.admission.table.schoolAdmission'),
+      'major-admission': t('admin.admission.table.majorAdmission'),
+      'enrollment-plan': t('admin.admission.table.enrollmentPlan'),
+    };
+    const years = Array.isArray(data.years) ? data.years.map(Number).filter(Boolean) : [];
+    const yearText = years.length
+      ? (years.length > 1 ? `${Math.min(...years)}–${Math.max(...years)}` : String(years[0]))
+      : '—';
+    const official = data.official || {};
+    const lines = [
+      t('admin.admission.summary', {
+        total: number(data.total_rows || 0),
+        provinces: number((data.provinces || []).length),
+        years: yearText,
+      }),
+      ...Object.entries(tableLabels).map(([key, label]) =>
+        `${label}：${number(rows[key] || 0)} 行`),
+      official && official.ready
+        ? t('admin.admission.officialReady')
+        : t('admin.admission.officialMissing'),
+      data.license ? t('admin.admission.license', { v1: data.license }) : '',
+    ].filter(Boolean);
+    mount.replaceChildren(
+      el('p', { class: 'help', style: 'margin-bottom:12px' }, t('admin.admission.note')),
+      el('div', { class: 'mini-list' }, ...lines.map(text => el('span', {}, text))));
+  }
+
+  async function load(_refresh = false) {
+    const mine = ++seq;
+    mount.replaceChildren(loading(t('admin.admission.loading')));
+    const data = await api('/admission/meta')
+      .catch(error => ({ error: error.message }));
+    if (mine !== seq) return;
+    render(data);
+  }
+
+  load();
+  return card;
+}
+
 function registrationCard(initial) {
   let seq = 0;
   const card = el('section', { class: 'card', style: 'margin-top:22px' });
@@ -1269,6 +1339,7 @@ export async function renderAdmin(container, version) {
       adminMonitorCard(),
       opsCard,
       adminAiUsageCard(),
+      admissionCard(),
       registrationCard(registrationRes),
       hostsCard(hostsRes));
     state.loaded = true;

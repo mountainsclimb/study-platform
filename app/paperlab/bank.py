@@ -134,7 +134,7 @@ def list_questions(
             (*params, page_size, (page - 1) * page_size),
         ).fetchall()
     items = [db.public_question(row) for row in rows]
-    # Phase 1 剩余：列表批量标注「有新版」/来源可用性（一次只读探针，不做逐题请求）。
+    # 列表批量标注「有新版」/来源可用性（一次只读探针，不做逐题请求；versions.py 实现）。
     versions.annotate_source_flags(items)
     return {
         "items": items,
@@ -424,9 +424,8 @@ def question_image(question_id: int, image_index: int, user=Depends(current_user
     )
 
 
-# Phase 1 剩余（§6.2/§6.3）：个人收录版本与「有新版」路由。
+# 个人收录版本与「有新版」（§6.2/§6.3，已实现于 versions.py）。
 # 路由前缀与 bank 相同（都挂在 /api/paperlab 下），路径均为 /questions/{id}/... 的具体子路径，
 # 与上面 GET /questions/{id} 不冲突；放在文件末尾注册，保持既有路由匹配顺序不变。
-# 说明：paperlab 包级 __init__ 不在本任务写范围，故由此处挂载。
 router.include_router(versions.router)
 

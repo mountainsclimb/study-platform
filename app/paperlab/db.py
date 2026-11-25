@@ -492,7 +492,7 @@ def public_question(row) -> dict:
         "source": source,
         "has_answer": has_answer,
         "stem_preview": preview,
-        # Phase 1 剩余：个人收录来源与版本元数据（只增不改，供「有新版」徽标/版本弹层使用）。
+        # 个人收录来源与版本元数据（只增不改，供「有新版」徽标/版本弹层使用）。
         "source_kind": source_kind,
         "source_ref": source_ref,
         "source_question_id": row.get("source_question_id") or "",

@@ -59,20 +59,13 @@ SOFTWARE.
 - 修改说明：用 esbuild 将物理层打包为浏览器 ESM（`physics-core.js`），并把其 React/SVG 渲染层改写为原生 DOM/SVG 播放器（`web/js/components/physicsPlayer.js`）；物理计算逻辑未改动，10 个演示的自动校验全部通过。
 - 边界：动画为辅助理解，物理关系按题设理想模型模拟，不替代解析结论与官方答案；上游题库真题转录未逐条对照官方原卷，因此未导入。
 
-## 6. Surya OCR（图片试题转 LaTeX 适配层）
+## 6. Surya OCR（已移除）
 
-| 项目 | 内容 |
-|---|---|
-| 名称 | Surya — OCR, layout analysis, reading order, table recognition in 90+ languages |
-| 作者 / 版权 | Copyright (c) Vikas Paruchuri and Datalab Team |
-| 上游仓库 | <https://github.com/datalab-to/surya> |
-| PyPI | `surya-ocr`（本项目可选依赖，见 `requirements-surya.txt`） |
-| 代码许可证 | Apache License 2.0 |
-| 模型权重许可证 | Modified AI Pubs Open Rail-M License（研究、个人使用及融资/营收低于 500 万美元的初创公司免费；更大范围商用需向 Datalab 取得授权，见 <https://www.datalab.to/pricing>） |
-
-- 用途：`app/ai/surya_latex.py` 将题目图片识别为内容块与整题 LaTeX（公式 KaTeX 兼容），为「上传题目图片 → LaTeX」功能预置能力；属可选依赖，未安装时降级、不影响现有功能。
-- 本项目通过 pip 安装官方发布的 `surya-ocr` 包，未复制其源码；推理后端（vllm / llama-server）由部署方自备，模型权重按上游方式下载，本仓库不分发模型文件。
-- 代码层面的使用遵循 Apache-2.0；模型权重的使用范围受上述 Open Rail-M 变体许可约束，商业部署前请自行确认授权范围。
+原「图片试题转 LaTeX 适配层」（`app/ai/surya_latex.py` + `requirements-surya.txt`，
+`surya-ocr==0.24.0`，Apache-2.0 / 权重 Modified AI Pubs Open Rail-M）已于 2026-11-25
+按原计划移除：功能由拍题链路的公式识别后处理（`app.ai.formula_ocr`，RapidLaTeXOCR，
+MIT）取代，本仓库内已无引用。历史设计见 `docs/平台设计.md` 与
+`docs/开源组件整合实施记录-20261123-批次五-6.1.md`。
 
 ## 7. python-pptx（AI 课堂 PPTX 导出）
 
@@ -308,13 +301,12 @@ SOFTWARE.
 | 10 | Python 运行时依赖 | `requirements.txt`：FastAPI 0.136.0、uvicorn 0.45.0、httpx 0.28.1、cryptography 46.0.7、Pillow 12.2.0、pypdf 6.10.2、pypdfium2 5.14.0、python-docx 1.2.0、python-pptx 1.0.2、python-multipart 0.0.26、PyYAML 6.0.3、sympy 1.14.0、genanki 0.13.1、RapidOCR 1.4.4、ONNX Runtime 1.20.1；`deploy/requirements.txt`：arq 0.28、boto3 1.34、psycopg 3.2（LGPL-3.0）、psycopg_pool 3.2 | MIT / BSD / Apache-2.0 / LGPL-3.0，逐包见安装元数据 | 运行时 site-packages，不进仓库 | `pip install -r requirements.txt -r deploy/requirements.txt` | 运行时安装 |
 | 11 | ffmpeg | 系统包（Debian bookworm） | LGPL/GPL 取决于发行构建；本项目仅以子进程调用，不链接、不分发二进制 | 容器镜像（`deploy/Dockerfile`） | `apt-get install -y --no-install-recommends libgomp1 ffmpeg` | 运行时安装（镜像内） |
 | 12 | Playwright / Chromium（可选） | playwright 及其下载的浏览器 | Apache-2.0 | 本机/CI 浏览器的独立安装，不进仓库 | `pip install playwright && playwright install chromium` | 运行时安装（可选服务） |
-| 13 | Surya OCR（可选） | `surya-ocr`（`requirements-surya.txt`） | 代码 Apache-2.0；权重 Modified AI Pubs Open Rail-M（见 §6） | 运行时 site-packages；权重由部署方按上游下载 | `pip install -r requirements-surya.txt` | 运行时安装（可选，权重不进仓库） |
-| 14 | 题库发布包（只读） | `高考题库_按学科/releases/`，当前 `CURRENT` → `bank-20261121-r5`（26,374 题 / 538 组 / 1,873 卷） | 各来源不同，逐来源见 §17；题目版权归原命题机构 | `../../高考题库_按学科/releases/`，应用只读挂载 | `tools/ingest/build_release.py`（题库仓库内） | 不进仓库（只读挂载） |
-| 15 | axe-core（开发期无障碍扫描） | `axe-core@4.14.1` | MPL-2.0 | `scripts/vendor/axe.min.js`（来源、大小与 SHA-256 见同目录 README） | `npm pack axe-core@4.14.1`，取包内 `axe.min.js` 与 `LICENSE` | 随仓库分发（仅开发脚本）；`.dockerignore` 已排除 `scripts/vendor/`，不进镜像 |
-| 16 | RapidFuzz（可选文本相似度/题库去重） | `rapidfuzz==3.14.6`（`requirements-search.txt`） | MIT | 运行时 site-packages，不进仓库 | `pip install -r requirements-search.txt` | 运行时可选；未安装自动回退标准库 difflib |
-| 17 | pdfplumber（文本型 PDF 表格） | `pdfplumber==0.11.10`（`requirements-pdf.txt`；0.11.11 要求 Pillow≥13，与工程锁定版本不兼容） | MIT | 运行时 site-packages，不进仓库 | `pip install -r requirements-pdf.txt`；开关 `STUDY_PDF_TABLES=on` | 运行时安装（可选），不进镜像 |
-| 18 | RapidLaTeXOCR（公式识别） | `rapid-latex-ocr==0.0.9`（`requirements-formula.txt`） | MIT / PyPI 元数据 Apache-2.0；模型源自 LaTeX-OCR（MIT） | 运行时 site-packages；模型随包下载，不进仓库 | `pip install -r requirements-formula.txt`；开关 `STUDY_FORMULA_OCR=on` | 运行时安装（可选），不进镜像 |
-| 19 | RapidTable（表格结构） | `rapid-table==3.0.2`（`requirements-formula.txt`） | Apache-2.0 | 运行时 site-packages；模型随包下载，不进仓库 | `pip install -r requirements-formula.txt`；开关 `STUDY_TABLE_OCR=on` | 运行时安装（可选），不进镜像 |
+| 13 | 题库发布包（只读） | `高考题库_按学科/releases/`，当前 `CURRENT` → `bank-20261121-r5`（26,374 题 / 538 组 / 1,873 卷） | 各来源不同，逐来源见 §17；题目版权归原命题机构 | `../../高考题库_按学科/releases/`，应用只读挂载 | `tools/ingest/build_release.py`（题库仓库内） | 不进仓库（只读挂载） |
+| 14 | axe-core（开发期无障碍扫描） | `axe-core@4.14.1` | MPL-2.0 | `scripts/vendor/axe.min.js`（来源、大小与 SHA-256 见同目录 README） | `npm pack axe-core@4.14.1`，取包内 `axe.min.js` 与 `LICENSE` | 随仓库分发（仅开发脚本）；`.dockerignore` 已排除 `scripts/vendor/`，不进镜像 |
+| 15 | RapidFuzz（可选文本相似度/题库去重） | `rapidfuzz==3.14.6`（`requirements-search.txt`） | MIT | 运行时 site-packages，不进仓库 | `pip install -r requirements-search.txt` | 运行时可选；未安装自动回退标准库 difflib |
+| 16 | pdfplumber（文本型 PDF 表格） | `pdfplumber==0.11.10`（`requirements-pdf.txt`；0.11.11 要求 Pillow≥13，与工程锁定版本不兼容） | MIT | 运行时 site-packages，不进仓库 | `pip install -r requirements-pdf.txt`；开关 `STUDY_PDF_TABLES=on` | 运行时安装（可选），不进镜像 |
+| 17 | RapidLaTeXOCR（公式识别） | `rapid-latex-ocr==0.0.9`（`requirements-formula.txt`） | MIT / PyPI 元数据 Apache-2.0；模型源自 LaTeX-OCR（MIT） | 运行时 site-packages；模型随包下载，不进仓库 | `pip install -r requirements-formula.txt`；开关 `STUDY_FORMULA_OCR=on` | 运行时安装（可选），不进镜像 |
+| 18 | RapidTable（表格结构） | `rapid-table==3.0.2`（`requirements-formula.txt`） | Apache-2.0 | 运行时 site-packages；模型随包下载，不进仓库 | `pip install -r requirements-formula.txt`；开关 `STUDY_TABLE_OCR=on` | 运行时安装（可选），不进镜像 |
 | 20 | MathLive（可视化公式编辑） | `mathlive@0.111.4` | MIT | `web/vendor/mathlive/`（版本、大小与 SHA-256 见同目录 README） | `npm pack mathlive@0.111.4`，取主脚本、样式、字体与 LICENSE | 随仓库分发 |
 | 21 | fastembed（本地向量/重排） | `fastembed==0.9.1`（`requirements-embeddings.txt`） | Apache-2.0 | 运行时 site-packages；模型由部署方预置，不进仓库 | `pip install -r requirements-embeddings.txt`；开关 `STUDY_EMBEDDING_MODE=local`、`STUDY_RERANK=on` | 运行时安装（可选），不进镜像 |
 | 22 | sherpa-onnx（离线语音） | `sherpa-onnx==2.0.3`（`requirements-speech.txt`） | Apache-2.0 | 运行时 site-packages；模型由部署方预置，不进仓库 | `pip install -r requirements-speech.txt`；开关 `STUDY_LOCAL_SPEECH=on` | 运行时安装（可选），不进镜像 |
@@ -344,7 +336,6 @@ SOFTWARE.
 | 离线语音模型权重 | Kokoro kokoro-multi-lang-v1_1 / Paraformer-zh | Apache-2.0，由部署方预置 | 不进仓库与镜像；目录见 `requirements-speech.txt` |
 | 公式识别模型权重 | LaTeX-OCR 编码器/解码器/图像缩放/tokenizer | 源自 LaTeX-OCR（MIT），随 rapid-latex-ocr pip 包下载 | 不进仓库；离线部署需预置到包内 `models/` |
 | 表格结构模型权重 | SLANet Plus | 随 rapid-table pip 包下载；许可以包内说明为准 | 不进仓库；离线部署需预置 |
-| Surya 模型权重 | 版面/文字识别/公式 | Modified AI Pubs Open Rail-M（商用门槛见 §6） | 部署方自行下载，不进仓库；商用前确认授权 |
 | 字体 | KaTeX 数学字体 | SIL OFL 1.1 | 随构建产物分发；不引用外部字体 CDN |
 | 图标 | lucide-react 图标 | ISC | 随编辑器构建产物分发 |
 
@@ -362,7 +353,6 @@ SOFTWARE.
 | 本地 OCR（RapidOCR，CPU） | 默认可用 | `requirements.txt` 已锁定 | 缺依赖时按代码降级，不影响练习 |
 | AI 讲解/助手/课堂生成 | 可选服务 | 模型提供方配置（`app/ai/providers.py`）；出站受 `netguard.py` 策略约束 | 读题与扣费动作需用户确认 |
 | AI 课堂视频/PPTX/PDF 导出 | 可选服务 | ffmpeg（镜像已装）+ Playwright/Chromium | Chromium 未安装时能力探针降级，见方案 §3 P1 |
-| Surya 公式转 LaTeX | 实验（待移除） | `requirements-surya.txt` + 推理后端 + 权重许可确认 | 已由拍题的公式识别后处理取代；保留一个版本周期后删除 |
 | 公式图片识别（RapidLaTeXOCR） | 实验 | `requirements-formula.txt` + `STUDY_FORMULA_OCR=on`；超时/上限见 `STUDY_FORMULA_TIMEOUT`、`STUDY_FORMULA_MAX_BLOCKS` | 默认关闭；只填 math 块的 `latex`，`needs_review` 保持 true；失败/超时块原样 |
 | 表格结构（RapidTable） | 实验 | `requirements-formula.txt` + `STUDY_TABLE_OCR=on`；超时 `STUDY_TABLE_TIMEOUT` | 默认关闭；只写连续表格块的第一块，HTML 经服务端白名单清洗 |
 | 可视化公式编辑（MathLive） | 默认可用 | `web/vendor/mathlive/` 随仓库分发；首次打开懒加载 | 加载失败回退现有文本公式输入 |

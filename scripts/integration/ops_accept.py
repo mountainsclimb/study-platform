@@ -483,15 +483,13 @@ class OpsAccept:
         feedback = plaza.get("feedback") or {}
         withdrawn = plaza.get("withdrawn") or {}
         leak = int(withdrawn.get("leaked") or 0)
-        if leak:
-            # 既有缺陷：同一 public_id 的 v2 重新签发后，旧 v1 撤回记录会被监控
-            # 误判为「撤回传播异常」（重复运行时上一轮遗留状态触发），记录为 warning 不阻断。
-            self.warning(
-                "运维监控 withdrawn 传播抽样把「同 public_id 的新版本重新签发」误判为"
-                f"撤回泄露（leaked={leak}，监控 false positive，属既有缺陷；本脚本不阻断）")
-            self.data["monitor"]["withdrawn_false_positive"] = {
-                "leaked": leak, "items": withdrawn.get("leaked_items"),
-            }
+        # 历史上同 public_id 重新签发会误报泄露（WS27），已在 058be1a 修复
+        # （监控排除存在 active 指针的同 public_id）；现在 leaked>0 即真实泄露，按失败断言。
+        checks_insert = (
+            ("撤回传播抽样零泄露（同 public_id 重新签发已排除误报）", leak == 0,
+             json.dumps({"leaked": leak, "items": (withdrawn.get("leaked_items") or [])[:3]},
+                        ensure_ascii=False)),
+        )
         status_order = {"ok": 0, "warn": 1, "error": 2}
         expected_status = "ok"
         for item in (monitor.get("checks") or {}).values():
@@ -502,6 +500,7 @@ class OpsAccept:
             ("20 条待处理纠错已提交（反馈积压可构造）",
              len(issue_ids) == 20 and all(issue_id > 0 for issue_id in issue_ids),
              f"issues={len(issue_ids)} 首批={issue_ids[:3]}"),
+            checks_insert[0],
             ("单组降级：checks.plaza.status=warn/error 且给出积压告警",
              plaza.get("status") in ("warn", "error")
              and int(feedback.get("total_pending") or 0) >= 20

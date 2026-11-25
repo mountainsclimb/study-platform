@@ -526,10 +526,9 @@ python scripts/integration/plaza_accept.py --base-url http://127.0.0.1:8856 --sk
 > docs/知序优化-环境与发布前验收记录-20261121.md。
 
 > 可重复运行：账号登录优先（复跑 0 次注册请求）；`ops_accept.py` 会清理历史失败运行遗留的
-> 待处理纠错积压并断言实例累计指标（`>=` 口径），同一实例复跑通过。已知缺陷：运维监控
-> `withdrawn` 撤回传播抽样对「同一 public_id 的新版本重新签发（v2 active + v1 withdrawn）」
-> 会误报「撤回泄露」（既有 `app/monitor.py` 口径问题，非本脚本数据），`ops_accept.py` 记录为
-> warning 不判断失败，待 WS27 修复。
+> 待处理纠错积压并断言实例累计指标（`>=` 口径），同一实例复跑通过。历史缺陷「运维监控
+> withdrawn 撤回传播抽样对同 public_id 重新签发误报」已在 `058be1a` 修复（监控改为排除
+> 存在 active 指针的同 public_id）；脚本现在对 `leaked>0` 按真实问题断言失败。
 
 ## 清理
 

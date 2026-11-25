@@ -952,12 +952,13 @@ class OfficialAccept:
             self._ensure_course_concurrency()
 
     def _cleanup_course_jobs(self) -> None:
-        """探测学员账号历史遗留的课堂生成任务（awaiting_outline 暂停态占用全站 course 并发）。
+        """探测学员账号历史遗留的课堂生成任务并取消（可重复运行保障）。
 
-        ``awaiting_outline`` 属于占用并发的在途任务，且产品侧 ``cancel`` 对暂停态任务只返回
-        200、状态不变（无法释放并发，属既有产品限制）；因此这里只做「取消请求 + 探测」，
-        并记录 warning；真正的可重复运行保障由 ``_ensure_course_concurrency`` 临时提升
-        全站 course 并发上限（结束恢复）完成。
+        历史上 ``awaiting_outline`` 暂停态无法取消且占用全站 course 并发（WS26），
+        已在 ``058be1a`` 修复：cancel 对暂停态直接落定为 ``cancelled`` 并释放并发。
+        本探测保留为防御性清理：取消遗留任务；若取消后仍停在暂停态（异常情况）
+        记录 warning；可重复运行的兜底仍由 ``_ensure_course_concurrency`` 临时
+        提升全站 course 并发上限（结束恢复）完成。
         """
         started = time.time()
         learner = self.clients["learner"]
@@ -986,19 +987,20 @@ class OfficialAccept:
                     still_paused.append(job_id)
         self.data["classroom"]["leftover_jobs_cancelled"] = cancel_accepted
         self.data["classroom"]["leftover_jobs_still_paused"] = still_paused
-        if leftovers:
+        if leftovers and still_paused:
             self.warning(
-                "学员账号存在 %d 个历史课堂生成任务（awaiting_outline 暂停态，占用全站 course "
-                "并发）：cancel 返回 200 但状态不变（既有产品限制），改由临时提升并发上限保证"
-                "同一实例可重复运行；任务列表=%s"
-                % (len(leftovers), [int(item.get("id") or 0) for item in leftovers[:8]]))
+                "学员账号存在 %d 个历史课堂生成任务，其中 %d 个取消后仍停在暂停态"
+                "（异常，请核查 app/ai/jobs.py 的 awaiting_outline 取消分支）；"
+                "改由临时提升并发上限保证同一实例可重复运行；任务列表=%s"
+                % (len(leftovers), len(still_paused),
+                   [int(item.get("id") or 0) for item in leftovers[:8]]))
         checks = [
-            ("课堂遗留任务探测与取消请求（暂停态任务占用 course 并发，产品侧无法真正取消）",
-             True,
+            ("课堂遗留任务探测与取消（awaiting_outline 可直接取消，058be1a）",
+             not still_paused,
              f"leftovers={len(leftovers)} cancel_accepted={cancel_accepted[:5]} "
              f"still_paused={still_paused[:5]}"),
         ]
-        self.step("探测历史课堂生成遗留任务（暂停态任务占用 course 并发）", checks,
+        self.step("探测历史课堂生成遗留任务并取消（可重复运行保障）", checks,
                   started=started, data={"leftovers": len(leftovers),
                                          "still_paused": still_paused})
 
