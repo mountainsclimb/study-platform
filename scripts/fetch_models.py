@@ -72,6 +72,25 @@ def _model_root(dest: Path, entry: dict) -> Path:
     return Path(dest) / entry["target_dir"]
 
 
+def _registry_sources(item: dict, model_name: str) -> list[str]:
+    """从 fastembed 注册表条目解析来源仓库列表。
+
+    fastembed 0.9.x 把 ``sources`` 从字符串列表改成了字典
+    （``{"hf": "BAAI/bge-reranker-base", "url": None, ...}``）；直接 ``list(dict)``
+    只会拿到键名（``hf``），拼出的下载地址会 404。这里统一归一化：优先取 ``hf`` /
+    ``hf-mirror`` 键，否则取第一个非空值。
+    """
+    sources_raw = item.get("sources") or [model_name]
+    if not isinstance(sources_raw, dict):
+        return list(sources_raw) or [model_name]
+    preferred = [value for key, value in sources_raw.items()
+                 if key in ("hf", "hf-mirror") and value]
+    if preferred:
+        return preferred
+    fallback = [value for value in sources_raw.values() if value]
+    return fallback or [model_name]
+
+
 def _fastembed_files(key: str, entry: dict) -> tuple[list[str], str]:
     """用 fastembed 注册表解析真实来源仓库与 ONNX 文件名。"""
     try:
@@ -89,15 +108,7 @@ def _fastembed_files(key: str, entry: dict) -> tuple[list[str], str]:
     for item in supported:
         if item.get("model") != model_name:
             continue
-        sources_raw = item.get("sources") or [model_name]
-        if isinstance(sources_raw, dict):
-            # fastembed 0.9.x 注册表返回 {"hf": 仓库, "url": ..., ...}：优先取 HF 仓库 id。
-            sources = [value for key, value in sources_raw.items()
-                       if key in ("hf", "hf-mirror") and value]
-            if not sources:
-                sources = [value for value in sources_raw.values() if value]
-        else:
-            sources = list(sources_raw)
+        sources = _registry_sources(item, model_name)
         model_file = str(item.get("model_file") or "")
         if not model_file:
             break

@@ -15,7 +15,15 @@
 #   models/ 目录，见 deploy/README.md §6。
 # * rapid-table 的依赖含 opencv-python（完整包）；若环境已装 opencv-python-headless，
 #   两者可共存但会增大体积，安装前请确认镜像/虚拟环境策略。
+# * rapid-table 的依赖含 opencv-python（完整包）；若环境已装 opencv-python-headless，
+#   两者可共存但会增大体积，安装前请确认镜像/虚拟环境策略。
+# * rapid-table 3.0.2 的内置 OCR 走的是**新包名** ``rapidocr``（v2/v3），而非
+#   主环境 requirements.txt 里的旧包 ``rapidocr-onnxruntime``；缺它时 RapidTable 只记一行
+#   warning 并把 ocr_engine 置为 None，随后抛 TypeError（被包装成「识别失败」）。
+#   这里显式钉 2.0.7（声明 numpy<3，与 numpy 1.26.4 兼容）。若只经 ocr_results 传入
+#   行结果、从不让 RapidTable 自己检测文字，可以不装。
 rapid-latex-ocr==0.0.9
 rapid-table==3.0.2
+rapidocr==2.0.7
 numpy==1.26.4
 tokenizers==0.21.4

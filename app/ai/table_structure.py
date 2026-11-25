@@ -121,6 +121,20 @@ def _engine_models() -> list[str]:
         return []
 
 
+def _has_bundled_ocr() -> bool:
+    """RapidTable 内置 OCR（``rapidocr`` 包）是否可用。
+
+    rapid-table 3.0.2 的 ``use_ocr=True`` 在 ``rapidocr`` 缺失时并不报错，而是把
+    ``self.ocr_engine`` 置为 ``None``（只打一行 warning），随后在没有 ``ocr_results``
+    时抛 ``TypeError: 'NoneType' object is not callable``，被包装成「识别失败」。
+    这里提前探明，让失败原因指向真实问题（缺 rapidocr），而非引擎异常。
+    """
+    try:
+        return importlib.util.find_spec("rapidocr") is not None
+    except (ImportError, ValueError):
+        return False
+
+
 def _get_engine():
     """返回 RapidTable 单例；首次调用加载/下载模型，失败缓存，可 reset_engine 重试。"""
     global _engine, _engine_error
@@ -138,7 +152,7 @@ def _get_engine():
             )
             raise TableUnavailable(_engine_error) from None
         try:
-            engine = RapidTable(RapidTableInput(use_ocr=True))
+            engine = RapidTable(RapidTableInput(use_ocr=_has_bundled_ocr()))
         except Exception as error:
             _engine_error = (
                 f"表格结构引擎初始化失败（{type(error).__name__}），"
@@ -402,6 +416,13 @@ def recognize_table(crop, *, ocr_results=None) -> dict:
     """
     if not local_table_available():
         raise TableUnavailable(_unavailable_reason())
+    if ocr_results is None and not _has_bundled_ocr():
+        # 没传我们自己的 OCR 结果，又缺 rapidocr 内置引擎：直接说明缺什么，
+        # 不把 ``NoneType is not callable`` 包装成「识别失败」。
+        raise TableOcrError(
+            "表格结构识别缺少文字检测：未传入 ocr_results，且未安装 rapidocr；"
+            "该表格块保持原样（安装 rapidocr 或经 ocr_results 传入行结果）"
+        )
     started = time.monotonic()
     prepared = _prepare_crop(crop)
     try:

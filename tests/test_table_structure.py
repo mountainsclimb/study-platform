@@ -141,6 +141,58 @@ def test_recognize_table_returns_clean_html_and_shape(monkeypatch):
     assert engine.ocr_results and engine.ocr_results[0][1] == ["A"]
 
 
+def test_recognize_table_without_bundled_ocr_explains_missing_rapidocr(monkeypatch):
+    """rapid-table 缺 rapidocr 时会把 ocr_engine 置 None 并抛 TypeError：
+
+    我们要给出「缺文字检测」的真实原因，而不是误导性的「识别失败」。
+    """
+    engine = install_table(monkeypatch)
+    monkeypatch.setattr(table_structure, "_has_bundled_ocr", lambda: False)
+    with pytest.raises(table_structure.TableOcrError) as caught:
+        table_structure.recognize_table(image())
+    assert "rapidocr" in str(caught.value)
+    assert "ocr_results" in str(caught.value)
+    # 引擎没有被调用（问题在文字检测，不在表格结构）。
+    assert engine.calls == 0
+    # 传入调用方自己的 OCR 行结果时不需要 rapidocr，照常识别。
+    monkeypatch.setattr(table_structure, "_get_engine", lambda: engine)
+    boxes = [[[0, 0], [10, 0], [10, 10], [0, 10]]]
+    outcome = table_structure.recognize_table(image(), ocr_results=(boxes, ["A"], [0.9]))
+    assert outcome["html"].startswith("<table>")
+    assert engine.calls == 1
+
+
+def test_get_engine_disables_internal_ocr_when_rapidocr_missing(monkeypatch):
+    """缺 rapidocr 时用 use_ocr=False 建引擎，避免上游静默返回 None。"""
+    import sys
+    import types
+
+    captured = {}
+
+    class Recorder:
+        def __init__(self, config):
+            captured["use_ocr"] = config.use_ocr
+            self.config = config
+
+    class RecorderInput:
+        def __init__(self, **kwargs):
+            self.use_ocr = kwargs.get("use_ocr")
+
+    stub = types.ModuleType("rapid_table")
+    stub.RapidTable = Recorder
+    stub.RapidTableInput = RecorderInput
+    monkeypatch.setitem(sys.modules, "rapid_table", stub)
+    monkeypatch.setattr(table_structure, "_has_bundled_ocr", lambda: False)
+    table_structure.reset_engine()
+    table_structure._get_engine()
+    assert captured.get("use_ocr") is False
+    table_structure.reset_engine()
+    monkeypatch.setattr(table_structure, "_has_bundled_ocr", lambda: True)
+    table_structure._get_engine()
+    assert captured.get("use_ocr") is True
+    table_structure.reset_engine()
+
+
 def test_enrich_groups_consecutive_table_blocks(monkeypatch):
     engine = install_table(monkeypatch)
     blocks = [

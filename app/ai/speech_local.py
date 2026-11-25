@@ -441,8 +441,6 @@ def _read_wav(raw: bytes) -> tuple[object, int]:
                 raise ValueError("本地识别只接受单声道 WAV，请转换为 16k 单声道后重试")
             if width != 2:
                 raise ValueError("本地识别只接受 16-bit PCM WAV，请转换后重试")
-            if rate != 16000:
-                raise ValueError("本地识别只接受 16000Hz 采样的 WAV，请重采样后重试")
             duration = frames / float(rate or 1)
             if duration > max_asr_seconds():
                 raise ValueError(
@@ -456,11 +454,19 @@ def _read_wav(raw: bytes) -> tuple[object, int]:
     if not data:
         raise ValueError("音频内容为空")
     samples = np.frombuffer(data, dtype="<i2").astype(np.float32) / 32768.0
+    if rate != 16000:
+        # 应用自身 TTS（kokoro 24k）与常见客户端采样率直接可用：线性插值重采样到 16k，
+        # 不再要求调用方预重采样（真实模型 smoke：TTS→ASR 往返依赖此能力）。
+        count = len(samples)
+        target = max(1, int(round(count * 16000.0 / float(rate))))
+        positions = np.linspace(0.0, count - 1.0, num=target)
+        samples = np.interp(positions, np.arange(count, dtype=np.float64), samples).astype(np.float32)
+        rate = 16000
     return samples, rate
 
 
 def transcribe(wav_bytes: bytes) -> dict:
-    """同步识别 16k 单声道 PCM16 WAV，返回 ``{"text", "words": []}``。"""
+    """同步识别单声道 PCM16 WAV（非 16k 采样自动重采样），返回 ``{"text", "words": []}``。"""
     if not asr_available():
         raise SpeechUnavailable(_unavailable_reason("asr"))
     started = time.monotonic()

@@ -159,15 +159,25 @@ def test_transcribe_accepts_valid_wav(monkeypatch, tmp_path):
 
 
 @pytest.mark.parametrize("kwargs", [
-    {"rate": 8000},
     {"channels": 2},
     {"width": 1},
 ])
-def test_transcribe_rejects_non_16k_mono_pcm16(monkeypatch, tmp_path, kwargs):
+def test_transcribe_rejects_non_mono_pcm16(monkeypatch, tmp_path, kwargs):
     install_speech(monkeypatch, tmp_path)
     with pytest.raises(ValueError) as error:
         speech_local.transcribe(wav_bytes(**kwargs))
-    assert "16" in str(error.value) or "单声道" in str(error.value) or "PCM" in str(error.value)
+    assert "单声道" in str(error.value) or "PCM" in str(error.value)
+
+
+@pytest.mark.parametrize("rate", [8000, 22050, 24000, 44100, 48000])
+def test_transcribe_resamples_non_16k_to_16k(monkeypatch, tmp_path, rate):
+    """应用自身 TTS 输出 24kHz：非 16k 采样必须自动重采样，而不是直接拒绝。"""
+    _, asr = install_speech(monkeypatch, tmp_path)
+    result = speech_local.transcribe(wav_bytes(rate=rate, seconds=0.2))
+    assert result["text"] == "你好，这是一段测试"
+    # 0.2 秒 @16k = 3200 个采样（±1 允许插值取整）。
+    assert asr.stream.rate == 16000
+    assert abs(len(asr.stream.samples) - 3200) <= 1
 
 
 def test_transcribe_rejects_non_wav_and_overlong(monkeypatch, tmp_path):

@@ -96,6 +96,21 @@ def test_download_file_verifies_sha(tmp_path):
     assert not (tmp_path / "bad.bin").exists()
 
 
+def test_registry_sources_accepts_fastembed_dict_layout():
+    """fastembed 0.9.x 把 sources 从 list 改成 dict：不能取到键名（hf）。"""
+    assert fetch_models._registry_sources(
+        {"sources": {"hf": "BAAI/bge-reranker-base", "url": None}}, "BAAI/bge-reranker-base"
+    ) == ["BAAI/bge-reranker-base"]
+    # 旧版列表布局与其他键名仍可用。
+    assert fetch_models._registry_sources(
+        {"sources": ["Qdrant/legacy"]}, "Qdrant/legacy"
+    ) == ["Qdrant/legacy"]
+    assert fetch_models._registry_sources(
+        {"sources": {"url": "https://example.com/m.onnx"}}, "x"
+    ) == ["https://example.com/m.onnx"]
+    assert fetch_models._registry_sources({}, "fallback") == ["fallback"]
+
+
 def test_lock_file_schema_is_complete():
     payload = json.loads(
         (Path(__file__).resolve().parents[1] / "deploy" / "models.lock.json").read_text(
