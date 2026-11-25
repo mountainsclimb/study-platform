@@ -467,7 +467,7 @@ function renderShell() {
       notificationSlot,
       languageToggle,
       themeToggle,
-      el('span', { class: 'topbar-pill' },
+      el('span', { class: 'topbar-pill', title: t('shell.isolatedSpace') },
         icon('lock'),
         el('span', { 'data-i18n': 'shell.isolatedSpace' }, t('shell.isolatedSpace'))),
       el('span', { class: 'avatar', 'data-no-i18n': '' }, state.user.username.slice(0, 1).toUpperCase())));
