@@ -1,0 +1,8 @@
+# 本地联验覆盖:宿主 80/443 可能被其它进程占用,把 Caddy 映射到 8080/8443。
+# 用法:cd deploy && docker compose -f docker-compose.yml -f docker-compose.local.yml up -d --build
+# 公网正式部署不要使用本文件(直接绑定 80/443)。
+services:
+  caddy:
+    ports:
+      - "8080:80"
+      - "8443:443"

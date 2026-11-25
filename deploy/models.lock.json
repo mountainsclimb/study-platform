@@ -73,10 +73,15 @@
       "license": "Apache-2.0",
       "target_dir": "models/speech/paraformer-zh",
       "required_files": [
-        "model.onnx",
         "tokens.txt"
       ],
-      "hint": "从 sherpa-onnx 官方发布包获取 paraformer 中文模型（默认目录名 paraformer-zh），解压到 target_dir。"
+      "hint": "从 sherpa-onnx 官方发布包获取 paraformer 中文模型（默认目录名 paraformer-zh），解压到 target_dir。",
+      "optional_files": [
+        "model.onnx",
+        "model.int8.onnx",
+        "am.mvn"
+      ],
+      "note": "model.onnx 与 model.int8.onnx 均被 app.ai.speech_local 解析（见 _resolve 检索顺序），部署方任选其一；模型文件由引擎加载时校验。"
     },
     "formula": {
       "engine": "rapid-latex-ocr",

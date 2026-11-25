@@ -87,7 +87,10 @@ CONTEXT_SUBMIT_MESSAGE = "该题仅为上下文材料，不可作答"
 # 原卷公开字段里出现以下标记，说明题干/材料混入了答案或解析；先停止作答，待数据修正。
 ANSWER_LEAK_MARKERS = ("【答案】", "【详解】", "【解析】", "【解答】", "参考答案：")
 _log = logging.getLogger("zhixu.practice")
-_fts_lock = threading.Lock()
+# RLock（可重入）：PG 镜像刷新路径 ensure_leak_flags → connection(attach_bank=True)
+# → _ensure_postgres_bank → _install_bank_leak_flags 会在持锁状态下再次进入本锁；
+# 普通 Lock 在 PG 首次启动时自死锁（部署联验 2026-11-25 实测发现）。跨线程互斥语义不变。
+_fts_lock = threading.RLock()
 _bank_hash_cache: dict[str, tuple[float, int, str]] = {}
 KP_SEED_PATH = Path(__file__).resolve().parent / "data" / "kp_seed.json"
 # FTS 索引结构版本：变更列（如 v2 增加 stem_compact 去空白列）时需要重建。

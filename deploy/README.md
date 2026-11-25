@@ -218,6 +218,37 @@ Worker 支持 `STUDY_WORKER_CONCURRENCY`（默认 8）和 `STUDY_WORKER_JOB_TIME
 已进入执行状态的任务若因 Worker 中断而退出，可从任务列表续跑，笔记和打标任务恢复已完成的检查点；同一任务重试按 `job_id`
 幂等写入，只保留一份最终笔记或讲解产物。
 
+### 5.0 本地部署联验（compose 栈冒烟）
+
+宿主 80/443 被占用或仅想做本地联验时，用覆盖文件把 Caddy 映射到 8080/8443：
+
+```bash
+cd deploy
+cp .env.example .env            # 按需修改；本地联验可 STUDY_PUBLIC_MODE=0
+docker compose -f docker-compose.yml -f docker-compose.local.yml up -d --build
+```
+
+再运行部署验收脚本（标准库实现，在装有 Docker CLI 的环境运行；假模型端点另起一个终端）：
+
+```bash
+python3 scripts/integration/fake_model_server.py &          # 宿主侧 9123
+python3 scripts/integration/deploy_accept.py \
+    --base-url https://localhost:8443 \
+    --health-token "$STUDY_HEALTH_TOKEN" \
+    --model-endpoint http://$(docker network inspect deploy_default \
+        --format '{{(index .IPAM.Config 0).Gateway}}'):9123/v1
+```
+
+覆盖：五服务状态、Caddy HTTPS 路由、就绪检查含 Worker 心跳、首个账号=管理员（数据落 PG）、
+recognize 任务经 Redis 队列由 Worker 真实执行到 completed、PG 在线热备份按设计拒绝（409）+
+pg_dump/恢复行数核对、双账号数据隔离。注意：
+
+- 脚本假设实例为全新数据卷（`down -v` 后），首个注册者才是管理员；
+- 首次启动会在 PG 里重建题库镜像（26k 题，含泄密标记与 GIN 索引），本地盘约 1 分钟；
+  期间健康检查可能短暂 unhealthy，等待即可；
+- PG 模式下在线热备份 API 按设计返回 409（SQLite 文件备份对 PG 无意义），备份用
+  `pg_dump`（脚本已演练恢复核对）。
+
 ## 5.1 校勘修订进入题库版本
 
 1. 管理员在「内容管理 → 校勘」审核题目的修订，状态推进到「已发布」。

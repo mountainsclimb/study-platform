@@ -535,3 +535,31 @@ python scripts/integration/plaza_accept.py --base-url http://127.0.0.1:8856 --sk
 - 停止终端 A/B 的 uvicorn 与假模型进程（`Ctrl+C`）；
 - 隔离数据目录是系统临时目录（`$env:TEMP\zhixu-classroom-accept-*`），可自行删除；
 - 脚本内导出的临时文件使用系统临时目录并在流程结束时清理。
+
+
+## 部署联验（`deploy_accept.py`，7 步）
+
+Docker Compose 五服务（app / arq worker / PostgreSQL / Redis / Caddy）端到端冒烟，
+标准库实现，在装有 Docker CLI 的环境运行：
+
+```bash
+cd deploy && docker compose -f docker-compose.yml -f docker-compose.local.yml up -d --build
+python3 scripts/integration/fake_model_server.py &                  # 宿主侧假模型
+python3 scripts/integration/deploy_accept.py \
+    --base-url https://localhost:8443 \
+    --health-token "$STUDY_HEALTH_TOKEN" \
+    --model-endpoint http://$(docker network inspect deploy_default \
+        --format '{{(index .IPAM.Config 0).Gateway}}'):9123/v1
+```
+
+覆盖：五服务状态与 app 健康；Caddy HTTPS 路由；就绪检查（app_db/bank/storage/redis/
+worker 心跳 90 秒内）；首个账号=管理员（本地模式，数据落 PostgreSQL）；recognize 任务
+经 Redis 队列由 Worker 真实执行到 completed（假模型端点经网桥网关访问宿主 9123）；
+PG 在线热备份按设计拒绝（409）+ `pg_dump` 恢复到临时库行数核对（1 用户 / 26,374 题）；
+双账号数据隔离。前提与注意见 `deploy/README.md` §5.0（全新数据卷、首次启动镜像重建约
+1 分钟、`docker-compose.local.yml` 只为避开宿主 80/443 占用，公网部署不用）。
+
+历史注：2026-11-25 首次部署联验发现并修复 PG 首次启动自死锁——`ensure_leak_flags`
+持 `_fts_lock` 后经 `connection(attach_bank=True) → _ensure_postgres_bank →
+_install_bank_leak_flags` 重复获取同一把非重入锁；已改 `threading.RLock()`
+（`app/practice.py`），并加 `test_fts_lock_is_reentrant_for_postgres_mirror_path` 守卫。

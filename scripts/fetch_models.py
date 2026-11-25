@@ -89,7 +89,15 @@ def _fastembed_files(key: str, entry: dict) -> tuple[list[str], str]:
     for item in supported:
         if item.get("model") != model_name:
             continue
-        sources = list(item.get("sources") or [model_name])
+        sources_raw = item.get("sources") or [model_name]
+        if isinstance(sources_raw, dict):
+            # fastembed 0.9.x 注册表返回 {"hf": 仓库, "url": ..., ...}：优先取 HF 仓库 id。
+            sources = [value for key, value in sources_raw.items()
+                       if key in ("hf", "hf-mirror") and value]
+            if not sources:
+                sources = [value for value in sources_raw.values() if value]
+        else:
+            sources = list(sources_raw)
         model_file = str(item.get("model_file") or "")
         if not model_file:
             break

@@ -339,3 +339,22 @@ def test_phone_image_orientation_survives_private_image_reencoding(client):
     with Image.open(BytesIO(encoded.content)) as saved:
         assert saved.size == (120, 240)
         assert saved.getexif().get(274, 1) == 1
+
+
+def test_fts_lock_is_reentrant_for_postgres_mirror_path():
+    """PG 镜像刷新路径会在持锁状态下再次获取 _fts_lock（ensure_leak_flags →
+    connection(attach_bank=True) → _ensure_postgres_bank → _install_bank_leak_flags），
+    必须是可重入锁，否则 PG 首次启动自死锁（部署联验 2026-11-25 实测发现）。"""
+    import threading
+
+    from app import practice
+
+    assert isinstance(practice._fts_lock, type(threading.RLock()))
+    # 同线程嵌套获取不阻塞；跨线程互斥仍成立（子线程获取应超时失败）。
+    with practice._fts_lock:
+        got = []
+        other = threading.Thread(
+            target=lambda: got.append(practice._fts_lock.acquire(timeout=0.2)))
+        other.start()
+        other.join()
+        assert got == [False]
