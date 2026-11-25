@@ -208,7 +208,9 @@ _INTAKE_COLUMNS = (
 )
 _INTAKE_SCHEMA_READY: set[str] = set()
 
-_OPTION_LINE_RE = re.compile(r"^([A-La-l])\s*[.．、:：)）]\s*(.+)$")
+# 选项标号只认 A–D/小写同范围：更宽的字母表（如旧版 a–l）会把「l. 1600 年…」这类
+# 题干列表行误吞成选项；中文试卷单选极少超过 D。
+_OPTION_LINE_RE = re.compile(r"^([A-Da-d])\s*[.．、:：)）]\s*(.+)$")
 _ANSWER_LINE_RE = re.compile(r"^(?:参考)?答案\s*[:：]\s*(.+)$")
 _MAX_INTAKE_TEXT = 8000
 

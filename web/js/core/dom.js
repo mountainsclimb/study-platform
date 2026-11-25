@@ -306,13 +306,70 @@ export function highlightKeyword(text, keyword) {
   return frag;
 }
 
+// 题干/选项行内数学分段：与 core/markdown.js preprocessMath 同一口径——$$..$$ 与 \[..\]
+// 独立公式、$..$（禁换行、首尾不留空白）与 \(..\) 行内公式；捕获式 split 保留定界符原文。
+const STEM_MATH_SPLIT_RE = /(\$\$[^$]+?\$\$|\\\[[\s\S]+?\\\]|(?<!\\)\$(?!\s)[^$\n]+?(?<!\s)\$|\\\(.+?\\\))/g;
+
+/** 识别一个数学片段的 LaTeX 内容与模式；纯数字（价格）不当作公式。 */
+function mathSnippetOf(part) {
+  if (part.startsWith('$$') && part.endsWith('$$') && part.length > 4) {
+    return { tex: part.slice(2, -2), display: true };
+  }
+  if (part.startsWith('\\[') && part.endsWith('\\]') && part.length > 4) {
+    return { tex: part.slice(2, -2), display: true };
+  }
+  if (part.startsWith('\\(') && part.endsWith('\\)') && part.length > 4) {
+    return { tex: part.slice(2, -2), display: false };
+  }
+  if (part.length > 2 && part.startsWith('$') && part.endsWith('$')) {
+    const tex = part.slice(1, -1).trim();
+    if (/^\d+(?:\.\d+)?$/.test(tex)) return null; // 价格等纯数字按原文显示
+    return { tex, display: false };
+  }
+  return null;
+}
+
+/** KaTeX 渲染一个片段；失败（缺失/非法/fallback/净化异常）返回 false，由调用方回退原文。 */
+function appendMathSnippet(node, tex, display) {
+  if (!tex || !window.katex || typeof window.katex.renderToString !== 'function') return false;
+  try {
+    const html = renderMath(tex, display, { throwOnError: true });
+    if (!html || html.includes('katex-error') || html.includes('math-fallback')) return false;
+    const holder = el(display ? 'div' : 'span', { class: display ? 'math-block' : 'math-inline' });
+    const template = document.createElement('template');
+    template.innerHTML = sanitizeMath(html);
+    holder.append(template.content);
+    if (!holder.childNodes.length) return false;
+    node.append(holder);
+    return true;
+  } catch {
+    return false;
+  }
+}
+
+/** 题干/选项文本：含 $..$ / \(..\) 等片段时按公式渲染，其余保持纯文本与关键词高亮。 */
+function appendMathAwareText(node, text, keyword) {
+  const source = String(text ?? '');
+  if (!source) return;
+  if (!source.includes('$') && !source.includes('\\(') && !source.includes('\\[')) {
+    node.append(keyword ? highlightKeyword(source, keyword) : document.createTextNode(source));
+    return;
+  }
+  for (const part of source.split(STEM_MATH_SPLIT_RE)) {
+    if (!part) continue;
+    const snippet = mathSnippetOf(part);
+    if (snippet && appendMathSnippet(node, snippet.tex, snippet.display)) continue;
+    node.append(keyword ? highlightKeyword(part, keyword) : document.createTextNode(part));
+  }
+}
+
 export function questionText(text, images = [], subject = '', keyword = '', context = {}) {
   const node = el('div', { class: 'question-text' });
   const parts = String(text || '').split(/(\[(?:图|公式)\d+\])/g);
   for (const part of parts) {
     const match = part.match(/^\[(图|公式)(\d+)\]$/);
     if (!match) {
-      node.append(keyword ? highlightKeyword(part, keyword) : document.createTextNode(part));
+      appendMathAwareText(node, part, keyword);
       continue;
     }
     const role = match[1] === '公式' ? 'formula' : 'figure';
@@ -433,7 +490,15 @@ function markedText(text, keyword = '') {
 function textBlockNode(block, keyword) {
   const text = typeof block.text === 'string' ? block.text : (block.text === null || block.text === undefined ? '' : String(block.text));
   if (!text) return null;
-  return el('span', { class: 'block block-text' }, markedText(text, keyword));
+  const content = el('span', { class: 'block block-text' });
+  // 个人题（拍题入库）的题干文本块可能含 $..$ 行内公式：走与 questionText 同一套
+  // KaTeX+净化渲染，失败时内部回退纯文本；不含数学定界符的老题走原有下标/上标逻辑。
+  if (text.includes('$') || text.includes('\\(') || text.includes('\\[')) {
+    appendMathAwareText(content, text, keyword);
+    if (content.childNodes.length) return content;
+  }
+  content.append(markedText(text, keyword));
+  return content;
 }
 
 function imageBlockNode(block, subject, context = {}) {

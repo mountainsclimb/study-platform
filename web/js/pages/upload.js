@@ -325,9 +325,12 @@ export async function renderUpload(container, version, params = null) {
   // ===== W0/W1：识别块校对（OCR blocks → 公式输入组件）状态 =====
   // blockState 是 parseBlocksWithFormulas() 的编辑态数组；blockMeta 汇总引擎能力与降级信息。
   const blockReviewMount = el('div', { class: 'upload-block-review' });
+  // 按阅读顺序合并识别块（函数声明在下方，提升可用）。
+  const mergeBlocksBtn = button(formulaText('study.formula.review.mergeAll'), () => mergeBlocksIntoStem(), 'ghost small', 'scan');
   const blockSection = el('div', { class: 'pg-substep upload-block-section', hidden: true },
     el('p', { class: 'pg-substep-label' }, formulaText('study.formula.review.sectionTitle')),
     el('p', { class: 'help' }, formulaText('study.formula.review.sectionSub')),
+    el('div', { class: 'row' }, mergeBlocksBtn),
     blockReviewMount);
   let blockState = [];
   const blockMeta = {
@@ -750,6 +753,33 @@ export async function renderUpload(container, version, params = null) {
     }
     appendToStem(content);
     toast(formulaText('study.formula.review.adopted'));
+  }
+
+  /** 按阅读顺序把识别块合并重建题干：text 块取原文，公式块取 `$latex$`（无 LaTeX 回退原文）。 */
+  function mergeBlocksIntoStem() {
+    if (!blockState.length) {
+      toast(formulaText('study.formula.review.mergeEmpty'), true);
+      return;
+    }
+    // 以公式输入组件的实时值为准（与 currentBlocksPayload 同一口径），避免合并到旧值。
+    for (const [block, editor] of blockEditors) {
+      block.latexInput = editor.getValue();
+    }
+    const lines = [];
+    for (const block of blockState) {
+      if (!block || String(block.kind || '') === 'image') continue; // 识别层不产图片块；预留类型不入题干
+      const latex = String(block.kind || '') === 'math' ? String(block.latexInput || '').trim() : '';
+      const text = String(block.text || '').trim();
+      const content = latex ? `$${latex}$` : text;
+      if (content) lines.push(content);
+    }
+    if (!lines.length) {
+      toast(formulaText('study.formula.review.mergeEmpty'), true);
+      return;
+    }
+    stemInput.value = lines.join('\n').slice(0, 20000); // 与后端 stem 上限一致
+    syncStemInput();
+    toast(formulaText('study.formula.review.mergeDone'));
   }
 
   function markBlockReviewed(block, item) {

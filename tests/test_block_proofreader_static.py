@@ -66,6 +66,29 @@ def test_explore_tools_menu_is_wired():
     assert "data-explore-tools" in component
 
 
+def test_question_text_renders_inline_latex_math():
+    """拍题入库的 $latex$ 题干在题目页/选项里渲染成公式,失败回退原文。"""
+    dom = _read(ROOT / "web" / "js" / "core" / "dom.js")
+    # 与 markdown.js 同口径的分段与安全渲染
+    assert "STEM_MATH_SPLIT_RE" in dom
+    assert "renderMath" in dom
+    assert "sanitizeMath" in dom
+    # 纯数字(价格)不当作公式;非法/回退时写回原文本节点
+    assert "mathSnippetOf" in dom
+    assert "createTextNode(part)" in dom
+
+
+def test_upload_page_can_merge_reviewed_blocks_into_stem():
+    """一键按阅读顺序合并识别块:公式块合成 $latex$,以编辑器实时值为准。"""
+    upload = _read(ROOT / "web" / "js" / "pages" / "upload.js")
+    assert "mergeBlocksIntoStem" in upload
+    assert "study.formula.review.mergeAll" in upload
+    assert "editor.getValue()" in upload
+    assert "$${latex}$" in upload
+    component = _read(ROOT / "web" / "js" / "components" / "formulaInput.js")
+    assert "study.formula.review.mergeDone" in component
+
+
 def test_demo_create_menu_is_shared_by_notes_and_classroom():
     component = _read(ROOT / "web" / "js" / "components" / "demoCreateMenu.js")
     assert "export function createDemoCreateMenu" in component
