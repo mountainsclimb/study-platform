@@ -5607,7 +5607,7 @@
   "speech.shadow.retryHint": "Text similarity is below 80; you can try again.",
   "settings.engines.title": "Local engines",
   "settings.engines.badge": "{available}/{total} available",
-  "settings.engines.help": "Read-only overview of dependencies, model directories and load state. Unavailable engines never block the main flow and are never shown as ready.",
+  "settings.engines.help": "Read-only overview of dependencies, model directories and load state; unavailability never blocks the main flow and is never faked. Reset clears this process's engine cache; the AI job worker follows on its next task.",
   "settings.engines.loading": "Checking local engines…",
   "settings.engines.available": "Available",
   "settings.engines.unavailableShort": "Unavailable",
@@ -5625,7 +5625,7 @@
   "settings.engines.adminOnly": "Only administrators can reset engines; all accounts can view status.",
   "settings.engines.refresh": "Re-check",
   "settings.engines.reset": "Reset",
-  "settings.engines.resetDone": "Engine reset and re-checked",
+  "settings.engines.resetDone": "Engine reset: applied here now, AI job worker follows on its next task",
   "settings.engines.unavailable": "Engine status is unavailable: {reason}",
   "settings.engines.name.speech": "Offline speech",
   "settings.engines.name.embeddings": "Local embeddings & rerank",
@@ -5636,5 +5636,6 @@
   "insight.feature.line": "Demo {demo} · Formula {formula} · Speech {speech}",
   "insight.feature.duration": "Total time: demo {demo}s · formula {formula}s · speech {speech}s",
   "insight.feature.empty": "No successful demo, formula or speech usage yet.",
-  "insight.feature.aria": "Learning tool usage: {count} uses"
+  "insight.feature.aria": "Learning tool usage: {count} uses",
+  "question.figureMissing": "[Figure missing]"
 }

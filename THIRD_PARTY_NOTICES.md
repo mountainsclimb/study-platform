@@ -360,7 +360,7 @@ MIT）取代，本仓库内已无引用。历史设计见 `docs/平台设计.md`
 | 向量检索 / embedding | 实验 | HTTP：`STUDY_EMBEDDING_BASE_URL`、`STUDY_EMBEDDING_MODEL` 等；本地：`requirements-embeddings.txt` + `STUDY_EMBEDDING_MODE=local` | 默认关闭；本地模型不可用时回退本地全文检索 |
 | 本地重排（fastembed 交叉编码器） | 实验 | `STUDY_RERANK=on` + 本地重排模型目录 | 默认关闭；失败沿用原排序 |
 | 离线语音合成（sherpa-onnx Kokoro） | 实验 | `requirements-speech.txt` + `STUDY_LOCAL_SPEECH=on` + 预置 Kokoro 模型 | 默认关闭；零厂商配置下旁白可用；失败回退浏览器朗读 |
-| 离线语音识别（sherpa-onnx Paraformer） | 实验 | 同上 + 预置 Paraformer-zh 模型 | 默认关闭；只接受 16k 单声道 PCM16 WAV，前端自动转换 |
+| 离线语音识别（sherpa-onnx Paraformer） | 实验 | 同上 + 预置 Paraformer-zh 模型 | 默认关闭；接受单声道 PCM16 WAV（非 16k 后端自动重采样），前端仍预转 16k |
 | 分子模型查看（3Dmol.js + OpenChemLib） | 默认可用 | `web/vendor/3dmol/`、`web/vendor/openchemlib/` 随仓库分发；浏览器需 WebGL | 化学题入口；SMILES 由 OpenChemLib 转 3D 构象，3Dmol 渲染；保存为 `molecule_3d` 学习附件；WebGL 不可用时文字降级 |
 | 化学方程式配平（sympy） | 默认可用 | `app/chem_balance.py`，`POST /api/chem/balance` | 无状态、需登录；只接受元素/括号/数字下标；无解返回 `ok:false` |
 | 物理自由沙盒（Matter.js） | 默认可用 | `web/vendor/matter/` 随仓库分发；浏览器需 Canvas 2D | 探索模式，结果可能有细微差异；保存为 `physics_sandbox` 学习附件；离线仅海报 |

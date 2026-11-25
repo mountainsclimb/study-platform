@@ -10,7 +10,8 @@
 
 安全边界：绝对模型目录、模型文件路径与缺失文件清单只对管理员返回；普通用户只看到
 可用性、依赖/模型数量、脱敏后的原因与加载状态。状态接口**不触发模型加载**，不伪造
-「可用」，也不返回密钥。重置只影响进程内单例缓存，仅管理员可执行。
+「可用」，也不返回密钥。重置会重置本进程单例并把世代号写入数据库，
+其它进程（arq Worker）在下个任务前跟随；仅管理员可执行。
 """
 from __future__ import annotations
 
@@ -154,28 +155,27 @@ def list_engines(user=Depends(auth.current_user)):
 
 @router.post("/{engine_id}/reset")
 def reset_engine(engine_id: str, user=Depends(auth.require_admin)):
-    """重置指定引擎的进程内单例与失败缓存，并返回刷新后的总览（仅管理员）。"""
+    """重置指定引擎：本进程立即生效，其它进程（arq Worker）在下个任务前应用。
+
+    推理不只在 API 进程发生：``recognize``/``ocr`` 任务由 Worker 执行，课堂旁白也在
+    Worker 内调用本地语音。若只清本进程单例，「管理员点了重置但 Worker 里失败的缓存
+    还在」会让排障结论失真。因此重置会写一个跨进程世代号（``app_settings`` 里的
+    ``engine.reset.<engine>``），Worker 通过 ``engine_reset.apply_pending()`` 跟随。
+    """
     if engine_id not in ENGINE_IDS:
         raise HTTPException(404, "未知引擎")
     if engine_id not in _RESETTABLE:
         raise HTTPException(422, "该引擎不支持重置")
-    if engine_id == "speech":
-        from .ai import speech_local
+    from .ai import engine_reset
 
-        speech_local.reset_engine()
-    elif engine_id == "embeddings":
-        from .ai import embeddings_local
-
-        embeddings_local.reset_engine()
-    elif engine_id == "formula":
-        from .ai import formula_ocr
-
-        formula_ocr.reset_engine()
-    elif engine_id == "table":
-        from .ai import table_structure
-
-        table_structure.reset_engine()
+    marked = engine_reset.mark_reset(engine_id)
     warmup.reset_state()
     payload = engine_overview(include_paths=True)
-    payload["reset"] = {"engine": engine_id, "at": db.utcnow()}
+    payload["reset"] = {
+        "engine": engine_id,
+        "at": marked["generation"],
+        # 管理页据此说明作用域，避免「已重置但 Worker 仍失败」的误解。
+        "scope": "api-process-immediately,worker-on-next-task",
+        "note": "本进程已立即重置；其它进程（AI 任务 Worker）会在执行下一个任务前应用。",
+    }
     return payload

@@ -5607,7 +5607,7 @@
   "speech.shadow.retryHint": "文本相似度未到 80 分，可再试一次。",
   "settings.engines.title": "本地引擎",
   "settings.engines.badge": "{available}/{total} 可用",
-  "settings.engines.help": "依赖、模型目录与加载状态的只读总览；不可用不影响主流程，也不会伪装成可用。",
+  "settings.engines.help": "依赖、模型目录与加载状态的只读总览；不可用不影响主流程，也不会伪装成可用。重置会清掉本进程的引擎缓存，AI 任务 Worker 在下一个任务前跟随。",
   "settings.engines.loading": "正在检查本地引擎…",
   "settings.engines.available": "可用",
   "settings.engines.unavailableShort": "不可用",
@@ -5625,7 +5625,7 @@
   "settings.engines.adminOnly": "仅管理员可重置引擎；普通账号可查看状态。",
   "settings.engines.refresh": "重新检测",
   "settings.engines.reset": "重置",
-  "settings.engines.resetDone": "引擎已重置并重新检测",
+  "settings.engines.resetDone": "引擎已重置：本进程立即生效，AI 任务 Worker 在下个任务前应用",
   "settings.engines.unavailable": "引擎状态暂不可用：{reason}",
   "settings.engines.name.speech": "离线语音",
   "settings.engines.name.embeddings": "本地向量与重排",
@@ -5636,5 +5636,6 @@
   "insight.feature.line": "演示 {demo} · 公式 {formula} · 语音 {speech}",
   "insight.feature.duration": "累计耗时：演示 {demo} 秒 · 公式 {formula} 秒 · 语音 {speech} 秒",
   "insight.feature.empty": "还没有成功使用演示、公式或语音。",
-  "insight.feature.aria": "学习工具使用：{count} 次"
+  "insight.feature.aria": "学习工具使用：{count} 次",
+  "question.figureMissing": "[配图暂缺]"
 }

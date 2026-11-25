@@ -180,6 +180,22 @@ def resolve_components(values: list[str] | None) -> list[tuple[str, dict]]:
     return items
 
 
+def dismiss_daily_quote(page) -> None:
+    """关闭首屏「每日一句」弹层并**等它真正移除**再扫描。
+
+    弹层用 260ms 淡出过渡（``.is-out`` 期间 ``opacity`` 从 1 降到 0），此时 axe 读到的
+    是「半透明文字与背景混合后」的前景色，会把达标的配色（白字 + ``#286552``，
+    6.83:1）误判成 3.69:1。按 Esc 后必须等元素从 DOM 消失再注入 axe。
+    """
+    try:
+        if page.locator(".dq-dialog").count() == 0:
+            return
+        page.keyboard.press("Escape")
+        page.wait_for_selector(".dq-dialog", state="detached", timeout=3000)
+    except Exception:  # noqa: BLE001 - 弹层不存在/未消失都不阻塞扫描
+        pass
+
+
 def fingerprint(route: str, viewport: str, violation: dict, node: dict) -> str:
     target = " >> ".join(str(part) for part in node.get("target") or [])
     return f"{route}|{viewport}|{violation.get('id')}|{target}"
@@ -200,11 +216,8 @@ def scan_route(page, base_url: str, route: str, hash_value: str, ready: str,
         page.goto(url, wait_until="domcontentloaded", timeout=timeout_ms)
         page.wait_for_selector(ready, timeout=timeout_ms)
         page.wait_for_timeout(600)
-        try:
-            # 首屏「每日一句」弹层会遮挡页面；先关闭再扫描，避免把弹层当成页面主体。
-            page.keyboard.press("Escape")
-        except Exception:  # noqa: BLE001 - 弹层不存在时忽略
-            pass
+        # 首屏「每日一句」弹层会遮挡页面；先关闭（并等淡出结束）再扫描。
+        dismiss_daily_quote(page)
         # CDP 驱动的 evaluate 不受 script-src 限制；这里只注入开发资产，不修改页面文件。
         page.evaluate("(source) => { (0, eval)(source); }", axe_source)
         result = page.evaluate(SCAN_SCRIPT)
@@ -234,10 +247,7 @@ def scan_component(page, base_url: str, name: str, spec: dict, viewport_name: st
         page.goto(url, wait_until="domcontentloaded", timeout=timeout_ms)
         page.wait_for_selector(spec["ready"], timeout=timeout_ms)
         page.wait_for_timeout(500)
-        try:
-            page.keyboard.press("Escape")
-        except Exception:  # noqa: BLE001 - 每日一句弹层可能不存在
-            pass
+        dismiss_daily_quote(page)
         trigger = page.locator(spec["open"])
         if trigger.count() == 0:
             entry["skipped"] = "触发器不存在"

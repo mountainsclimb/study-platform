@@ -3,7 +3,7 @@ import { state, onSessionReset, onBankChange } from '../core/state.js';
 import {
   $, el, fill, appendSafe, icon, button, badge, notice, loading, field, select,
   query, dateText, sourceOf, typeLabel, resultLabel, resultBadge, questionText,
-  questionBlocks, blockList, showImage, busy, toast,
+  questionBlocks, blockList, showImage, busy, toast, missingMediaNode,
 } from '../core/dom.js';
 import { go } from '../core/router.js';
 import { mountJob, closeJobStreams } from '../core/jobs.js';
@@ -218,8 +218,7 @@ function officialTextNode(text, figures = [], { tag = 'div', className = 'questi
       used.add(figure.url);
       node.append(officialFigureNode(figure, index, q));
     } else {
-      node.append(el('span', { class: 'muted' },
-        t(role === 'formula' ? 'question.sourceFormula' : 'question.sourceFigure')));
+      node.append(missingMediaNode(role, part));
     }
   }
   return { node, used };

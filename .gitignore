@@ -26,3 +26,7 @@ screenshots/m5-*.json
 screenshots/m6-*.json
 screenshots/pykt-*.jsonl
 screenshots/pykt-report*.json
+
+# a11y 扫描明细（每次扫描都变；只保留基线 fingerprints）
+screenshots/a11y/a11y-report.json
+screenshots/a11y/a11y-report.md

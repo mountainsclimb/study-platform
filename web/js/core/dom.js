@@ -286,6 +286,28 @@ export function bankImage(subject, image, context = {}) {
   return node;
 }
 
+/**
+ * 题目素材缺失的可见占位（公式图/配图）。
+ *
+ * 原先各视图只输出一段浅色小字（`[公式暂缺]`），在题目正文里几乎看不见，用户会
+ * 误以为题干本身写错了。这里统一成虚线框占位：图标 + 文案 + 原始占位符，既能被
+ * 屏幕阅读器读到，也让「这里本该有一张图」这件事一眼可见。
+ *
+ * @param {'formula'|'figure'} role 缺失素材类型
+ * @param {string} [part] 原始占位符（如 `[公式2]`），用于 title 与补充说明
+ */
+export function missingMediaNode(role, part = '') {
+  const isFormula = role === 'formula';
+  const label = isFormula ? t('question.formulaMissing') : t('question.figureMissing');
+  return el('span', {
+    class: `media-missing ${isFormula ? 'formula' : 'figure'}`,
+    title: part ? t('question.partMissing', { part }) : label,
+    'data-missing-role': role,
+  },
+  icon(isFormula ? 'atom' : 'file'),
+  el('span', { class: 'media-missing-text' }, label));
+}
+
 export function highlightKeyword(text, keyword) {
   const frag = document.createDocumentFragment();
   const str = String(text || '');
@@ -374,7 +396,7 @@ export function questionText(text, images = [], subject = '', keyword = '', cont
     }
     const role = match[1] === '公式' ? 'formula' : 'figure';
     const image = images.filter(i => i.role === role)[Number(match[2]) - 1];
-    node.append(image ? bankImage(subject, image, context) : el('span', { class: 'image-error' }, t('question.partMissing', { part })));
+    node.append(image ? bankImage(subject, image, context) : missingMediaNode(role, part));
   }
   return node;
 }
@@ -503,7 +525,7 @@ function textBlockNode(block, keyword) {
 
 function imageBlockNode(block, subject, context = {}) {
   const asset = blockAssetOf(block.asset);
-  if (!asset) return el('span', { class: 'block block-image' }, el('span', { class: 'image-error' }, t('question.imageMissing')));
+  if (!asset) return el('span', { class: 'block block-image' }, missingMediaNode('figure'));
   return el('span', { class: 'block block-image' }, bankImage(subject, asset, context));
 }
 
@@ -537,7 +559,7 @@ function mathBlockNode(block, subject, keyword, context = {}) {
   if (readable.trim()) {
     return el('span', { class: 'block block-math block-math-text' }, markedText(readable, keyword));
   }
-  return el('span', { class: 'block block-math' }, el('span', { class: 'image-error' }, t('question.formulaMissing')));
+  return el('span', { class: 'block block-math' }, missingMediaNode('formula'));
 }
 
 function tableCellText(cell) {

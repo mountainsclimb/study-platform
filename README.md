@@ -230,7 +230,7 @@ Copyright (c) 2025 Linwei**）。`scripts/build_vocab.py` 只抽取高考词优�
     - **离线语音**：`requirements-speech.txt`（sherpa-onnx 2.0.3，Apache-2.0）；设
       `STUDY_LOCAL_SPEECH=on` 并预置 Kokoro `kokoro-multi-lang-v1_1` 与 Paraformer-zh 后，
       零厂商配置也能完成课堂批量旁白（`provider: "local"`）、音色列表与语音输入识别；
-      识别只接受 16k 单声道 PCM16 WAV，前端 `wavEncode.js` 用 WebAudio 自动重采样，
+      识别接受单声道 PCM16 WAV（非 16k 采样后端自动重采样），前端 `wavEncode.js` 仍用 WebAudio 预转 16k，
       模型缺失/合成失败时旁白回退浏览器朗读，不影响其它功能。
     - **分子模型与配平**：`web/vendor/3dmol/`（3Dmol.js 3.0.0）与
       `web/vendor/openchemlib/`（OpenChemLib 9.26.0，均 BSD-3-Clause，版本与 SHA-256 见各自 README）

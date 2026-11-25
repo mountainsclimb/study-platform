@@ -2060,7 +2060,7 @@ bottleneck_station/bottleneck_reason/dropped/blocked`。
 | --- | --- | --- |
 | `GET /api/speech/info` | — | `{tts:{available,source,provider,model,max_chars,speed_range,compression,browser_fallback,notice}, asr:{available,source,provider,model,max_seconds,notice}, limits}`；不加载模型、不回密钥/目录。没有服务端合成时 `tts.browser_fallback:true`。 |
 | `POST /api/speech/tts` | `{text, voice?, speed?, provider_id?, model?}` | 成功直接返回音频字节；`X-Speech-Source: local\|provider`、`X-Speech-Format`、`X-Speech-Voice`。本地 WAV 经 MP3/Opus 压缩（`STUDY_TTS_FORMAT`，ffmpeg 缺失/失败回退 WAV）。文本 ≤2000 字；无服务端合成 503，前端回退浏览器朗读。不写 `cls_assets`。 |
-| `POST /api/speech/transcribe` | multipart `file`，可选 `provider_id`/`model` | 本地 16k 单声道 PCM16 WAV 优先；没有本地时用已配置的云端 ASR；返回 `{text,model,source,usage}`。未配置任何识别能力 503。 |
+| `POST /api/speech/transcribe` | multipart `file`，可选 `provider_id`/`model` | 本地单声道 PCM16 WAV 优先（非 16k 采样服务端自动重采样）；没有本地时用已配置的云端 ASR；返回 `{text,model,source,usage}`。未配置任何识别能力 503。 |
 | `POST /api/speech/shadowing/check` | multipart `expected`（≤2000 字）+ `file` | 转写后返回 `{similar,score,ratio,transcript,expected,reason,note,source,model}`；`note` 明确「只反映文本相似度，不代表发音质量」。不保存录音。 |
 
 课堂旧接口 `POST /api/classroom/tts`、`POST /api/classroom/asr` 保持兼容；通用接口与课堂

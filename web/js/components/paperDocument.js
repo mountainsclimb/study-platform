@@ -13,7 +13,7 @@ import { api, errorText } from '../core/api.js';
 import { onSessionReset } from '../core/state.js';
 import {
   el, button, badge, notice, empty, loading, busy, toast, dateText, number, field, input,
-  questionText, bankImage,
+  questionText, bankImage, missingMediaNode,
 } from '../core/dom.js';
 import { markdown } from '../core/markdown.js';
 import { current, go } from '../core/router.js';
@@ -300,7 +300,7 @@ function frozenBankStem(snapshot, paperId, position) {
     if (image) {
       node.append(frozenPaperImage(paperId, position, images.indexOf(image), role));
     } else {
-      node.append(el('span', { class: 'image-error' }, t('question.partMissing', { part: part })));
+      node.append(missingMediaNode(role, part));
     }
   }
   return node;

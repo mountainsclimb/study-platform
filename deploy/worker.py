@@ -12,10 +12,17 @@ except ImportError:  # pragma: no cover - 仅缺少可选依赖时发生
     cron = None
 
 from app import ai, assistant, classroom, db, insight, paperlab, practice
+from app.ai import engine_reset
 from app.ai.jobs import QUEUE_NAME, execute_dispatched_job, redis_settings, redis_url
 
 
 async def run_ai_job_task(ctx, job_id: int, token: str):
+    # 管理页「重置引擎」只清 API 进程单例；推理（OCR/公式/表格/旁白）在这里跑，
+    # 所以每个任务开始前先跟随数据库里的世代号，把待处理的重置落到本地单例。
+    try:
+        engine_reset.apply_pending()
+    except Exception:  # 重置传播失败不能挡住业务任务
+        pass
     await execute_dispatched_job(
         job_id, token, ai._run_job, retry=ctx["job_try"] > 1, monitor=True,
     )

@@ -15,10 +15,13 @@ from .db import connection, get_setting, set_setting, utcnow, username_predicate
 
 router = APIRouter(prefix="/api/auth", tags=["accounts"])
 COOKIE = "study_session"
-# 进程内桶仅保留给旧调用方清理；真正的限流跨进程落在 auth_rate_events 表。
-_failures = defaultdict(deque)
-_ip_failures = defaultdict(deque)
-_reg_attempts = defaultdict(deque)
+# 限流全部落在 ``auth_rate_events`` 表（见 ``_rate_reserve``/``_rate_guard``）：
+# 多 Worker / 多进程共享同一窗口，进程内状态不参与判定。
+# 下面三个空桶只保留给 ``tests/conftest.py`` 的既有清理调用（``.clear()``），
+# 不写入也不读取；新代码请勿使用（否则会重新引入「多 Worker 各算各的」缺陷）。
+_failures: dict = defaultdict(deque)
+_ip_failures: dict = defaultdict(deque)
+_reg_attempts: dict = defaultdict(deque)
 
 RATE_WINDOWS = {
     "register": 600,

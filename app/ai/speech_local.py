@@ -7,7 +7,7 @@
   ``STUDY_LOCAL_ASR_MODEL`` 放置模型目录。
 * 合成用 Kokoro（默认 ``kokoro-multi-lang-v1_1``），识别用 Paraformer-zh
   （默认 ``paraformer-zh``）。权重不进仓库与镜像。
-* 合成返回 16-bit PCM 单声道 WAV；识别只接受 **16k 单声道 PCM16 WAV**，超长拒绝，
+* 合成返回 16-bit PCM 单声道 WAV；识别接受 **单声道 PCM16 WAV**（非 16k 自动重采样），超长拒绝，
   非 WAV 由调用方转 422 中文提示。
 * 同步推理由调用方经 ``asyncio.to_thread`` 执行；进程级信号量限制并发。
 * 模型目录/依赖缺失或初始化失败统一转 :class:`SpeechUnavailable`，调用方回退浏览器
@@ -65,7 +65,7 @@ SYNTH_TIMEOUT_SECONDS = 120
 TRANSCRIBE_TIMEOUT_SECONDS = 120
 NOTICE = (
     "离线语音由 sherpa-onnx 在本机 CPU 上运行；合成面向课堂旁白，"
-    "识别只接受 16k 单声道 PCM16 WAV，结果仅供输入参考。"
+    "识别接受单声道 PCM16 WAV（非 16k 自动重采样），结果仅供输入参考。"
 )
 
 _tts_engine = None
@@ -438,7 +438,7 @@ def _read_wav(raw: bytes) -> tuple[object, int]:
             rate = handle.getframerate()
             frames = handle.getnframes()
             if channels != 1:
-                raise ValueError("本地识别只接受单声道 WAV，请转换为 16k 单声道后重试")
+                raise ValueError("本地识别只接受单声道 WAV，请转换为单声道后重试")
             if width != 2:
                 raise ValueError("本地识别只接受 16-bit PCM WAV，请转换后重试")
             duration = frames / float(rate or 1)
@@ -450,7 +450,7 @@ def _read_wav(raw: bytes) -> tuple[object, int]:
     except ValueError:
         raise
     except (wave.Error, EOFError, OSError):
-        raise ValueError("请上传 16k 单声道 PCM16 WAV 音频") from None
+        raise ValueError("请上传单声道 PCM16 WAV 音频") from None
     if not data:
         raise ValueError("音频内容为空")
     samples = np.frombuffer(data, dtype="<i2").astype(np.float32) / 32768.0
