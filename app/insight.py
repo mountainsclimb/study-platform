@@ -41,6 +41,9 @@ KP_GRAPH_MAX_EDGES = 300
 KP_GRAPH_MAX_NODES = 120
 STRONG_ACCURACY = 85.0
 STRONG_MIN_ATTEMPTS = 3
+#: 薄弱判定的样本门槛：已判定作答少于该次数时只报真实样本数，不打「薄弱」标记。
+#: 与 ``app/home_stats.py`` 的 ``MIN_WEAK_SAMPLE`` 同值（两处独立常量，改动需同步）。
+MIN_WEAK_SAMPLE = 3
 MASTERY_LEVELS = ("未掌握", "初步掌握", "比较掌握", "熟练掌握")
 _MASTERY_INDEX = {name: index for index, name in enumerate(MASTERY_LEVELS)}
 UNKNOWN_SUBJECT = "未分类"
@@ -52,7 +55,11 @@ CALIBER = {
     "accuracy": "学科/知识点准确率均按每次作答的判题结果统计，不是去重后的题目正确率。",
     "mastery": "掌握分布来自 mastery 表的当前等级（未掌握/初步掌握/比较掌握/熟练掌握）；知识点掌握等级优先由关联题目的掌握度聚合，缺少掌握度记录时按正确率推算（≥90% 熟练 / ≥70% 比较 / ≥40% 初步 / 其余未掌握）。",
     "knowledge": "知识点统计按 question_kp 的题目关联逐题统计；一道题关联多个知识点时，该题作答分别计入每个知识点（不按题拆分）。暂无关联数据时返回空数组并说明。",
-    "weak": "薄弱知识点阈值：正确率 < 70%；优势知识点：正确率 ≥ 85% 且作答 ≥ 3 次。",
+    "weak": (
+        "薄弱知识点阈值：正确率 < 70% 且已判定作答 ≥ 3 次；已判定样本少于 3 次的知识点只报真实"
+        "样本数（sample_limited），不打薄弱标记，避免「错一题就标红」。优势知识点：正确率 ≥ 85% "
+        "且作答 ≥ 3 次。"
+    ),
     "wrong": "错题原因优先使用错题本里的人工错误标签（一题多标签时分别计入），没有标签时使用错题原因字段；错题分布按 days 窗口（last_wrong_at/added_at）过滤，而错题数、到期复习为当前状态总量。",
     "window": "作答、AI 任务、活动/趋势与错题分布按 days 时间窗口统计（默认近 90 天，UTC 自然日）；掌握分布、到期复习与错题数为当前状态，不随窗口截断。",
     "ai": "AI 学习建议只基于本接口返回的真实统计生成，显著标注 AI 生成；统计数字由代码计算，模型不得编造。",
@@ -706,8 +713,11 @@ def _knowledge_payload(data) -> dict:
             "question_count": len(bucket["qids"]),
             "wrong_count": len(bucket["wrong_qids"]),
             "mastery_level": _aggregate_mastery(bucket["levels"], accuracy),
-            # 只有存在已判定作答时才能判断薄弱；全是待核验作答时不能判为薄弱。
-            "weak": bucket["graded"] > 0 and accuracy < WEAK_ACCURACY,
+            # 只有样本足够（已判定 ≥ MIN_WEAK_SAMPLE）时才能判断薄弱：全是待核验作答、
+            # 或者只错了一两题都不能标薄弱，否则「错一题就标红」会把偶发失误当成能力缺陷。
+            "weak": bucket["graded"] >= MIN_WEAK_SAMPLE and accuracy < WEAK_ACCURACY,
+            # 样本不足时前端只展示真实样本数，不做个性化推断（与首页同一门槛）。
+            "sample_limited": bucket["graded"] < MIN_WEAK_SAMPLE,
         })
     items.sort(key=lambda item: (item["accuracy"], -item["attempts"], item["title"]))
 
@@ -837,6 +847,7 @@ def _thin_kp(item: dict) -> dict:
         "accuracy": item["accuracy"],
         "mastery_level": item["mastery_level"],
         "weak": item["weak"],
+        "sample_limited": bool(item.get("sample_limited", False)),
     }
 
 
@@ -1001,8 +1012,9 @@ def _recommendations(data, overview: dict, knowledge: dict, mistakes: dict) -> l
     for kp in knowledge["weak"][:3]:
         items.append({
             "title": "专项突破：%s" % kp["title"],
-            "reason": "近 %s 天该知识点正确率 %s%%，低于薄弱线 %s%%。" % (
-                data["days"], kp["accuracy"], int(WEAK_ACCURACY)),
+            "reason": "近 %s 天该知识点正确率 %s%%（%s 次已判定作答），低于薄弱线 %s%%。" % (
+                data["days"], kp["accuracy"], kp.get("graded_attempts", kp["attempts"]),
+                int(WEAK_ACCURACY)),
             "kp_ids": [kp["kp_id"]],
             "count": kp.get("graded_attempts", kp["attempts"]),
             "action": "practice",
@@ -1247,6 +1259,7 @@ def kp_graph(
             "attempts": int(stats.get("attempts", 0)),
             "accuracy": stats.get("accuracy"),
             "weak": bool(stats.get("weak", False)),
+            "sample_limited": bool(stats.get("sample_limited", False)),
             "weight": int(stats.get("attempts", 0)) or 1,
         })
 

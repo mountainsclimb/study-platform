@@ -402,6 +402,8 @@ def test_frontend_wiring_static():
     assert "/insight/home" in insight_js
     assert "insight.summary.first" in insight_js
     assert "insight.kp.sampleLimited" in insight_js
+    # 样本不足（未达 MIN_WEAK_SAMPLE）的知识点单独成组，不混进「其他」里消失。
+    assert "insight.kp.groupLimited" in insight_js
     # 导航按分组渲染，且没有注册尚未实现的广场/评审路由。
     assert "navGroups" in main_js and "navGroups" in state_js
     for group in ("learn", "content", "tools"):
@@ -416,7 +418,7 @@ def test_frontend_wiring_static():
         "home.stats.dueLabel", "home.stats.todayLabel", "home.stats.firstAccuracyLabel",
         "home.weak.title", "home.bank.autoLabel", "home.next.last.label",
         "insight.summary.first", "insight.summary.repeat", "insight.summary.pending",
-        "insight.kp.sampleLimited", "nav.group.learn",
+        "insight.kp.sampleLimited", "insight.kp.groupLimited", "nav.group.learn",
     ):
         assert key in zh, f"zh-CN 缺少 {key}"
         assert key in en, f"en-US 缺少 {key}"

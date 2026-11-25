@@ -45,7 +45,14 @@ from . import db, practice, vocab
 
 DEFAULT_DAYS = 90
 # 知识点「样本不足」阈值：与学情页优势知识点门槛一致，少于 3 次已判定作答只展示样本数。
+#: 薄弱判定的样本门槛：与 ``app/insight.py`` 的 ``MIN_WEAK_SAMPLE`` 同值（两处独立常量，
+#: 改动需同步；insight 的 ``weak`` 布尔已内置该门槛，这里用于「仅展示真实样本数」的降级标记）。
 MIN_WEAK_SAMPLE = 3
+
+#: 首页薄弱清单的入选条件比 insight 的 ``weak`` 徽标更宽：样本不足（已判定 < 3 次）但正确率
+#: 偏低的知识点也列出来，并在 ``sample_limited`` 上标注「只报真实样本数」。这样学生能看到
+#: 「练了 2 次都错」这种早期信号，又不会被当成能力结论去生成掌握路径/推送推荐。
+WEAK_LIST_ACCURACY = 70.0
 # 数据侧质量标记：这些代码意味着答案/题面不完整，不能保证自动判分。
 BLOCKING_QUALITY_CODES = (
     "missing_figure",
@@ -402,6 +409,10 @@ def _weak_knowledge(knowledge: dict) -> tuple[list[dict], str | None]:
     items = [
         item for item in (knowledge.get("items") or [])
         if item.get("weak")
+        or (
+            int(item.get("graded_attempts") or 0) > 0
+            and float(item.get("accuracy") or 0) < WEAK_LIST_ACCURACY
+        )
     ]
     items.sort(key=lambda item: (item.get("accuracy", 0), -item.get("attempts", 0), item.get("title") or ""))
     weak = []
@@ -418,8 +429,13 @@ def _weak_knowledge(knowledge: dict) -> tuple[list[dict], str | None]:
             "sample_limited": graded < MIN_WEAK_SAMPLE,
         })
     note = knowledge.get("note")
-    if weak and any(item["sample_limited"] for item in weak):
-        note = "部分薄弱知识点的已判定样本少于 %s 次，仅展示真实样本数，暂不做个性化推断。" % MIN_WEAK_SAMPLE
+    limited = [item for item in weak if item["sample_limited"]]
+    if limited:
+        note = (
+            "部分薄弱知识点的已判定样本少于 %s 次（如「%s」仅 %s 次），只展示真实样本数，"
+            "样本补足前不做个性化推断。" % (
+                MIN_WEAK_SAMPLE, limited[0]["title"], limited[0]["graded_attempts"])
+        )
     return weak, note
 
 

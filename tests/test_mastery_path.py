@@ -368,7 +368,9 @@ def test_auto_select_without_data_returns_422(api):
 
 def test_auto_select_picks_at_most_three_weakest(api):
     client, _holder = api
-    # A 0% / B 25% / C 50% / D 66.7% / E 100%，应选 A、B、C 三个最弱（按正确率升序）。
+    # A 0%/1 次、B 25%/4 次、C 50%/2 次、D 66.7%/3 次、E 100%/2 次。
+    # 样本门槛 MIN_WEAK_SAMPLE=3：A（1 次）、C（2 次）样本不足被排除，
+    # 因此只选 B（25%，4 次）与 D（66.7%，3 次）两个最弱。
     kp_a = _kp(name="薄弱A")
     kp_b = _kp(name="薄弱B")
     kp_c = _kp(name="薄弱C")
@@ -398,8 +400,9 @@ def test_auto_select_picks_at_most_three_weakest(api):
 
     payload = _create(client)
     kp_ids = [node["kp_id"] for node in payload["nodes"]]
-    assert kp_ids == [kp_a, kp_a, kp_b, kp_b, kp_c, kp_c]
-    assert payload["path"]["progress"]["nodes_total"] == 6
+    # 样本不足的知识点不自动入选：只剩 B、D（各 2 个节点）。
+    assert kp_ids == [kp_b, kp_b, kp_d, kp_d]
+    assert payload["path"]["progress"]["nodes_total"] == 4
 
 
 def test_auto_select_falls_back_to_legacy_attempts(api):

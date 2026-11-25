@@ -39,6 +39,7 @@ from . import kp_tagging
 from . import speech_api
 # 阶段 5：本地可选引擎总览与重置（设置页排障）。
 from . import engine_api
+from . import release_metrics
 
 WEB_DIR = Path(__file__).resolve().parents[1] / "web"
 health_log = logging.getLogger("zhixu.health")
@@ -799,6 +800,8 @@ app.include_router(kp_tagging.router)
 app.include_router(speech_api.router)
 # 阶段 5：本地可选引擎总览与重置（普通用户只读；重置仅管理员）。
 app.include_router(engine_api.router)
+# P1-2：发布跟踪指标（上传完成率 / 复习回流率，管理员只读）。
+app.include_router(release_metrics.router)
 
 app.mount("/static", StaticFiles(directory=str(WEB_DIR)), name="static")
 

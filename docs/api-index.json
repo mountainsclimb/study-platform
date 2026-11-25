@@ -1,7 +1,7 @@
 {
   "version": 1,
   "generated_from": "app.main:app",
-  "count": 406,
+  "count": 407,
   "routes": [
     {
       "method": "GET",
@@ -106,6 +106,10 @@
     {
       "method": "POST",
       "path": "/api/admin/questions/{qid:path}/isolation"
+    },
+    {
+      "method": "GET",
+      "path": "/api/admin/release-metrics"
     },
     {
       "method": "GET",

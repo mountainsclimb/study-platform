@@ -914,6 +914,134 @@ function adminAiUsageCard() {
 }
 
 // ---------------------------------------------------------------------------
+// 发布指标（方案 §8 发布跟踪）：GET /api/admin/release-metrics 的
+// 上传完成率（按图片/文本通道拆分 + 校对完成未入库滞留数）与复习回流率。
+// 口径由后端在 caliber 里给出，前端只负责呈现，避免两处各写一套解释。
+// ---------------------------------------------------------------------------
+
+// 比率一律由后端算好（分母 0 → null）；这里只负责「—」与百分号。
+function releaseRateText(rate) {
+  if (rate === null || rate === undefined) return '—';
+  const value = Number(rate);
+  return Number.isFinite(value) ? `${value.toFixed(1)}%` : '—';
+}
+
+function releaseChannelLabel(key) {
+  const label = t(`admin.releaseMetrics.channel.${key}`);
+  return label === `admin.releaseMetrics.channel.${key}` ? key : label;
+}
+
+function releaseMetricsCard() {
+  let seq = 0;
+  const card = el('section', { class: 'card admin-release-metrics-card', style: 'margin-top:22px' });
+  const mount = el('div');
+
+  function countPair(done, total) {
+    return t('admin.releaseMetrics.countPair', { done: number(done || 0), total: number(total || 0) });
+  }
+
+  function channelRows(upload, staleHours) {
+    const channels = upload.channels || {};
+    const order = ['image', 'text'];
+    const keys = order.filter(key => channels[key])
+      .concat(Object.keys(channels).filter(key => !order.includes(key)));
+    if (!keys.length) {
+      return [el('tr', {}, el('td', { colspan: '4', class: 'help' },
+        t('admin.releaseMetrics.noChannelData')))];
+    }
+    return keys.map(key => {
+      const entry = channels[key] || {};
+      return el('tr', { 'data-channel': key },
+        el('td', {}, releaseChannelLabel(key)),
+        el('td', {}, countPair(entry.saved, entry.started)),
+        el('td', {}, releaseRateText(entry.completion_rate)),
+        el('td', {}, entry.stalled
+          ? t('admin.releaseMetrics.stalledCount', {
+            count: number(entry.stalled), hours: number(staleHours),
+          })
+          : '—'));
+    });
+  }
+
+  function render(data) {
+    const upload = data.upload || {};
+    const review = data.review || {};
+    const caliber = data.caliber || {};
+    const total = upload.total || {};
+    const days = number(data.days || 30);
+    const staleHours = number(caliber.stale_confirm_hours || 24);
+
+    card.replaceChildren(
+      el('div', { class: 'card-header' },
+        el('h2', {}, t('admin.releaseMetrics.section', { days })),
+        el('div', { class: 'row' },
+          badge(t('admin.releaseMetrics.badge', { days }), 'teal'),
+          button(t('admin.releaseMetrics.refresh'), e => busy(e.currentTarget, () => load()), 'secondary small', 'repeat'))),
+      mount);
+
+    if (data.error) {
+      mount.replaceChildren(notice(t('admin.releaseMetrics.unavailable', { message: data.error }), 'warning'));
+      return;
+    }
+
+    const overview = el('div', { class: 'settings-usage-summary', 'aria-live': 'polite' },
+      el('span', {}, t('admin.releaseMetrics.uploadRate', {
+        rate: releaseRateText(total.completion_rate),
+      })),
+      el('span', {}, t('admin.releaseMetrics.uploadCounts', {
+        saved: number(total.saved || 0), started: number(total.started || 0),
+      })),
+      el('span', {}, t('admin.releaseMetrics.reviewRate', {
+        rate: releaseRateText(review.rate),
+      })),
+      el('span', {}, t('admin.releaseMetrics.reviewCounts', {
+        scheduled: number(review.scheduled || 0), eligible: number(review.eligible || 0),
+      })));
+
+    const uploadTable = el('div', { class: 'table-wrap', style: 'margin-top:12px' },
+      el('table', {},
+        el('thead', {}, el('tr', {},
+          el('th', {}, t('admin.releaseMetrics.headChannel')),
+          el('th', {}, t('admin.releaseMetrics.headSaved')),
+          el('th', {}, t('admin.releaseMetrics.headRate')),
+          el('th', {}, t('admin.releaseMetrics.headStalled')))),
+        el('tbody', {}, ...channelRows(upload, staleHours))));
+
+    const reviewLines = [
+      t('admin.releaseMetrics.reviewEligible', { count: number(review.eligible || 0) }),
+      t('admin.releaseMetrics.reviewScheduled', { count: number(review.scheduled || 0) }),
+    ];
+
+    mount.replaceChildren(
+      overview,
+      el('h3', { style: 'margin-top:16px' }, t('admin.releaseMetrics.uploadTitle')),
+      upload.available
+        ? uploadTable
+        : el('p', { class: 'help' }, t('admin.releaseMetrics.uploadEmpty')),
+      el('h3', { style: 'margin-top:16px' }, t('admin.releaseMetrics.reviewTitle')),
+      el('div', { class: 'mini-list' }, ...reviewLines.map(text => el('span', {}, text))),
+      el('p', { class: 'help', style: 'margin-top:12px' },
+        t('admin.releaseMetrics.caliber', {
+          upload: caliber.upload || t('admin.releaseMetrics.caliberUnknown'),
+          review: caliber.review || t('admin.releaseMetrics.caliberUnknown'),
+          hours: staleHours,
+        })));
+  }
+
+  async function load() {
+    const mine = ++seq;
+    mount.replaceChildren(loading(t('admin.releaseMetrics.loading')));
+    const data = await api('/admin/release-metrics?days=30')
+      .catch(error => ({ error: error.message }));
+    if (mine !== seq) return;
+    render(data);
+  }
+
+  load();
+  return card;
+}
+
+// ---------------------------------------------------------------------------
 // 运维监控（WS27 / 方案 §7「分发与运维」）：GET /api/admin/monitor 的
 // 任务 / AI / 渲染 / 数据 / 广场五组只读检查。单组异常由后端标 warn/error 并在组内提示；
 // 接口整体不可用时只降级为提示与重试按钮，不影响其它管理分区；刷新按钮显式绕过服务端短缓存。
@@ -1339,6 +1467,7 @@ export async function renderAdmin(container, version) {
       adminMonitorCard(),
       opsCard,
       adminAiUsageCard(),
+      releaseMetricsCard(),
       admissionCard(),
       registrationCard(registrationRes),
       hostsCard(hostsRes));

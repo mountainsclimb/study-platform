@@ -576,14 +576,20 @@ function knowledgeSection(knowledge, selection = null) {
       el('p', { class: 'ins-kp-empty', 'data-no-i18n': '' }, knowledge.note || t('insight.kp.empty')));
   }
   const weak = items.filter(item => item.weak);
+  // 样本不足（已判定 < MIN_WEAK_SAMPLE）且正确率偏低：不标「薄弱」，也不能混进「其他」里消失
+  // ——「练了两次都错」是真实早期信号，单独成组只报样本数，不给结论。
+  const limitedIds = new Set(
+    items.filter(item => item.sample_limited && !item.weak).map(item => item.kp_id));
+  const limited = items.filter(item => limitedIds.has(item.kp_id));
   const strongIds = new Set((knowledge.strong || []).map(item => item.kp_id));
-  const strong = items.filter(item => strongIds.has(item.kp_id));
-  const shown = new Set([...weak, ...strong].map(item => item.kp_id));
+  const strong = items.filter(item => strongIds.has(item.kp_id) && !limitedIds.has(item.kp_id));
+  const shown = new Set([...weak, ...limited, ...strong].map(item => item.kp_id));
   const rest = items.filter(item => !shown.has(item.kp_id));
   return el('section', { class: 'ins-card ins-card-wide' }, head,
     knowledge.note ? el('div', { 'data-no-i18n': '' }, notice(knowledge.note, 'warning')) : null,
     el('div', { class: 'ins-kp-groups' },
       knowledgeGroup(t('insight.kp.groupWeak'), weak, 'red', selection),
+      knowledgeGroup(t('insight.kp.groupLimited'), limited, 'amber'),
       knowledgeGroup(t('insight.kp.groupStrong'), strong, 'teal'),
       knowledgeGroup(t('insight.kp.groupRest'), rest, ''),
       notStartedDetails(knowledge)));

@@ -94,9 +94,12 @@ def test_kp_graph_nodes_edges_and_weak_flags(client):
     for node in (node_a, node_b):
         for field in ("title", "level", "path", "attempts", "accuracy", "weak", "weight"):
             assert field in node
-    assert node_a["attempts"] == 2 and node_a["weak"] is True
+    # kp_a 只有 2 次已判定作答（< MIN_WEAK_SAMPLE=3）→ 不标薄弱，只标样本不足
+    assert node_a["attempts"] == 2 and node_a["weak"] is False
+    assert node_a["sample_limited"] is True
     assert node_a["accuracy"] == 50
     assert node_b["attempts"] == 3 and node_b["weak"] is False
+    assert node_b["sample_limited"] is False
     assert node_b["accuracy"] == 100
 
     cooccur = [
@@ -110,6 +113,27 @@ def test_kp_graph_nodes_edges_and_weak_flags(client):
     for edge in body["edges"]:
         assert edge["type"] in ("cooccur", "hierarchy")
         assert isinstance(edge["source"], int) and isinstance(edge["target"], int)
+
+
+def test_kp_graph_weak_flag_needs_sample_threshold(client):
+    """薄弱标记需要样本门槛：同一知识点补到 3 次已判定作答后才标红。"""
+    uid = _user_id(client)
+    math = _bank_qids("数学", 3)
+    kp = _kp_ids("数学", 1)[0]
+    for index, qid in enumerate(math[:2]):
+        _link_kp(qid, kp)
+        _insert_attempt(uid, qid, "correct" if index == 0 else "incorrect")
+    body = client.get("/api/insight/kp-graph", params={"subject": "数学"}).json()
+    node = {row["kp_id"]: row for row in body["nodes"]}[kp]
+    assert node["attempts"] == 2 and node["weak"] is False
+    assert node["sample_limited"] is True
+
+    _link_kp(math[2], kp)
+    _insert_attempt(uid, math[2], "incorrect")
+    body = client.get("/api/insight/kp-graph", params={"subject": "数学"}).json()
+    node = {row["kp_id"]: row for row in body["nodes"]}[kp]
+    assert node["attempts"] == 3 and node["accuracy"] == 33.3
+    assert node["weak"] is True and node["sample_limited"] is False
 
 
 def test_kp_graph_edge_cap(client, monkeypatch):

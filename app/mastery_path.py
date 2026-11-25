@@ -87,6 +87,9 @@ MAX_KP_IDS = 8
 AUTO_WEAK_LIMIT = 3
 #: 与学情同一薄弱阈值：正确率 < 70% 判为薄弱（OMP accuracy < 0.7）。
 WEAK_ACCURACY = 70.0
+#: 自动选薄弱知识点时的样本门槛：与 ``app/insight.py`` 的 ``MIN_WEAK_SAMPLE`` 同值。
+#: 只错了一两题的知识点不进入自动选点，避免生成一条基于偶然失误的掌握路径。
+MIN_WEAK_SAMPLE = 3
 
 #: 练习节点完成条件：两道**不同**题独立答对。
 PRACTICE_REQUIRED = 2
@@ -113,7 +116,8 @@ AUTO_EMPTY_DETAIL = (
     "暂无知识点关联或有效作答（样本不足），无法自动生成掌握路径；请显式指定知识点"
 )
 AUTO_WEAK_EMPTY_DETAIL = (
-    "暂无薄弱知识点（已判定作答正确率均不低于 70%），无法自动生成掌握路径；请显式指定知识点"
+    "暂无薄弱知识点（已判定作答 ≥ 3 次且正确率低于 70%），无法自动生成掌握路径；"
+    "请显式指定知识点，或先多练几道题积累样本"
 )
 
 CALIBER = {
@@ -658,6 +662,8 @@ def _select_weak_kps(con, user_id: int, subject: str | None) -> list[dict]:
             continue
         if subject and kp["subject"] != subject:
             continue
+        if graded < MIN_WEAK_SAMPLE:
+            continue  # 样本不足不判薄弱：错一两题可能是偶然，不足以支撑一条掌握路径
         accuracy = 100.0 * int(bucket["correct"] or 0) / graded
         if accuracy < WEAK_ACCURACY:
             candidates.append((accuracy, -graded, int(kp_id), kp))
@@ -1377,6 +1383,7 @@ __all__ = [
     "SAMPLE_MIN_QUESTIONS",
     "SAMPLE_NOTE",
     "SOURCE_KINDS",
+    "MIN_WEAK_SAMPLE",
     "WEAK_ACCURACY",
     "archive_path",
     "create_path",

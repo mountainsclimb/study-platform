@@ -30,3 +30,6 @@ screenshots/pykt-report*.json
 # a11y 扫描明细（每次扫描都变；只保留基线 fingerprints）
 screenshots/a11y/a11y-report.json
 screenshots/a11y/a11y-report.md
+
+# 本地运行数据（验收脚本的 STUDY_DATA_DIR；含题库镜像与 sqlite，不入库）
+.data/

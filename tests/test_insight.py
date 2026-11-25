@@ -107,6 +107,9 @@ def _seed_standard_study(client) -> dict:
     # 一题多知识点：math[0] 同时挂 kp_a / kp_b，验证「分别计入每个知识点」的口径。
     _link_kp(math[0], kp_a)
     _link_kp(math[1], kp_a)
+    # math[2] 同时挂 kp_a / kp_b：给 kp_a 补到 3 次已判定作答，满足薄弱判定的样本门槛
+    # （已判定 < 3 次只标 sample_limited，不标薄弱，见 app/insight.py MIN_WEAK_SAMPLE）。
+    _link_kp(math[2], kp_a)
     _link_kp(math[0], kp_b)
     _link_kp(math[2], kp_b)
     _link_kp(math[3], kp_b)
@@ -254,10 +257,13 @@ def test_knowledge_accuracy_weak_threshold_and_multi_kp(client):
     assert set(items) == {seed["kp_a"], seed["kp_b"]}
 
     kp_a = items[seed["kp_a"]]
-    # math[0] correct + math[1] incorrect → 50%，低于 70% → 薄弱
-    assert kp_a["attempts"] == 2
-    assert kp_a["accuracy"] == 50.0
+    # math[0] correct + math[1] incorrect + math[2] correct → 66.7%，已判定 3 次
+    # （达到 MIN_WEAK_SAMPLE）且低于 70% → 薄弱
+    assert kp_a["attempts"] == 3
+    assert kp_a["graded_attempts"] == 3
+    assert kp_a["accuracy"] == 66.7
     assert kp_a["weak"] is True
+    assert kp_a["sample_limited"] is False
     assert kp_a["path"].count("/") >= 2
     assert kp_a["mastery_level"] in ("未掌握", "初步掌握", "比较掌握", "熟练掌握")
     # math[0] 一题挂两个知识点 → kp_b 应把 math[0] 的作答也计入（不拆分）
@@ -265,6 +271,7 @@ def test_knowledge_accuracy_weak_threshold_and_multi_kp(client):
     assert kp_b["attempts"] == 3
     assert kp_b["accuracy"] == 100.0
     assert kp_b["weak"] is False
+    assert kp_b["sample_limited"] is False
     # 正确率升序：最弱在前
     assert [item["accuracy"] for item in body["items"]] == sorted(
         item["accuracy"] for item in body["items"]
