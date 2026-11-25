@@ -33,7 +33,35 @@ def test_resolve_routes_accepts_names_and_raw_hashes():
 def test_resolve_routes_defaults_to_main_routes():
     routes = a11y.resolve_routes(None)
     assert [route[0] for route in routes] == list(a11y.DEFAULT_ROUTES)
-    assert all(route[1].startswith("#/") for route in routes)
+    assert all(route[1].startswith("#/") for route in routes[:-1])
+    # Pyodide 专用页是绝对路径，不能被拼成 #/...
+    assert routes[-1] == ("lab-python", "/lab/python", ".lab-main")
+
+
+def test_default_routes_cover_all_registered_pages():
+    assert len(a11y.DEFAULT_ROUTES) == 21
+    expected = {
+        "home", "practice", "mybank", "submission", "wrongbook", "upload", "paperlab",
+        "classroom", "physics", "plaza", "insight", "vocab", "review", "plaza-admin",
+        "notes", "assistant", "tasks", "admission", "settings", "admin", "lab-python",
+    }
+    assert set(a11y.DEFAULT_ROUTES) == expected
+
+
+def test_resolve_routes_accepts_absolute_path():
+    routes = a11y.resolve_routes(["/lab/python"])
+    assert routes == [("lab-python", "/lab/python", ".lab-main")]
+
+
+def test_resolve_components_rejects_unknown_names():
+    assert a11y.resolve_components(["notes-demo-menu"])[0][0] == "notes-demo-menu"
+    try:
+        a11y.resolve_components(["missing-component"])
+    except ValueError as error:
+        assert "missing-component" in str(error)
+    else:  # pragma: no cover
+        raise AssertionError("未知组件检查项应报错")
+
 
 
 def _entry(route="home", viewport="desktop", *, violations=None, error=None):

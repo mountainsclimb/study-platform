@@ -381,7 +381,7 @@ function integrationCard({ title, iconName, value, unit, lines, emptyText, onOpe
   el('div', { class: 'ins-integration-value' }, String(value), unit ? el('small', {}, unit) : null),
   el('div', { class: 'ins-integration-lines' },
     ...(lines.length ? lines.map(text => el('span', {}, text)) : [el('span', {}, emptyText || t('common.noRecord'))])),
-  el('span', { class: 'ins-integration-cta' }, t('insight.integration.cta')));
+  onOpen ? el('span', { class: 'ins-integration-cta' }, t('insight.integration.cta')) : null);
   if (onOpen) body.addEventListener('click', onOpen);
   return body;
 }
@@ -392,6 +392,13 @@ function integrationCards(report) {
   const papers = integrations.papers || {};
   const library = integrations.library || {};
   const assistant = integrations.assistant || {};
+  const featureUsage = report.feature_usage || {};
+  const featureItems = Array.isArray(featureUsage.items) ? featureUsage.items : [];
+  const featureCount = id => Number(featureItems.find(item => item.feature === id)?.count || 0);
+  const featureTotal = Number(featureUsage.total || 0);
+  const featureSeconds = id => Math.round(Number(
+    featureItems.find(item => item.feature === id)?.total_duration_ms || 0,
+  ) / 1000);
   const cards = [
     integrationCard({
       title: t('nav.classroom'), iconName: 'compass', value: number(classroom.courses || 0), unit: t('insight.unit.courses'),
@@ -437,6 +444,27 @@ function integrationCards(report) {
       emptyText: t('insight.integration.assistantEmpty'),
       ariaLabel: t('insight.integration.assistantAria', { count: number(assistant.conversations || 0) }),
       onOpen: () => go('assistant'),
+    }),
+    // 阶段 5-3：演示 / 公式 / 语音成功使用频次（只统计，不记录正文）。
+    integrationCard({
+      title: t('insight.feature.title'), iconName: 'sparkle',
+      value: number(featureTotal), unit: t('insight.unit.times'),
+      lines: featureTotal
+        ? [
+          t('insight.feature.line', {
+            demo: number(featureCount('demo')),
+            formula: number(featureCount('formula')),
+            speech: number(featureCount('speech')),
+          }),
+          t('insight.feature.duration', {
+            demo: number(featureSeconds('demo')),
+            formula: number(featureSeconds('formula')),
+            speech: number(featureSeconds('speech')),
+          }),
+        ]
+        : [],
+      emptyText: t('insight.feature.empty'),
+      ariaLabel: t('insight.feature.aria', { count: number(featureTotal) }),
     }),
   ];
   const recent = Array.isArray(papers.recent) ? papers.recent.slice(0, 3) : [];

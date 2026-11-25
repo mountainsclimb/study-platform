@@ -95,7 +95,7 @@ function dueCard(card, onRated) {
     }
     shadowPanel = createShadowingPanel({ getExpected: () => card.word, compact: true });
     shadowMount.append(shadowPanel.element);
-  }, 'ghost small', 'message');
+  }, 'ghost small', 'message', { 'data-speech-shadow-toggle': '1' });
   const article = el('article', { class: 'vb-card', 'data-word': card.word },
     el('div', { class: 'vb-card-head' },
       el('div', {},

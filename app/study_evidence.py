@@ -40,7 +40,7 @@ import json
 import re
 
 from fastapi import APIRouter, Depends, HTTPException, Query
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, ConfigDict, Field
 
 from . import db, question_ref
 from .auth import current_user
@@ -63,6 +63,16 @@ CONFIDENCES = ("verified", "pending", "unknown")
 PROMPT_STATES = ("none", "hint", "step", "unknown")
 REVEAL_STATES = ("before", "after", "unknown")
 SELF_REPORTS = ("none", "independent", "assisted", "unknown")
+
+#: 阶段 5-3：功能使用事件（只记成功使用与耗时，不记朗读文本/公式/音频）。
+FEATURES = ("demo", "formula", "speech")
+FEATURE_ACTIONS = ("success",)
+MAX_FEATURE_SOURCE = 40
+MAX_FEATURE_SUBJECT = 40
+MAX_FEATURE_DURATION_MS = 3_600_000
+FEATURE_USAGE_NOTE = (
+    "只统计成功使用次数与耗时；不记录朗读文本、公式内容、音频或文件名。"
+)
 
 #: 只有这些判分来源的「已判对错」才算核验通过（verified）；自评/缺失信息不算。
 VERIFIED_GRADE_SOURCES = frozenset({"reference", "ai_cross_verified", "manual"})
@@ -125,6 +135,19 @@ CREATE TABLE IF NOT EXISTS study_evidence (
 CREATE INDEX IF NOT EXISTS study_evidence_user_time ON study_evidence(user_id, occurred_at);
 CREATE INDEX IF NOT EXISTS study_evidence_user_valid ON study_evidence(user_id, valid);
 CREATE INDEX IF NOT EXISTS study_evidence_question ON study_evidence(user_id, question_ref, valid);
+CREATE TABLE IF NOT EXISTS feature_events (
+    id INTEGER PRIMARY KEY,
+    user_id INTEGER NOT NULL,
+    feature TEXT NOT NULL,
+    action TEXT NOT NULL,
+    source TEXT,
+    subject TEXT,
+    duration_ms INTEGER,
+    occurred_at TEXT NOT NULL,
+    created_at TEXT NOT NULL
+);
+CREATE INDEX IF NOT EXISTS feature_events_user_time ON feature_events(user_id, occurred_at);
+CREATE INDEX IF NOT EXISTS feature_events_user_feature ON feature_events(user_id, feature);
 """
 
 _VERSION_SUFFIX = re.compile(r"#v(\d+)$")
@@ -863,6 +886,134 @@ def summary(user_id: int, *, days: int = DEFAULT_DAYS, con=None) -> dict:
 
 
 # ---------------------------------------------------------------------------
+# 功能使用事件（阶段 5-3）：演示 / 公式 / 语音的成功使用与耗时
+# ---------------------------------------------------------------------------
+
+_SOURCE_RE = re.compile(r"^[A-Za-z0-9_.-]*$")
+
+
+def _feature_public(row) -> dict:
+    return {
+        "id": int(row["id"]),
+        "feature": str(row["feature"] or ""),
+        "action": str(row["action"] or ""),
+        "source": row["source"],
+        "subject": row["subject"],
+        "duration_ms": row["duration_ms"],
+        "occurred_at": row["occurred_at"],
+        "created_at": row["created_at"],
+    }
+
+
+def record_feature_event(
+    user_id: int,
+    *,
+    feature: str,
+    action: str = "success",
+    source: str | None = None,
+    subject: str | None = None,
+    duration_ms: int | None = None,
+    con=None,
+) -> dict:
+    """写入一条成功使用事件；只接受白名单功能与 ``action=success``。
+
+    不接收/不保存朗读文本、公式内容、音频或文件名；``source`` 只允许字母数字与
+    ``_ . -``，``subject`` 仅保留限长文本，``duration_ms`` 限制 0–3600000。
+    """
+    feature = _enum(feature, FEATURES, "功能类型 feature")
+    action = _enum(action, FEATURE_ACTIONS, "事件动作 action（只记录成功使用）")
+    user_id = _optional_int(user_id, "user_id")
+    if user_id is None:
+        raise ValueError("user_id 不能为空")
+    source_text = str(source or "").strip()
+    if len(source_text) > MAX_FEATURE_SOURCE or not _SOURCE_RE.fullmatch(source_text):
+        raise ValueError("来源标识只能包含字母、数字、点、下划线或连字符，且不超过 40 字")
+    subject_text = str(subject or "").strip()
+    if len(subject_text) > MAX_FEATURE_SUBJECT:
+        raise ValueError("学科不能超过 40 字")
+    if duration_ms is None:
+        duration_value = None
+    else:
+        try:
+            duration_value = int(duration_ms)
+        except (TypeError, ValueError):
+            raise ValueError("耗时必须是整数毫秒") from None
+        if duration_value < 0 or duration_value > MAX_FEATURE_DURATION_MS:
+            raise ValueError("耗时必须在 0–3600000 毫秒之间")
+    now = db.utcnow()
+    payload = (
+        int(user_id), feature, action, source_text or None, subject_text or None,
+        duration_value, now, now,
+    )
+    if con is not None:
+        event_id = con.execute(
+            "INSERT INTO feature_events(user_id,feature,action,source,subject,duration_ms,"
+            "occurred_at,created_at) VALUES (?,?,?,?,?,?,?,?)",
+            payload,
+        ).lastrowid
+        return _feature_public(con.execute(
+            "SELECT * FROM feature_events WHERE id=?", (event_id,),
+        ).fetchone())
+    _ensure_ready()
+    with db.connection() as own:
+        event_id = own.execute(
+            "INSERT INTO feature_events(user_id,feature,action,source,subject,duration_ms,"
+            "occurred_at,created_at) VALUES (?,?,?,?,?,?,?,?)",
+            payload,
+        ).lastrowid
+        return _feature_public(own.execute(
+            "SELECT * FROM feature_events WHERE id=?", (event_id,),
+        ).fetchone())
+
+
+def _feature_usage_with(con, user_id: int, days: int) -> dict:
+    start = _window_start(days)
+    rows = con.execute(
+        "SELECT feature, COUNT(*) AS count, COALESCE(SUM(duration_ms),0) AS total_duration_ms, "
+        "MAX(occurred_at) AS last_used_at FROM feature_events "
+        "WHERE user_id=? AND occurred_at>=? GROUP BY feature",
+        (int(user_id), start),
+    ).fetchall()
+    items = {
+        feature: {
+            "feature": feature, "count": 0, "total_duration_ms": 0, "last_used_at": None,
+        }
+        for feature in FEATURES
+    }
+    for row in rows:
+        name = str(row["feature"] or "")
+        if name not in items:
+            continue
+        items[name] = {
+            "feature": name,
+            "count": int(row["count"] or 0),
+            "total_duration_ms": int(row["total_duration_ms"] or 0),
+            "last_used_at": row["last_used_at"],
+        }
+    ordered = [items[feature] for feature in FEATURES]
+    return {
+        "window_days": days,
+        "window_start": start,
+        "total": sum(item["count"] for item in ordered),
+        "items": ordered,
+        "note": FEATURE_USAGE_NOTE,
+    }
+
+
+def feature_usage(user_id: int, *, days: int = DEFAULT_DAYS, con=None) -> dict:
+    """近 N 天三类功能使用次数与累计耗时（只统计成功使用）。"""
+    days = _clamp_days(days)
+    user_id = _optional_int(user_id, "user_id")
+    if user_id is None:
+        raise ValueError("user_id 不能为空")
+    if con is not None:
+        return _feature_usage_with(con, user_id, days)
+    _ensure_ready()
+    with db.connection() as own:
+        return _feature_usage_with(own, user_id, days)
+
+
+# ---------------------------------------------------------------------------
 # HTTP 路由
 # ---------------------------------------------------------------------------
 
@@ -870,6 +1021,20 @@ class SelfReportInput(BaseModel):
     ref: str = Field(min_length=1, max_length=MAX_REF_LENGTH)
     verdict: str = Field(min_length=1, max_length=20)
     note: str | None = Field(default=None, max_length=MAX_SELF_REPORT_NOTE)
+
+
+class FeatureEventInput(BaseModel):
+    """功能使用事件：白名单字段，额外字段（如朗读文本）直接 422。"""
+
+    model_config = ConfigDict(extra="forbid")
+
+    feature: str = Field(min_length=1, max_length=20)
+    action: str = Field(default="success", max_length=20)
+    source: str | None = Field(default=None, max_length=MAX_FEATURE_SOURCE)
+    subject: str | None = Field(default=None, max_length=MAX_FEATURE_SUBJECT)
+    duration_ms: int | None = Field(
+        default=None, ge=0, le=MAX_FEATURE_DURATION_MS,
+    )
 
 
 def _normalize_ref_or_422(value) -> question_ref.QuestionRef:
@@ -918,10 +1083,39 @@ def submit_self_report(data: SelfReportInput, user=Depends(current_user)):
     return event
 
 
+@router.post("/feature-event")
+def submit_feature_event(data: FeatureEventInput, user=Depends(current_user)):
+    """记录一次成功使用（演示/公式/语音）；额外内容字段直接 422，不静默落库。"""
+    try:
+        event = record_feature_event(
+            user["id"],
+            feature=data.feature,
+            action=data.action,
+            source=data.source,
+            subject=data.subject,
+            duration_ms=data.duration_ms,
+        )
+    except ValueError as exc:
+        raise HTTPException(422, str(exc)) from exc
+    return {"ok": True, "event": event}
+
+
+@router.get("/feature-usage")
+def feature_usage_summary(
+    days: int = Query(DEFAULT_DAYS, ge=1, le=MAX_DAYS),
+    user=Depends(current_user),
+):
+    """本人近 N 天三类功能使用次数与累计耗时（只统计成功使用）。"""
+    return feature_usage(user["id"], days=days)
+
+
 __all__ = [
     "CALIBER",
     "CONFIDENCES",
     "DEFAULT_DAYS",
+    "FEATURES",
+    "FEATURE_ACTIONS",
+    "FEATURE_USAGE_NOTE",
     "GRADE_SOURCES",
     "KINDS",
     "MAX_DAYS",
@@ -934,10 +1128,12 @@ __all__ = [
     "VERDICTS",
     "active_event",
     "attempt_event_key",
+    "feature_usage",
     "init_study_evidence",
     "question_evidence",
     "record_attempt_evidence",
     "record_event",
+    "record_feature_event",
     "revise_attempt_evidence",
     "revise_event",
     "router",

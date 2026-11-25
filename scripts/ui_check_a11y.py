@@ -31,18 +31,46 @@ VIEWPORTS = {
     "mobile": {"width": 390, "height": 844},
 }
 
-# 主要路由；``--routes`` 可用路由名或直接写 ``#/...`` 覆盖。
+# 全部注册路由（20 个 SPA 页面 + Pyodide 专用页）；``--routes`` 可用路由名或
+# 直接写 ``#/...`` / ``/lab/python`` 覆盖。登录账号在隔离库中为首个账号（管理员），
+# 管理/评审页可正常渲染。
 ROUTE_SPECS = {
     "home": {"hash": "#/", "ready": ".layout, .page-heading, .pg-focus-grid"},
     "practice": {"hash": "#/practice", "ready": ".layout, .page-heading, .pg-panel"},
+    "mybank": {"hash": "#/mybank", "ready": ".page-heading, .layout"},
+    "submission": {"hash": "#/submission", "ready": ".page-heading, .layout"},
     "wrongbook": {"hash": "#/wrongbook", "ready": ".layout, .page-heading, .pg-filter-bar"},
     "upload": {"hash": "#/upload", "ready": ".layout, .page-heading, .pg-step-rail"},
-    "notes": {"hash": "#/notes", "ready": ".layout, .page-heading, .pg-tabs"},
-    "settings": {"hash": "#/settings", "ready": ".layout, .page-heading, .pg-api-status"},
-    "insight": {"hash": "#/insight", "ready": ".layout, .page-heading"},
+    "paperlab": {"hash": "#/paperlab", "ready": ".page-heading, .layout"},
+    "classroom": {"hash": "#/classroom", "ready": ".page-heading, .layout"},
     "physics": {"hash": "#/physics", "ready": ".layout, .page-heading"},
+    "plaza": {"hash": "#/plaza", "ready": ".page-heading, .layout"},
+    "insight": {"hash": "#/insight", "ready": ".layout, .page-heading"},
+    "vocab": {"hash": "#/vocab", "ready": ".page-heading, .layout"},
+    "review": {"hash": "#/review", "ready": ".page-heading, .layout"},
+    "plaza-admin": {"hash": "#/plaza-admin", "ready": ".page-heading, .layout"},
+    "notes": {"hash": "#/notes", "ready": ".layout, .page-heading, .pg-tabs"},
+    "assistant": {"hash": "#/assistant", "ready": ".page-heading, .layout"},
+    "tasks": {"hash": "#/tasks", "ready": ".page-heading, .layout"},
+    "admission": {"hash": "#/admission", "ready": ".page-heading, .layout"},
+    "settings": {"hash": "#/settings", "ready": ".layout, .page-heading, .pg-api-status"},
+    "admin": {"hash": "#/admin", "ready": ".page-heading, .layout"},
+    "lab-python": {"hash": "/lab/python", "ready": ".lab-main"},
 }
-DEFAULT_ROUTES = ("home", "practice", "wrongbook", "upload", "notes", "settings", "insight", "physics")
+DEFAULT_ROUTES = tuple(ROUTE_SPECS)
+
+#: 组件级检查（弹层/新面板）：先打开触发器，再扫描指定容器。默认不运行，
+#: 由 ``--components`` 显式选择；只在触发器存在时执行。
+COMPONENT_SPECS = {
+    "notes-demo-menu": {
+        "hash": "#/notes", "ready": ".page-heading",
+        "open": "details.demo-create-menu summary", "scan": ".demo-create-list",
+    },
+    "vocab-shadow": {
+        "hash": "#/vocab", "ready": ".page-heading",
+        "open": "[data-speech-shadow-toggle]", "scan": ".speech-shadow",
+    },
+}
 
 SCAN_SCRIPT = """
 async () => {
@@ -124,10 +152,32 @@ def resolve_routes(values: list[str] | None) -> list[tuple[str, str, str]]:
             spec = ROUTE_SPECS[key]
             routes.append((key, spec["hash"], spec["ready"]))
             continue
+        by_hash = next(
+            (name for name, spec in ROUTE_SPECS.items() if spec["hash"] == key), None,
+        )
+        if by_hash is not None:
+            routes.append((by_hash, key, ROUTE_SPECS[by_hash]["ready"]))
+            continue
+        if key.startswith("/"):
+            routes.append((key.strip("/").replace("/", "-") or "page", key, ".layout, .page-heading, #app, .lab-main"))
+            continue
         if not key.startswith("#/"):
             key = "#/" + key.lstrip("#/")
         routes.append((key.lstrip("#/") or "home", key, ".layout, .page-heading, #app"))
     return routes
+
+
+def resolve_components(values: list[str] | None) -> list[tuple[str, dict]]:
+    """解析组件级检查项；未知名直接抛 ``ValueError``（避免静默漏扫）。"""
+    items: list[tuple[str, dict]] = []
+    for value in values or []:
+        key = str(value).strip()
+        if not key:
+            continue
+        if key not in COMPONENT_SPECS:
+            raise ValueError(f"未知组件检查项：{key}")
+        items.append((key, COMPONENT_SPECS[key]))
+    return items
 
 
 def fingerprint(route: str, viewport: str, violation: dict, node: dict) -> str:
@@ -146,9 +196,15 @@ def scan_route(page, base_url: str, route: str, hash_value: str, ready: str,
         "error": None,
     }
     try:
-        page.goto(base_url + "/" + hash_value, wait_until="domcontentloaded", timeout=timeout_ms)
+        url = base_url + hash_value if hash_value.startswith("/") else base_url + "/" + hash_value
+        page.goto(url, wait_until="domcontentloaded", timeout=timeout_ms)
         page.wait_for_selector(ready, timeout=timeout_ms)
         page.wait_for_timeout(600)
+        try:
+            # 首屏「每日一句」弹层会遮挡页面；先关闭再扫描，避免把弹层当成页面主体。
+            page.keyboard.press("Escape")
+        except Exception:  # noqa: BLE001 - 弹层不存在时忽略
+            pass
         # CDP 驱动的 evaluate 不受 script-src 限制；这里只注入开发资产，不修改页面文件。
         page.evaluate("(source) => { (0, eval)(source); }", axe_source)
         result = page.evaluate(SCAN_SCRIPT)
@@ -157,6 +213,45 @@ def scan_route(page, base_url: str, route: str, hash_value: str, ready: str,
         entry["passes"] = result.get("passes")
         entry["axe_version"] = result.get("axeVersion")
     except Exception as error:  # 页面未渲染/axe 注入失败都按扫描失败处理
+        entry["error"] = f"{type(error).__name__}: {str(error)[:300]}"
+    return entry
+
+
+def scan_component(page, base_url: str, name: str, spec: dict, viewport_name: str,
+                   axe_source: str, timeout_ms: int) -> dict:
+    """打开组件触发器后扫描容器；触发器不存在时跳过（不记为失败）。"""
+    entry = {
+        "route": f"component:{name}",
+        "hash": spec["hash"],
+        "viewport": viewport_name,
+        "violations": [],
+        "incomplete": [],
+        "error": None,
+        "skipped": None,
+    }
+    try:
+        url = base_url + spec["hash"] if spec["hash"].startswith("/") else base_url + "/" + spec["hash"]
+        page.goto(url, wait_until="domcontentloaded", timeout=timeout_ms)
+        page.wait_for_selector(spec["ready"], timeout=timeout_ms)
+        page.wait_for_timeout(500)
+        try:
+            page.keyboard.press("Escape")
+        except Exception:  # noqa: BLE001 - 每日一句弹层可能不存在
+            pass
+        trigger = page.locator(spec["open"])
+        if trigger.count() == 0:
+            entry["skipped"] = "触发器不存在"
+            return entry
+        trigger.first.click()
+        page.wait_for_selector(spec["scan"], timeout=max(5000, timeout_ms // 3))
+        page.wait_for_timeout(300)
+        page.evaluate("(source) => { (0, eval)(source); }", axe_source)
+        result = page.evaluate(SCAN_SCRIPT)
+        entry["violations"] = result.get("violations") or []
+        entry["incomplete"] = result.get("incomplete") or []
+        entry["passes"] = result.get("passes")
+        entry["axe_version"] = result.get("axeVersion")
+    except Exception as error:  # noqa: BLE001 - 组件扫描失败按失败处理
         entry["error"] = f"{type(error).__name__}: {str(error)[:300]}"
     return entry
 
@@ -234,7 +329,8 @@ def render_markdown(report: dict) -> str:
                 entry["viewport"],
                 len(entry["violations"]),
                 entry.get("passes", "-"),
-                "失败：" + entry["error"] if entry.get("error") else "完成",
+                "失败：" + entry["error"] if entry.get("error")
+                else ("跳过：" + entry["skipped"] if entry.get("skipped") else "完成"),
             )
         )
     lines.append("")
@@ -269,6 +365,11 @@ def parse_args(argv=None):
         default="",
         help="逗号分隔的路由名或 #/路径；默认 " + ", ".join(DEFAULT_ROUTES),
     )
+    parser.add_argument(
+        "--components",
+        default="",
+        help="逗号分隔的组件级检查项（默认空）：" + ", ".join(COMPONENT_SPECS),
+    )
     parser.add_argument("--out", default=str(DEFAULT_OUT))
     parser.add_argument("--axe", default=str(DEFAULT_AXE), help="axe.min.js 路径")
     parser.add_argument("--baseline", default=str(DEFAULT_BASELINE), help="违规基线 JSON")
@@ -294,6 +395,13 @@ def main(argv=None) -> int:
     routes = resolve_routes([
         item for item in str(args.routes or "").split(",") if item.strip()
     ] or None)
+    try:
+        components = resolve_components([
+            item for item in str(args.components or "").split(",") if item.strip()
+        ])
+    except ValueError as error:
+        print(f"[环境错误] {error}")
+        return 2
     out_dir = Path(args.out)
     out_dir.mkdir(parents=True, exist_ok=True)
     baseline_path = Path(args.baseline)
@@ -324,6 +432,14 @@ def main(argv=None) -> int:
                     )
                     axe_version = entry.get("axe_version") or axe_version
                     entries.append(entry)
+                for name, spec in components:
+                    print(f"扫描组件 {name}（{viewport_name}）…")
+                    entry = scan_component(
+                        page, args.base_url, name, spec, viewport_name,
+                        axe_source, max(5000, args.timeout_ms),
+                    )
+                    axe_version = entry.get("axe_version") or axe_version
+                    entries.append(entry)
                 context.close()
         finally:
             browser.close()
@@ -335,6 +451,7 @@ def main(argv=None) -> int:
         "axe_version": axe_version or "4.14.1",
         "baseline": str(baseline_path) if baseline else None,
         "viewports": VIEWPORTS,
+        "components": [name for name, _spec in components],
         "summary": summary,
         "entries": entries,
     }

@@ -6,6 +6,7 @@
  */
 import { el, button, toast } from '../core/dom.js';
 import { t } from '../core/i18n.js';
+import { reportFeatureUse } from '../core/usage.js';
 
 export const DEMO_CREATORS = Object.freeze([
   {
@@ -49,12 +50,18 @@ export function createDemoCreateMenu({
     menu.append(button(creator.label(), async (event) => {
       event.preventDefault();
       details.open = false;
+      const startedAt = typeof performance !== 'undefined' ? performance.now() : 0;
       try {
         const module = await creator.load();
         creator.open(module, {
           links: [{ target_kind: targetKind, target_key: String(targetKey) }],
           onSaved: (result) => {
             toast(savedText || '演示已保存');
+            // 阶段 5-3：只在演示真正保存成功后记一次，不记演示内容。
+            reportFeatureUse('demo', {
+              source: creator.id,
+              durationMs: startedAt ? performance.now() - startedAt : 0,
+            });
             if (typeof onSaved === 'function') onSaved(result);
           },
         });

@@ -37,6 +37,8 @@ from . import vocab_dictation
 from . import kp_tagging
 # 阶段 4：通用朗读 / 语音转写 / 跟读检查（课堂旧接口保持兼容）。
 from . import speech_api
+# 阶段 5：本地可选引擎总览与重置（设置页排障）。
+from . import engine_api
 
 WEB_DIR = Path(__file__).resolve().parents[1] / "web"
 health_log = logging.getLogger("zhixu.health")
@@ -795,6 +797,8 @@ app.include_router(vocab_dictation.router)
 app.include_router(kp_tagging.router)
 # 阶段 4：通用朗读 / 语音转写 / 跟读检查（非课堂页面使用；课堂旧接口保留）。
 app.include_router(speech_api.router)
+# 阶段 5：本地可选引擎总览与重置（普通用户只读；重置仅管理员）。
+app.include_router(engine_api.router)
 
 app.mount("/static", StaticFiles(directory=str(WEB_DIR)), name="static")
 

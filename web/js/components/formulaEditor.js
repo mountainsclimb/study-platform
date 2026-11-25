@@ -12,6 +12,7 @@
  */
 import { el, button } from '../core/dom.js';
 import { t } from '../core/i18n.js';
+import { reportFeatureUse } from '../core/usage.js';
 import { createFormulaInput } from './formulaInput.js';
 
 const SCRIPT_URL = '/static/vendor/mathlive/mathlive.min.js';
@@ -53,6 +54,8 @@ export function insertFormulaIntoField(target, latex, { wrap = true } = {}) {
   try { target.setSelectionRange(caret, caret); } catch { /* 个别控件不支持选区 */ }
   target.dispatchEvent(new Event('input', { bubbles: true }));
   target.focus();
+  // 阶段 5-3：公式成功插入后记录一次；不记 LaTeX 内容。
+  reportFeatureUse('formula', { source: 'formula_editor' });
   return true;
 }
 

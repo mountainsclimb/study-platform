@@ -2119,7 +2119,7 @@ export function renderQuestion(
   // ---- 阶段 4-3：跟读检查（按需挂载，收起时销毁录音/播放）
   const shadowMount = el('div', { class: 'speech-shadow-mount' });
   const shadowDetails = el('details', { class: 'speech-shadow-details' },
-    el('summary', {}, t('speech.shadow.entry')),
+    el('summary', { 'data-speech-shadow-toggle': '1' }, t('speech.shadow.entry')),
     shadowMount);
   let shadowPanel = null;
   shadowDetails.addEventListener('toggle', () => {

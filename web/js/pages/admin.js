@@ -189,21 +189,23 @@ function contentIssuesCard(catalog) {
   const statusSel = select(
     [{ value: '', label: t('practice.allStatuses') }, ...Object.entries(ISSUE_STATUS_LABELS).map(([value, label]) => ({ value, label }))],
     filters.status,
+    { 'aria-label': t('admin.filterStatus') },
   );
   const subjectSel = select(
     [{ value: '', label: t('insight.subjectAll') }, ...(catalog.subjects || []).map(s => ({ value: s, label: s }))],
     '',
+    { 'aria-label': t('admin.filterSubject') },
   );
   const typeSel = select([
     { value: '', label: t('admin.allTypes') },
     { value: 'formula', label: t('question.formula') }, { value: 'stem_missing', label: t('admin.stemMissing') },
     { value: 'option', label: t('question.options') }, { value: 'image', label: t('question.image') },
     { value: 'answer', label: t('question.referenceAnswer') }, { value: 'other', label: t('insight.other') },
-  ], '');
+  ], '', { 'aria-label': t('admin.filterType') });
   const riskSel = select([
     { value: '', label: t('admin.allRisks') },
     { value: 'high', label: t('admin.highRisk') }, { value: 'medium', label: t('admin.mediumRisk') }, { value: 'low', label: t('admin.lowRisk') },
-  ], '');
+  ], '', { 'aria-label': t('admin.filterRisk') });
 
   async function toggleIsolation(issue, refresh) {
     const active = !issue.isolated;

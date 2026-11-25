@@ -8,6 +8,7 @@
  */
 import { el, button, badge, toast } from '../core/dom.js';
 import { t } from '../core/i18n.js';
+import { reportFeatureUse } from '../core/usage.js';
 import { blobToWav16k } from './wavEncode.js';
 
 const MAX_RECORD_MS = 30 * 1000;
@@ -68,6 +69,7 @@ export function createDictationPractice(options = {}) {
   let recording = false;
   let submitting = false;
   let questionNo = 0;
+  let questionStartedAt = 0;
 
   host.append(
     el('div', { class: 'vb-dictation-head' },
@@ -176,6 +178,7 @@ export function createDictationPractice(options = {}) {
         return;
       }
       item = data;
+      questionStartedAt = performance.now();
       showQuestion();
       playCurrent().catch(() => {});
     } finally {
@@ -306,6 +309,11 @@ export function createDictationPractice(options = {}) {
       if (destroyed) return;
       answered.add(item.card_id);
       renderResult(data);
+      // 阶段 5-3：评分成功即记一次；不记单词/转写内容。
+      reportFeatureUse('speech', {
+        source: 'dictation',
+        durationMs: questionStartedAt ? performance.now() - questionStartedAt : 0,
+      });
     } catch (error) {
       setStatus(error?.message || ossText('vocab.dictation.scoringFailed', '听写评分失败'), 'error');
       toast(error?.message || ossText('vocab.dictation.scoringFailed', '听写评分失败'), true);

@@ -6,6 +6,7 @@
  */
 import { el, button, badge, toast } from '../core/dom.js';
 import { t } from '../core/i18n.js';
+import { reportFeatureUse } from '../core/usage.js';
 import { blobToWav16k } from './wavEncode.js';
 import { createReadAloudButton } from './readAloud.js';
 
@@ -80,6 +81,7 @@ export function createShadowingPanel(options = {}) {
   let chunks = [];
   let timer = null;
   let lastTranscript = '';
+  let recordingStartedAt = 0;
 
   host.append(
     el('div', { class: 'speech-shadow-head' },
@@ -205,6 +207,7 @@ export function createShadowingPanel(options = {}) {
     }, { once: true });
     recorder.start();
     recording = true;
+    recordingStartedAt = performance.now();
     renderControls();
     setStatus(t('speech.shadow.recording', { seconds: MAX_RECORD_MS / 1000 }));
     timer = setTimeout(() => {
@@ -244,6 +247,11 @@ export function createShadowingPanel(options = {}) {
       if (destroyed) return;
       lastTranscript = data.transcript || '';
       renderResult(data);
+      // 阶段 5-3：识别与比较成功即记一次；不记原文/转写内容。
+      reportFeatureUse('speech', {
+        source: 'shadowing',
+        durationMs: recordingStartedAt ? performance.now() - recordingStartedAt : 0,
+      });
     } catch (error) {
       setStatus(error?.message || t('speech.shadow.failed'), 'error');
       toast(error?.message || t('speech.shadow.failed'), true);

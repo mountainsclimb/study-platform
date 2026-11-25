@@ -10,6 +10,7 @@
  */
 import { el, icon, fill } from '../core/dom.js';
 import { t } from '../core/i18n.js';
+import { reportFeatureUse } from '../core/usage.js';
 
 const SEGMENT_CHARS = 600;
 const activePlayers = new Set();
@@ -83,6 +84,8 @@ export function createReadAloudButton(options = {}) {
     type: 'button',
     class: `button ghost small read-aloud-button ${options.className || ''}`.trim(),
     'aria-pressed': 'false',
+    // 图标模式（如词汇页）会把文字标签藏掉，可访问名称必须写在按钮上。
+    'aria-label': label,
   });
   const node = el('span', { class: 'read-aloud' }, buttonNode, status);
 
@@ -92,6 +95,9 @@ export function createReadAloudButton(options = {}) {
   let audio = null;
   let objectUrl = null;
   let utterance = null;
+  let pendingFinish = null;
+  let usageStartedAt = 0;
+  let usageReported = false;
 
   function resolveText() {
     const raw = typeof options.getText === 'function' ? options.getText() : options.text;
@@ -119,7 +125,22 @@ export function createReadAloudButton(options = {}) {
     buttonNode.disabled = destroyed;
   }
 
+  function reportPlayback() {
+    if (usageReported) return;
+    usageReported = true;
+    if (!usageStartedAt) return;
+    reportFeatureUse('speech', {
+      source: 'read_aloud',
+      durationMs: performance.now() - usageStartedAt,
+    });
+  }
+
   function releaseAudio() {
+    if (pendingFinish) {
+      const finish = pendingFinish;
+      pendingFinish = null;
+      try { finish(null); } catch { /* 忽略 */ }
+    }
     if (audio) {
       try { audio.pause(); } catch { /* 忽略 */ }
       audio = null;
@@ -161,6 +182,7 @@ export function createReadAloudButton(options = {}) {
       if (token !== myToken) return;
       utterance = null;
       phase = 'idle';
+      reportPlayback();
       setStatus('');
       renderButton();
     };
@@ -187,9 +209,11 @@ export function createReadAloudButton(options = {}) {
       const finish = (error) => {
         if (settled) return;
         settled = true;
+        if (pendingFinish === finish) pendingFinish = null;
         if (error) reject(error);
         else resolve();
       };
+      pendingFinish = finish;
       audio.addEventListener('ended', () => finish(null), { once: true });
       audio.addEventListener('error', () => finish(new Error(t('speech.playFailed'))), { once: true });
       audio.play().then(() => {
@@ -227,6 +251,8 @@ export function createReadAloudButton(options = {}) {
     const myToken = token;
     releaseAudio();
     stopBrowser();
+    usageStartedAt = performance.now();
+    usageReported = false;
     phase = 'loading';
     renderButton();
     setStatus(t('speech.loading'));
@@ -245,6 +271,7 @@ export function createReadAloudButton(options = {}) {
       }
       if (myToken !== token) return;
       phase = 'idle';
+      reportPlayback();
       setStatus('');
       renderButton();
     } catch (error) {

@@ -5,11 +5,49 @@
 """
 from __future__ import annotations
 
+from datetime import datetime, timezone
+import copy
 import logging
 import os
 import threading
 
 logger = logging.getLogger("zhixu.ai.warmup")
+
+_state_lock = threading.Lock()
+_state: dict = {"started": False, "started_at": None, "finished_at": None, "results": None}
+
+
+def _now() -> str:
+    return datetime.now(timezone.utc).isoformat()
+
+
+def state() -> dict:
+    """最近一次后台预热状态（设置页排障用；不触发模型加载）。"""
+    with _state_lock:
+        return copy.deepcopy(_state)
+
+
+def reset_state() -> None:
+    """清除预热记录（引擎重置/测试隔离用）。"""
+    with _state_lock:
+        _state.update({"started": False, "started_at": None, "finished_at": None, "results": None})
+
+
+def _record(*, started: bool | None = None, finished: bool | None = None,
+            results: dict | None = None) -> None:
+    with _state_lock:
+        if started is not None:
+            _state["started"] = bool(started)
+            _state["started_at"] = _now() if started else None
+        if finished is not None:
+            _state["finished_at"] = _now() if finished else None
+        if results is not None:
+            _state["results"] = copy.deepcopy(results)
+
+
+def record_results(results: dict) -> None:
+    """记录一次预热结果（供测试或启动线程复用）。"""
+    _record(started=True, results=results, finished=True)
 
 SWITCHES = (
     ("STUDY_FORMULA_OCR", "on"),
@@ -71,9 +109,13 @@ def start_background_warmup() -> threading.Thread | None:
         return None
 
     def run() -> None:
+        _record(started=True, finished=False)
         try:
-            _log_results(warmup_all())
+            results = warmup_all()
+            _record(results=results, finished=True)
+            _log_results(results)
         except Exception:  # pragma: no cover - 兜底日志
+            _record(finished=True)
             logger.exception("可选引擎预热线程异常")
 
     thread = threading.Thread(target=run, name="ai-warmup", daemon=True)

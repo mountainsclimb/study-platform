@@ -2066,3 +2066,20 @@ bottleneck_station/bottleneck_reason/dropped/blocked`。
 课堂旧接口 `POST /api/classroom/tts`、`POST /api/classroom/asr` 保持兼容；通用接口与课堂
 共用 `app.classroom.tts` 的连接选择与音色规范化，本地合成共用
 `app.ai.audio_compress`，听写与跟读共用 `app.ai.speech_score` 的文本评分口径。
+
+### 31.10 本地可选引擎总览与重置（`app/engine_api.py`，阶段 5-1）
+
+| 方法/路径 | 权限 | 响应要点 |
+| --- | --- | --- |
+| `GET /api/engines` | 登录 | `{checked_at,window:{count,available},engines:[...],warmup:{started,started_at,finished_at,results},compression:{format,ffmpeg_available},can_reset,note}`。引擎为 speech/embeddings/formula/table/chem；状态来自依赖/模型目录探测，不触发加载。普通用户不含 `directories/model_path/models/missing_files`，`notice/error` 中的绝对路径脱敏；管理员完整可见。 |
+| `POST /api/engines/{engine_id}/reset` | 管理员 | 重置 speech/embeddings/formula/table 的进程内单例与失败缓存，清空预热记录，返回刷新后的总览与 `reset:{engine,at}`；未知引擎 404，chem 不支持 422。 |
+
+### 31.11 学习事件（`app/study_evidence.py`，阶段 5-3）
+
+| 方法/路径 | 请求 | 响应要点 |
+| --- | --- | --- |
+| `POST /api/evidence/feature-event` | `{feature:"demo"\|"formula"\|"speech", action:"success", source?, subject?, duration_ms?}` | 只接受成功使用；`source` 限字母数字与 `_.-`，`duration_ms` 0–3600000。`extra="forbid"`：夹带 `text/content/audio` 等字段直接 422，不静默落库。写入独立 `feature_events` 表，不进入作答证据统计。 |
+| `GET /api/evidence/feature-usage?days=90` | — | `{window_days,window_start,total,items:[{feature,count,total_duration_ms,last_used_at}],note}`；固定返回三类功能（无记录为 0），按用户隔离。 |
+
+学情 `/api/insight/report` 新增 `feature_usage` 字段（同一聚合），前端「跨模块学习足迹」新增
+「学习工具使用」卡片；只显示次数与累计耗时，不显示朗读/公式正文。

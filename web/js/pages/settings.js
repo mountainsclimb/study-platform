@@ -2,7 +2,7 @@ import { api, ensurePreferences, errorText, refreshProviders } from '../core/api
 import { state } from '../core/state.js';
 import {
   el, icon, button, badge, empty, heading, loading, notice, field, input, select,
-  number, busy, toast,
+  number, dateText, busy, toast,
 } from '../core/dom.js';
 import { current, renderRoute } from '../core/router.js';
 import { groupedModelOptions } from '../components/modelPicker.js';
@@ -1665,7 +1665,114 @@ export async function renderSettings(container, version) {
     loadEmbeddingConfig();
   }
 
-  /* ---------- 6. AI 用量与费用估算（只展示估算，不扣减） ---------- */
+  /* ---------- 6. 本地引擎总览（阶段 5-1） ---------- */
+  const engineCard = el('section', { class: 'card settings-engines-card', style: 'margin-top:22px' });
+  let enginesBusy = false;
+
+  function engineName(id) {
+    const key = `settings.engines.name.${id}`;
+    const value = t(key);
+    return value === key ? id : value;
+  }
+
+  function engineStateText(engine) {
+    if (engine.available) return t('settings.engines.available');
+    if (engine.mode === 'off') return t('settings.engines.off');
+    return t('settings.engines.unavailableShort');
+  }
+
+  function engineDetailLines(engine, admin) {
+    const lines = [];
+    const model = engine.model || engine.model_label
+      || engine.tts_model_label || engine.asr_model_label;
+    if (model) lines.push(t('settings.engines.model', { model }));
+    if (engine.version) lines.push(t('settings.engines.version', { version: engine.version }));
+    if (Number(engine.missing_count) > 0) {
+      lines.push(t('settings.engines.missing', { count: number(engine.missing_count) }));
+    }
+    if (engine.notice) lines.push(engine.notice);
+    if (engine.error) lines.push(t('settings.engines.error', { error: engine.error }));
+    if (admin && engine.directories && typeof engine.directories === 'object') {
+      const paths = Object.values(engine.directories).filter(Boolean).join(' · ');
+      if (paths) lines.push(t('settings.engines.paths', { paths }));
+    }
+    if (admin && engine.model_path) {
+      lines.push(t('settings.engines.paths', { paths: engine.model_path }));
+    }
+    return lines.filter(Boolean);
+  }
+
+  function renderEngineCard(data) {
+    const engines = Array.isArray(data.engines) ? data.engines : [];
+    const admin = data.can_reset === true;
+    const rows = engines.map(engine => el('li', {
+      class: 'settings-engine-row', 'data-engine': engine.id,
+    },
+    el('div', { class: 'settings-engine-head' },
+      el('strong', {}, engineName(engine.id)),
+      statusTag(engineStateText(engine), engine.available ? 'ok' : 'warn',
+        engine.available ? '✓' : '!')),
+    el('div', { class: 'settings-engine-lines' },
+      ...engineDetailLines(engine, admin).map(text => el('span', {}, text))),
+    admin && engine.id !== 'chem'
+      ? button(t('settings.engines.reset'), event => busy(event.currentTarget, async () => {
+        await api(`/engines/${engine.id}/reset`, { method: 'POST' });
+        toast(t('settings.engines.resetDone'));
+        await loadEngines(true);
+      }), 'ghost small', 'rotate')
+      : null));
+    const warmup = data.warmup || {};
+    const warmupLine = warmup.finished_at
+      ? t('settings.engines.warmupDone', { time: dateText(warmup.finished_at) })
+      : t('settings.engines.warmupPending');
+    const compression = data.compression || null;
+    engineCard.replaceChildren(
+      el('div', { class: 'card-header' },
+        el('h2', {}, t('settings.engines.title')),
+        badge(t('settings.engines.badge', {
+          available: Number(data.window?.available || 0),
+          total: Number(data.window?.count || engines.length),
+        }))),
+      el('p', { class: 'help' }, t('settings.engines.help')),
+      el('ul', { class: 'settings-engine-list' }, ...rows),
+      el('p', { class: 'help settings-engine-meta' }, warmupLine),
+      compression
+        ? el('p', { class: 'help settings-engine-meta' },
+          t('settings.engines.compression', {
+            format: compression.format || 'wav',
+            ffmpeg: compression.ffmpeg_available
+              ? t('settings.engines.ffmpegOn') : t('settings.engines.ffmpegOff'),
+          }))
+        : null,
+      !admin ? el('p', { class: 'help' }, t('settings.engines.adminOnly')) : null,
+      el('div', { class: 'row', style: 'margin-top:10px' },
+        button(t('settings.engines.refresh'), event => busy(event.currentTarget, () => loadEngines(true)),
+          'secondary small', 'rotate')),
+    );
+  }
+
+  async function loadEngines(force = false) {
+    if (enginesBusy && !force) return;
+    enginesBusy = true;
+    engineCard.replaceChildren(
+      el('div', { class: 'card-header' }, el('h2', {}, t('settings.engines.title'))),
+      loading(t('settings.engines.loading')));
+    try {
+      const data = await api('/engines');
+      renderEngineCard(data);
+    } catch (error) {
+      engineCard.replaceChildren(
+        el('div', { class: 'card-header' }, el('h2', {}, t('settings.engines.title'))),
+        notice(t('settings.engines.unavailable', { reason: error.message }), 'warning'),
+        el('div', { class: 'row', style: 'margin-top:10px' },
+          button(t('settings.engines.refresh'), event => busy(event.currentTarget, () => loadEngines(true)),
+            'secondary small', 'rotate')));
+    } finally {
+      enginesBusy = false;
+    }
+  }
+
+  /* ---------- 7. AI 用量与费用估算（只展示估算，不扣减） ---------- */
   const usageRows = Array.isArray(usage.by_model) ? usage.by_model : [];
   const usageTotals = usageRows.reduce((acc, row) => {
     acc.calls += Number(row.calls || 0);
@@ -1791,8 +1898,10 @@ export async function renderSettings(container, version) {
     addForm,
     prefsCard,
     embCard,
+    engineCard,
     usageCard,
     secCard
   );
+  loadEngines();
   await renderJobHistory(container, version);
 }

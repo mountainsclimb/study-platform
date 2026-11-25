@@ -7,6 +7,7 @@
 import { api } from '../core/api.js';
 import { el, button, field, input, notice, toast, busy } from '../core/dom.js';
 import { t } from '../core/i18n.js';
+import { reportFeatureUse } from '../core/usage.js';
 
 const COMMON_SUBSTANCES = [
   'H2', 'O2', 'N2', 'Cl2', 'C', 'S', 'P', 'Fe', 'Cu', 'Zn', 'Al', 'Mg',
@@ -69,6 +70,7 @@ export function openChemBalancer({ initialEquation = '' } = {}) {
       return;
     }
     resultHost.replaceChildren(el('p', { class: 'help' }, chemText('study.chem.balance.loading', '正在配平…')));
+    const startedAt = performance.now();
     try {
       const result = await api('/chem/balance', {
         method: 'POST', data: { equation },
@@ -90,6 +92,11 @@ export function openChemBalancer({ initialEquation = '' } = {}) {
             ? chemText('study.chem.balance.reversibleResult', '已按可逆反应输出 ⇌')
             : chemText('study.chem.balance.forwardResult', '已按正向反应输出 ->')),
       );
+      // 阶段 5-3：只在真正配平成功后记录；不记方程式内容。
+      reportFeatureUse('formula', {
+        source: 'chem_balance',
+        durationMs: performance.now() - startedAt,
+      });
     } catch (error) {
       resultHost.replaceChildren(notice(
         chemText('study.chem.balance.requestFailed', '配平请求失败：{reason}', {

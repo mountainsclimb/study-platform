@@ -28,7 +28,7 @@ from datetime import date, datetime, timedelta, timezone
 from fastapi import APIRouter, Depends, HTTPException, Query
 from pydantic import BaseModel, Field
 
-from . import db, home_stats, practice
+from . import db, home_stats, practice, study_evidence
 from .auth import current_user
 
 router = APIRouter(prefix="/api/insight", tags=["Learning insight"])
@@ -1129,6 +1129,8 @@ def build_report(user_id: int, days: int = DEFAULT_DAYS, subject: str | None = N
         "recommendations": recommendations,
         # M2：复习排程统一口径（与首页/错题/练习同一到期值）。
         "review": _review_caliber(user_id),
+        # 阶段 5-3：演示/公式/语音成功使用频次（不记录正文）。
+        "feature_usage": study_evidence.feature_usage(user_id, days=days),
         "has_data": overview["has_data"],
         "caliber": CALIBER,
     }

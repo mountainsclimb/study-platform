@@ -1,7 +1,7 @@
 {
   "version": 1,
   "generated_from": "app.main:app",
-  "count": 402,
+  "count": 406,
   "routes": [
     {
       "method": "GET",
@@ -610,6 +610,22 @@
     {
       "method": "POST",
       "path": "/api/documents/{document_id}/reindex"
+    },
+    {
+      "method": "GET",
+      "path": "/api/engines"
+    },
+    {
+      "method": "POST",
+      "path": "/api/engines/{engine_id}/reset"
+    },
+    {
+      "method": "POST",
+      "path": "/api/evidence/feature-event"
+    },
+    {
+      "method": "GET",
+      "path": "/api/evidence/feature-usage"
     },
     {
       "method": "GET",

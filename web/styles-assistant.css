@@ -851,10 +851,10 @@
     padding: 8px 10px 10px;
     gap: 6px;
   }
-  .asst-composer-model .asst-model-picker .field label,
   .asst-composer-model .asst-model-picker .model-picker-current {
     display: none;
   }
+  /* .field label 不在此隐藏：沿用桌面端 sr-only 裁剪样式，保住 select 的可访问名称。 */
   .asst-hint {
     display: none;
   }
